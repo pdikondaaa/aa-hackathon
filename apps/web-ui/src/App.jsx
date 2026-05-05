@@ -1,11 +1,148 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { chatConfig } from './config/chatConfig';
+import {
+  initializeMsal, getCachedAccount,
+  loginWithRedirect, logout,
+  fetchUserProfile, buildUser,
+} from './utils/authService';
+import TopBar     from './components/TopBar';
+import Sidebar    from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
+import RightPanel from './components/RightPanel';
+import LoginPage  from './components/LoginPage';
 
 export default function App() {
+  const [activeNav,      setActiveNav]      = useState(chatConfig.navigation[0].id);
+  const [sidebarOpen,    setSidebarOpen]    = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [chatKey,        setChatKey]        = useState(0);
+  const [isDark,         setIsDark]         = useState(false);
+
+  const [user,        setUser]        = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError,   setAuthError]   = useState(null);
+
+  // Apply theme CSS variables
+  useEffect(() => {
+    const root = document.documentElement;
+    const t = isDark ? chatConfig.theme : chatConfig.lightTheme;
+    const f = chatConfig.fonts;
+    const vars = {
+      '--bg':             t.bg,
+      '--bg-secondary':   t.bgSecondary,
+      '--bg-elevated':    t.bgElevated,
+      '--bg-card':        t.bgCard,
+      '--border':         t.border,
+      '--border-light':   t.borderLight,
+      '--primary':        t.primary,
+      '--primary-hover':  t.primaryHover,
+      '--light-blue':     t.lightBlue,
+      '--deep-blue':      t.deepBlue,
+      '--secondary':      t.secondary,
+      '--text':           t.text,
+      '--text-secondary': t.textSecondary,
+      '--text-muted':     t.textMuted,
+      '--success':        t.success,
+      '--error':          t.error,
+      '--warning':        t.warning,
+      '--font':           f.family,
+    };
+    Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
+
+  // Restore session from MSAL cache on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        await initializeMsal();
+        const account = getCachedAccount();
+        if (account) {
+          const profile = await fetchUserProfile();
+          setUser(buildUser(profile));
+        }
+      } catch {
+        // No valid cached session — fall through to login page
+      } finally {
+        setAuthLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleLogin = async () => {
+    setAuthError(null);
+    try {
+      await loginWithRedirect();
+      // loginWithRedirect navigates away — code below never runs in the normal flow
+    } catch (err) {
+      setAuthError(err.message || 'Sign-in failed. Please try again.');
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      setUser(null);
+    }
+  };
+
+  const handleHistoryClick = (text) => {
+    if (ChatWindow.setSuggestion) ChatWindow.setSuggestion(text);
+  };
+
+  // Full-screen spinner while MSAL initialises
+  if (authLoading) {
+    return (
+      <div className="auth-loading">
+        <i className="fas fa-spinner fa-spin auth-loading-icon" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage isDark={isDark} onLogin={handleLogin} error={authError} />;
+  }
+
   return (
-    <div className='wrap'>
-      <h1>AURA Employee Copilot</h1>
-      <ChatWindow />
+    <div id="aura-app">
+      <TopBar
+        config={chatConfig}
+        user={user}
+        sidebarOpen={sidebarOpen}
+        onSidebarToggle={() => setSidebarOpen((o) => !o)}
+        rightPanelOpen={rightPanelOpen}
+        onRightPanelToggle={() => setRightPanelOpen((o) => !o)}
+        isDark={isDark}
+        onThemeToggle={() => setIsDark((d) => !d)}
+        onLogout={handleLogout}
+      />
+
+      <div className="app-layout">
+        <Sidebar
+          config={chatConfig}
+          activeNav={activeNav}
+          onNavChange={setActiveNav}
+          onNewChat={() => setChatKey((k) => k + 1)}
+          onHistoryClick={handleHistoryClick}
+          isOpen={sidebarOpen}
+        />
+
+        <main className="main-content">
+          <ChatWindow
+            key={chatKey}
+            config={chatConfig}
+            user={user}
+          />
+        </main>
+
+        {rightPanelOpen && (
+          <RightPanel
+            config={chatConfig}
+            onClose={() => setRightPanelOpen(false)}
+          />
+        )}
+      </div>
     </div>
   );
 }
