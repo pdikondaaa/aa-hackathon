@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
 import traceback
-from app.agents.graph import run_assistant
+from app.agents.supervisor_agent import run_assistant
 from app.api.auth.auth_handler import get_current_user
 from app.api.auth.user_context import get_user
 
