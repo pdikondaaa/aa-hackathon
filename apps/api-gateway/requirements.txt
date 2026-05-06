@@ -6,3 +6,6 @@ langchain
 pandas
 pypdf
 httpx
+python-jose[cryptography]
+pydantic-settings
+cachetools
