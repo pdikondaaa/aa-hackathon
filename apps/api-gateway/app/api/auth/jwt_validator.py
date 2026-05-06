@@ -6,7 +6,7 @@ from jose import jwt, JWTError, jwk
 from jose.utils import base64url_decode
 from jose.exceptions import JWKError
 from typing import Optional, Dict, Any
-from app.api.config.auth_config import JWKS_URL, ISSUER, CLIENT_ID, ALGORITHMS
+from app.api.config.auth_config import JWKS_URL, ISSUER, CLIENT_ID, TENANT_ID
 
 # Simple in-memory cache for JWKS keys
 _jwks_cache: Optional[Dict[str, Any]] = None
@@ -30,18 +30,23 @@ def _get_jwks() -> Dict[str, Any]:
 def _get_signing_key(token: str) -> Dict[str, Any]:
     """
     Extract the correct signing key from JWKS using token's kid.
+    Retries with a fresh JWKS fetch if the kid is not found (handles key rotation).
     """
+    global _jwks_cache
+
     unverified_header = jwt.get_unverified_header(token)
     kid = unverified_header.get("kid")
 
     if not kid:
         raise JWTError("Token header missing 'kid'")
 
-    jwks = _get_jwks()
-
-    for key in jwks.get("keys", []):
-        if key.get("kid") == kid:
-            return key
+    for attempt in range(2):
+        jwks = _get_jwks()
+        for key in jwks.get("keys", []):
+            if key.get("kid") == kid:
+                return key
+        # kid not found — invalidate cache and retry once with fresh JWKS
+        _jwks_cache = None
 
     raise JWTError(f"Unable to find signing key with kid: {kid}")
 
@@ -90,8 +95,9 @@ def validate_token(token: str) -> Dict[str, Any]:
         # Step 3: Decode claims (no verification here)
         payload = jwt.get_unverified_claims(token)
 
-        # Step 4: Validate issuer
-        if payload.get("iss") != ISSUER:
+        # Step 4: Validate issuer (accept both v1 sts.windows.net and v2 login.microsoftonline.com tokens)
+        ISSUER_V1 = f"https://sts.windows.net/{TENANT_ID}/"
+        if payload.get("iss") not in (ISSUER, ISSUER_V1):
             raise JWTError(f"Invalid issuer: {payload.get('iss')}")
 
         # Step 5: Validate audience (STRICT)

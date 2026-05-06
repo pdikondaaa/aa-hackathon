@@ -30,12 +30,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try:
         payload = validate_token(token)
     except JWTError as e:
-        raise HTTPException(status_code=403, detail=f"Invalid token: {str(e)}")
+        raise HTTPException(status_code=403, detail=str(e))
     
     # Extract user information from payload
+    # v2.0 tokens use "preferred_username"; v1.0 tokens use "unique_name"
     user = {
         "user_id": payload.get("oid"),
-        "email": payload.get("preferred_username"),
+        "email": payload.get("preferred_username") or payload.get("unique_name"),
         "name": payload.get("name"),
     }
     

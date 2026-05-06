@@ -113,9 +113,7 @@ httpClient.addRequestInterceptor(async (config, endpoint) => {
       return config;
     }
 
-    // For development: use User.Read scope
-    // For production: use specific API scope like `api://<backend-app-id>/.default`
-    const scopes = ['User.Read']; // Change to your API scope in production
+    const scopes = [`${import.meta.env.VITE_AZURE_CLIENT_ID}/.default`];
     
     const response = await msalInstance.acquireTokenSilent({
       scopes,
