@@ -1,0 +1,60 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API Gateway (FastAPI)",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "app.main:app",
+        "--reload",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ],
+      "jinja": true,
+      "cwd": "${workspaceFolder}/apps/api-gateway",
+      "env": {
+        "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/aura_db",
+        "SQL_ECHO": "false",
+        "CORS_ORIGINS": "http://localhost:5173,http://localhost:3000,*",
+        "AZURE_TENANT_ID": "3dcd35b5-f9c5-48ca-8653-821568ad3397",
+        "AZURE_CLIENT_ID": "c957762b-296f-4410-a53d-83d0c7743bf0"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Web UI (React/Vite)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "cwd": "${workspaceFolder}/apps/web-ui",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "env": {
+        "VITE_API_URL": "http://localhost:8000"
+      },
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack (API + Web UI)",
+      "configurations": [
+        "API Gateway (FastAPI)",
+        "Web UI (React/Vite)"
+      ],
+      "stopAll": true
+    }
+  ]
+}

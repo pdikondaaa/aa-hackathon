@@ -25,7 +25,7 @@ export const msalConfig = {
 // OIDC-only scopes — work without admin consent in any tenant.
 // User name + email come from the ID token claims after login.
 export const loginRequest = {
-  scopes: ['openid', 'profile', 'email'],
+  scopes: ['openid', 'profile', 'email', 'User.Read'],
 };
 
 // Optional Graph enrichment (department, jobTitle).
