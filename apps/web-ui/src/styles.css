@@ -668,6 +668,46 @@ button, a, [role="button"] {
 .send-btn:active:not(:disabled) { transform: scale(0.9); }
 .send-btn:disabled               { opacity: 0.35; cursor: not-allowed; }
 
+.mic-btn--listening {
+  color: #e53935 !important;
+  background: rgba(229,57,53,0.12) !important;
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229,57,53,0.35); }
+  50%       { box-shadow: 0 0 0 5px rgba(229,57,53,0); }
+}
+
+/* ── Attachment preview strip ─────────────────────────────────────────────── */
+.attachment-preview {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.attachment-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px 3px 8px;
+  font-size: 12px; color: var(--text-secondary);
+  max-width: 220px;
+}
+.attachment-chip-icon { color: var(--primary); font-size: 11px; flex-shrink: 0; }
+.attachment-chip-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 120px; flex: 1;
+}
+.attachment-chip-size { color: var(--text-muted); font-size: 10px; flex-shrink: 0; }
+.attachment-remove {
+  flex-shrink: 0; width: 16px; height: 16px;
+  border-radius: 50%; font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+  transition: background var(--transition), color var(--transition);
+}
+.attachment-remove:hover { background: rgba(229,57,53,0.15); color: #e53935; }
+
 /* ── Right Panel ─────────────────────────────────────────────────────────── */
 .right-panel {
   width: var(--right-panel-w);
