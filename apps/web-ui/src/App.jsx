@@ -4,11 +4,13 @@ import {
   initializeMsal, getCachedAccount,
   loginWithRedirect, logout,
   fetchUserProfile, buildUser,
+  checkUserAuthorization, getUserInfo,
 } from './utils/authService';
 import TopBar     from './components/TopBar';
 import Sidebar    from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
 import RightPanel from './components/RightPanel';
+import PersonalNotes from './components/PersonalNotes';
 import LoginPage  from './components/LoginPage';
 
 export default function App() {
@@ -59,10 +61,30 @@ export default function App() {
         const account = getCachedAccount();
         if (account) {
           const profile = await fetchUserProfile();
-          setUser(buildUser(profile));
+          const userEmail = profile.mail || profile.userPrincipalName || '';
+          
+          // Check if user is authorized
+          if (!checkUserAuthorization(userEmail)) {
+            setAuthError('You don\'t have access for this app. Please contact the Project Aura Team for access.');
+            await logout();
+            setAuthLoading(false);
+            return;
+          }
+          
+          // Store user info with their role and permissions
+          const userInfo = getUserInfo(userEmail);
+          const userWithInfo = {
+            ...buildUser(profile),
+            role: userInfo.role,
+            permissions: userInfo.permissions,
+            availableAgents: userInfo.availableAgents,
+            isAdmin: userInfo.isAdmin,
+          };
+          setUser(userWithInfo);
         }
-      } catch {
+      } catch (err) {
         // No valid cached session — fall through to login page
+        console.error('Auth error:', err);
       } finally {
         setAuthLoading(false);
       }
@@ -72,8 +94,9 @@ export default function App() {
   const handleLogin = async () => {
     setAuthError(null);
     try {
+      // This will redirect to Azure AD
       await loginWithRedirect();
-      // loginWithRedirect navigates away — code below never runs in the normal flow
+      // After redirect back, the useEffect will handle authorization check
     } catch (err) {
       setAuthError(err.message || 'Sign-in failed. Please try again.');
     }
@@ -128,13 +151,17 @@ export default function App() {
           isOpen={sidebarOpen}
         />
 
-        <main className="main-content">
-          <ChatWindow
-            key={chatKey}
-            config={chatConfig}
-            user={user}
-          />
-        </main>
+        {activeNav === 'myNotes' ? (
+          <PersonalNotes user={user} />
+        ) : (
+          <main className="main-content">
+            <ChatWindow
+              key={chatKey}
+              config={chatConfig}
+              user={user}
+            />
+          </main>
+        )}
 
         {rightPanelOpen && (
           <RightPanel
