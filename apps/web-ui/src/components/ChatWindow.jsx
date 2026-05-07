@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
+import { askBot } from '../services/api';
 
 const getGreeting = (firstName) => {
   const h = new Date().getHours();
@@ -15,6 +16,7 @@ const ChatWindow = ({ config, user: authUser }) => {
 
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput]       = useState('');
+  const [loading, setLoading]   = useState(false);
   const bottomRef   = useRef(null);
   const textareaRef = useRef(null);
 
@@ -31,24 +33,68 @@ const ChatWindow = ({ config, user: authUser }) => {
     el.style.height = `${Math.min(Math.max(el.scrollHeight, minH), 160)}px`;
   };
 
-  const sendMessage = (text = input) => {
+  const sendMessage = async (text = input) => {
     const trimmed = (typeof text === 'string' ? text : input).trim();
-    if (!trimmed) return;
+    if (!trimmed || loading) return;
+
     const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     const nextId = messages.length + 1;
+
+    // Add user message
     setMessages(prev => [
       ...prev,
-      { id: nextId,     role: 'user',      content: trimmed, timestamp: now },
-      { id: nextId + 1, role: 'assistant',  content: `I've received your query: **"${trimmed}"**\n\nThis is a static demo — connect me to a backend to get live answers.`, timestamp: now },
+      { id: nextId, role: 'user', content: trimmed, timestamp: now },
     ]);
+
     setInput('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+
+    setLoading(true);
+
+    try {
+      // Call authenticated API
+      const response = await askBot(trimmed);
+      
+      // Add assistant response
+      setMessages(prev => [
+        ...prev,
+        {
+          id: nextId + 1,
+          role: 'assistant',
+          content: response.answer,
+          timestamp: now,
+          metadata: {
+            user_email: response.user_email,
+            user_id: response.user_id,
+          },
+        },
+      ]);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      
+      // Add error message
+      setMessages(prev => [
+        ...prev,
+        {
+          id: nextId + 1,
+          role: 'assistant',
+          content: `⚠️ Error: ${error.message || 'Failed to get response. Please try again.'}`,
+          timestamp: now,
+          isError: true,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === 'Enter' && !e.shiftKey && !loading) {
+      e.preventDefault();
+      sendMessage();
+    }
   };
 
   const handleSuggestion = (text) => {
@@ -151,11 +197,15 @@ const ChatWindow = ({ config, user: authUser }) => {
               <button
                 className="send-btn"
                 onClick={() => sendMessage()}
-                disabled={!input.trim()}
+                disabled={!input.trim() || loading}
                 aria-label="Send message"
                 title="Send (Enter)"
               >
-                <i className="fas fa-paper-plane" />
+                {loading ? (
+                  <i className="fas fa-spinner fa-spin" />
+                ) : (
+                  <i className="fas fa-paper-plane" />
+                )}
               </button>
             </div>
           </div>

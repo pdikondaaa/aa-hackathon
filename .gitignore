@@ -65,7 +65,7 @@ yarn-error.log*
 node_modules/
 
 # Environment variables
-.env
+# .env
 .env.local
 .env.*.local
 
@@ -106,3 +106,4 @@ build/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+/.vs

@@ -11,8 +11,8 @@
 export const msalConfig = {
   auth: {
     // ── Paste your values here ──────────────────────────────────────────────
-    clientId:    'c957762b-296f-4410-a53d-83d0c7743bf0',     // Application (client) ID  — Overview tab
-    authority:   'https://login.microsoftonline.com/3dcd35b5-f9c5-48ca-8653-821568ad3397', // Directory (tenant) ID
+    clientId:    import.meta.env.VITE_AZURE_CLIENT_ID,     // Application (client) ID  — Overview tab
+    authority:   `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID}`, // Directory (tenant) ID
     redirectUri: window.location.origin, // Must match the SPA redirect URI in Azure Portal
     // ───────────────────────────────────────────────────────────────────────
   },
@@ -25,7 +25,7 @@ export const msalConfig = {
 // OIDC-only scopes — work without admin consent in any tenant.
 // User name + email come from the ID token claims after login.
 export const loginRequest = {
-  scopes: ['openid', 'profile', 'email'],
+  scopes: ['openid', 'profile', 'email', 'User.Read'],
 };
 
 // Optional Graph enrichment (department, jobTitle).

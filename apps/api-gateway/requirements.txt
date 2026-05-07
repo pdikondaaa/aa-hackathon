@@ -6,3 +6,5 @@ langchain
 pandas
 pypdf
 httpx
+python-jose[cryptography]
+requests
