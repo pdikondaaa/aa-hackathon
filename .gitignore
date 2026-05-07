@@ -43,6 +43,7 @@ env/
 .venv
 
 # IDE
+.vs
 .vscode/
 .idea/
 *.swp
