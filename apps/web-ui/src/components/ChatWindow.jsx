@@ -67,7 +67,6 @@ const ChatWindow = ({ config, user: authUser }) => {
     setMessages(prev => [
       ...prev,
       { id: nextId,     role: 'user',     content: userContent, timestamp: now },
-      { id: nextId + 1, role: 'assistant', content: `I've received your query: **"${trimmed || 'file attachment'}"**\n\nThis is a static demo — connect me to a backend to get live answers.`, timestamp: now },
     ]);
 
     setInput('');
