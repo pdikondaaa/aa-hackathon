@@ -1,5 +1,12 @@
 import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
 import { msalConfig, loginRequest, graphRequest, graphConfig } from '../config/authConfig';
+import {
+  isUserAuthorized,
+  getUserRole,
+  getUserPermissions,
+  getAvailableAgents,
+  canAccessAdminPanel,
+} from '../config/userConfig';
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
@@ -118,3 +125,30 @@ export function buildUser(profile) {
     photo:      profile.photo              || null,
   };
 }
+
+// ─── User Authorization Functions ─────────────────────────────────────────────
+
+/**
+ * Check if the logged-in user is authorized to access the application
+ * @param {string} userEmail - User's email/UPN
+ * @returns {boolean} True if user is authorized
+ */
+export function checkUserAuthorization(userEmail) {
+  return isUserAuthorized(userEmail);
+}
+
+/**
+ * Get user's role and permissions
+ * @param {string} userEmail - User's email/UPN
+ * @returns {object} User info with role and permissions
+ */
+export function getUserInfo(userEmail) {
+  return {
+    email: userEmail,
+    role: getUserRole(userEmail),
+    permissions: getUserPermissions(userEmail),
+    availableAgents: getAvailableAgents(userEmail),
+    isAdmin: canAccessAdminPanel(userEmail),
+  };
+}
+
