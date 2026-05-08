@@ -11,7 +11,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser }) => {
+const ChatWindow = ({ config, user: authUser, compact = false }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -168,7 +168,7 @@ const ChatWindow = ({ config, user: authUser }) => {
   // Expose for parent (history sidebar clicks)
   ChatWindow.setSuggestion = handleSuggestion;
 
-  const showWelcome = messages.length === 0;
+  const showWelcome = messages.length === 0 && !compact;
 
   return (
     <div className="chat-window">

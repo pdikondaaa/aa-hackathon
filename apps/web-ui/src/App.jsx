@@ -12,6 +12,7 @@ import ChatWindow from './components/ChatWindow';
 import RightPanel from './components/RightPanel';
 import PersonalNotes from './components/PersonalNotes';
 import LoginPage  from './components/LoginPage';
+import { OnboardingGuidancePage } from './modules/onboarding-guidance';
 
 export default function App() {
   const [activeNav,      setActiveNav]      = useState(chatConfig.navigation[0].id);
@@ -153,6 +154,8 @@ export default function App() {
 
         {activeNav === 'myNotes' ? (
           <PersonalNotes user={user} />
+        ) : activeNav === 'onboardingGuidance' ? (
+          <OnboardingGuidancePage user={user} config={chatConfig} />
         ) : (
           <main className="main-content">
             <ChatWindow
