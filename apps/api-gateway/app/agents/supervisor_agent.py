@@ -1,103 +1,305 @@
-from app.agents.router import router
-from app.agents.hr_agent import hr_agent
-from app.agents.admin_agent import admin_agent
-from app.agents.it_agent import it_agent
-from app.agents.org_agent import org_agent
-from typing import Dict, Any
+"""
+Master Agent — single entry point for all user queries.
 
-class SupervisorAgent:
+Architecture (master-slave):
+  User query
+      ↓
+  MasterAgent  (this file)
+      ├─ step 1: LLM routing  → decide which domain agents to call
+      │          (keyword fallback if LLM is unavailable)
+      ├─ step 2: dispatch     → call one or many slave agents
+      ├─ step 3: synthesize   → if multi-domain, LLM merges responses
+      └─ step 4: cite sources → append exact document names used
+"""
+
+import re
+import json
+from typing import Dict, List, Optional
+
+# ── Domain keyword map (used as fallback when LLM routing is unavailable) ──
+DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+    'hr': [
+        'leave', 'vacation', 'holiday', 'sick', 'medical leave', 'maternity', 'paternity',
+        'parental', 'hr', 'human resources', 'employee', 'benefits', 'salary', 'payroll',
+        'performance', 'appraisal', 'training', 'recruit', 'hiring', 'onboard',
+        'joining', 'offer letter', 'resign', 'posh', 'gratuity', 'pf', 'epf',
+        'insurance', 'ghi', 'mediclaim', 'referral', 'certification reimbursement',
+        'attendance', 'wfh', 'work from home', 'comp off', 'compensatory',
+        'kotak', 'salary account', 'il take care', 'practo',
+        # relocation stems — covers "relocating", "relocation", "relocate"
+        'relocat', 'transfer', 'shifting', 'moving to', 'new city', 'accommodation',
+        'home town', 'hometown',
+    ],
+    'it': [
+        'computer', 'laptop', 'software', 'hardware', 'network', 'internet',
+        'email', 'vpn', 'access', 'password', 'login', 'security',
+        'printer', 'wifi', 'technical', 'it support', 'helpdesk',
+        'mfa', '2fa', 'authenticator', 'onedrive', 'microsoft', 'outlook', 'teams',
+        'install', 'setup', 'configure', 'backup', 'antivirus', 'belarc',
+        'remote access', 'polycom', 'wi-fi',
+    ],
+    'admin': [
+        'travel', 'reimbursement', 'booking', 'hotel', 'flight',
+        'office', 'supplies', 'equipment', 'facility', 'event',
+        'cab', 'taxi', 'orix', 'cabman', 'parking', 'workplace',
+        'fountainhead', 'return to office', 'admin',
+    ],
+    'pmo': [
+        'project', 'pmo', 'milestone', 'delivery', 'timeline', 'sprint',
+        'resource allocation', 'risk', 'issue', 'blocker', 'onboarding process',
+        'project overview', 'eli lilly', 'abi', 'ncr', 'spencer', 'dell projects',
+        'best practice', 'process document', 'status report', 'dashboard',
+        'out of office', 'stress', 'excel shortcuts',
+    ],
+    'finance': [
+        'zoho', 'expense report', 'expense claim', 'submit expense',
+        'tds', 'tax', 'income tax', 'declaration', 'form 16',
+        'finance', 'accounting', 'tds deduction', 'joint declaration',
+    ],
+    'org': [
+        'company', 'organization', 'mission', 'vision', 'values', 'culture',
+        'structure', 'department', 'leadership', 'policy', 'procedure',
+        'contact', 'diversity', 'inclusion', 'about',
+    ],
+}
+
+# ── LLM routing prompt ───────────────────────────────────────────────────────
+_ROUTING_PROMPT = """\
+You are a query router for an internal company assistant called AURA.
+
+Available departments and what they handle:
+- hr: leave policies, benefits, payroll, performance, POSH, maternity/paternity, GHI insurance, PF/EPF, gratuity, referral, certification, attendance, WFH, HROne system, Practo, IL TakeCare
+- it: technical support, MFA, VPN, passwords, laptop, software, network, security, OneDrive, Outlook, email backup, WiFi, remote access, Polycom
+- admin: travel bookings, cab/ORIX, parking, workplace guidelines, office supplies, Fountainhead guidelines
+- pmo: project tracking, onboarding process, project overviews (ABI/NCR/Spencer/Dell/Eli Lilly), PMO best practices, stress management
+- finance: ZOHO expenses, TDS declarations, tax forms, expense submission
+- org: company mission, structure, general company information
+
+User query: "{query}"
+
+Which departments should handle this query? A query may need more than one department.
+Reply with ONLY a valid JSON array. Examples:
+  ["hr"]
+  ["it"]
+  ["hr", "it"]
+  ["admin", "finance"]
+
+Reply:"""
+
+# ── Synthesis prompt ─────────────────────────────────────────────────────────
+_SYNTHESIS_PROMPT = """\
+You are AURA, a helpful internal company assistant.
+Multiple departments have provided information for the user's query.
+Synthesize their answers into one clear, well-organized response.
+Mention which department is responsible for each part of the answer.
+
+User query: "{query}"
+
+Department responses:
+{responses}
+
+Provide a unified, concise, and accurate answer."""
+
+
+class MasterAgent:
+    """
+    Orchestrates all domain slave agents.
+    The user never needs to know which agent to choose — this class decides.
+    """
+
     def __init__(self):
-        self.agents = {
-            'hr': hr_agent,
-            'admin': admin_agent,
-            'it': it_agent,
-            'org': org_agent
+        self._slaves: Dict[str, object] = {}   # lazy-loaded domain agents
+        self._llm = None
+        self._setup_llm()
+
+    # ------------------------------------------------------------------
+    # LLM setup (used for routing + synthesis)
+    # ------------------------------------------------------------------
+
+    def _setup_llm(self):
+        try:
+            from langchain_ollama import ChatOllama
+            from app.agents.working.config import LLMConfig
+            cfg = LLMConfig()
+            self._llm = ChatOllama(
+                base_url=cfg.base_url,
+                model=cfg.model,
+                temperature=0,          # deterministic routing
+                num_predict=64,         # short reply needed for routing
+            )
+            print("[MasterAgent] LLM routing ready")
+        except Exception as exc:
+            print(f"[MasterAgent] LLM routing unavailable ({exc}); keyword routing active")
+
+    # ------------------------------------------------------------------
+    # Slave agent registry (lazy singleton per domain)
+    # ------------------------------------------------------------------
+
+    def _get_slave(self, domain: str) -> Optional[object]:
+        if domain in self._slaves:
+            return self._slaves[domain]
+
+        agent = None
+        try:
+            if domain == 'hr':
+                from app.agents.working.hr.hr_deep_agent import HRDeepAgent
+                agent = HRDeepAgent()
+            elif domain == 'it':
+                from app.agents.working.it.it_deep_agent import ITDeepAgent
+                agent = ITDeepAgent()
+            elif domain == 'admin':
+                from app.agents.working.admin.admin_deep_agent import AdminDeepAgent
+                agent = AdminDeepAgent()
+            elif domain == 'pmo':
+                from app.agents.working.pmo.pmo_deep_agent import PMODeepAgent
+                agent = PMODeepAgent()
+            elif domain == 'finance':
+                from app.agents.working.finance.finance_deep_agent import FinanceDeepAgent
+                agent = FinanceDeepAgent()
+            elif domain == 'org':
+                from app.agents.org_agent import org_agent as _fn
+                # Wrap plain function to match the agent interface
+                class _OrgWrapper:
+                    last_sources: List[str] = []
+                    def process_query(self, q: str) -> str:
+                        return _fn(q)
+                agent = _OrgWrapper()
+
+            if agent:
+                self._slaves[domain] = agent
+                print(f"[MasterAgent] Slave loaded: {domain}")
+        except Exception as exc:
+            print(f"[MasterAgent] Could not load slave '{domain}': {exc}")
+
+        return agent
+
+    # ------------------------------------------------------------------
+    # Routing — LLM first, keyword fallback
+    # ------------------------------------------------------------------
+
+    def _route_llm(self, query: str) -> List[str]:
+        if not self._llm:
+            return []
+        try:
+            prompt = _ROUTING_PROMPT.format(query=query)
+            response = self._llm.invoke(prompt)
+            content = response.content.strip()
+            match = re.search(r'\[.*?\]', content, re.DOTALL)
+            if match:
+                domains = json.loads(match.group())
+                valid = [d for d in domains if d in DOMAIN_KEYWORDS]
+                if valid:
+                    print(f"[MasterAgent] LLM routed → {valid}")
+                    return valid
+        except Exception as exc:
+            print(f"[MasterAgent] LLM routing error ({exc})")
+        return []
+
+    def _route_keywords(self, query: str) -> List[str]:
+        q = query.lower()
+        scores = {
+            domain: sum(1 for kw in keywords if kw in q)
+            for domain, keywords in DOMAIN_KEYWORDS.items()
         }
+        scores = {d: s for d, s in scores.items() if s > 0}
+        if not scores:
+            return ['hr']  # HR is the most common catch-all for employee queries
+        top_score = max(scores.values())
+        # Include all domains within 50% of the top score (catches multi-domain queries)
+        threshold = max(1, top_score // 2)
+        ranked = sorted(scores.items(), key=lambda x: -x[1])
+        selected = [d for d, s in ranked if s >= threshold][:3]
+        print(f"[MasterAgent] Keyword routed → {selected}")
+        return selected
 
-        self.agent_descriptions = {
-            'hr': 'Human Resources - handles leave policies, employee benefits, performance reviews, and HR procedures',
-            'admin': 'Administration - manages travel, expenses, office supplies, events, and administrative procedures',
-            'it': 'Information Technology - handles technical support, software/hardware issues, security, and IT policies',
-            'org': 'Organization - provides company information, policies, structure, and general organizational details'
-        }
+    def _route(self, query: str) -> List[str]:
+        domains = self._route_llm(query)
+        if not domains:
+            domains = self._route_keywords(query)
+        return domains
 
-    def _analyze_query_complexity(self, query: str) -> Dict[str, Any]:
-        """Analyze query to determine if it needs multiple agents or escalation."""
-        query_lower = query.lower()
+    # ------------------------------------------------------------------
+    # Multi-domain synthesis
+    # ------------------------------------------------------------------
 
-        # Check for multi-department queries
-        departments_mentioned = []
-        if any(word in query_lower for word in ['hr', 'human resources', 'leave', 'benefits', 'salary']):
-            departments_mentioned.append('hr')
-        if any(word in query_lower for word in ['travel', 'expense', 'office', 'admin']):
-            departments_mentioned.append('admin')
-        if any(word in query_lower for word in ['computer', 'software', 'network', 'it', 'technical']):
-            departments_mentioned.append('it')
+    def _synthesize(self, query: str, responses: Dict[str, str]) -> str:
+        formatted = "\n\n".join(
+            f"[{domain.upper()} Department]\n{resp}"
+            for domain, resp in responses.items()
+        )
+        if self._llm:
+            try:
+                # Use higher token limit for synthesis
+                from langchain_ollama import ChatOllama
+                from app.agents.working.config import LLMConfig
+                cfg = LLMConfig()
+                synth_llm = ChatOllama(
+                    base_url=cfg.base_url,
+                    model=cfg.model,
+                    temperature=0.1,
+                    num_predict=cfg.max_tokens,
+                )
+                prompt = _SYNTHESIS_PROMPT.format(query=query, responses=formatted)
+                return synth_llm.invoke(prompt).content
+            except Exception as exc:
+                print(f"[MasterAgent] Synthesis LLM error ({exc}); using section format")
 
-        # Check for urgent/escalation keywords
-        urgent_keywords = ['urgent', 'emergency', 'immediately', 'asap', 'critical', 'broken']
-        is_urgent = any(word in query_lower for word in urgent_keywords)
+        # Fallback: labelled sections
+        parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
+        return "\n\n---\n\n".join(parts)
 
-        # Check for complex queries
-        complex_indicators = ['and', 'also', 'as well as', 'plus', 'multiple', 'both']
-        is_complex = any(indicator in query_lower for indicator in complex_indicators)
-
-        return {
-            'departments_mentioned': departments_mentioned,
-            'is_urgent': is_urgent,
-            'is_complex': is_complex,
-            'needs_multiple_agents': len(departments_mentioned) > 1 or is_complex
-        }
-
-    def _generate_supervisor_response(self, query: str, agent: str, confidence: float, analysis: Dict[str, Any]) -> str:
-        """Generate supervisor-level response with context."""
-        agent_name = agent.upper()
-        description = self.agent_descriptions[agent]
-
-        response = f"🤖 **Supervisor Agent Analysis**\n\n"
-        response += f"Query: '{query}'\n"
-        response += f"Routed to: {agent_name} Department\n"
-        response += f"Confidence: {confidence:.2%}\n"
-        response += f"Department: {description}\n\n"
-
-        if analysis['is_urgent']:
-            response += "⚠️ **URGENT REQUEST DETECTED** - This will be prioritized.\n\n"
-
-        if analysis['needs_multiple_agents']:
-            response += "📋 **MULTI-DEPARTMENT QUERY** - This may involve coordination between departments.\n\n"
-
-        response += "---\n\n"
-        return response
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     def process_query(self, query: str) -> str:
-        """Process query through supervisor agent coordination."""
-        # Route the query
-        agent, confidence = router.route_query(query)
+        if not query or not query.strip():
+            return "Please enter a question."
 
-        # Analyze query complexity
-        analysis = self._analyze_query_complexity(query)
+        # 1. Route
+        domains = self._route(query)
 
-        # Get response from appropriate agent
-        agent_response = self.agents[agent](query)
+        # 2. Call each slave agent
+        responses: Dict[str, str] = {}
+        all_sources: List[str] = []
 
-        # Generate supervisor context
-        supervisor_context = self._generate_supervisor_response(query, agent, confidence, analysis)
+        for domain in domains:
+            slave = self._get_slave(domain)
+            if not slave:
+                continue
+            try:
+                resp = slave.process_query(query)
+                responses[domain] = resp
+                sources = getattr(slave, 'last_sources', [])
+                all_sources.extend(s for s in sources if s)
+            except Exception as exc:
+                print(f"[MasterAgent] Slave '{domain}' error: {exc}")
 
-        # Combine responses
-        final_response = supervisor_context + agent_response
+        if not responses:
+            return (
+                "I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly."
+            )
 
-        # Add follow-up information for complex queries
-        if analysis['needs_multiple_agents']:
-            final_response += "\n\n💡 **Note:** If this query involves multiple departments, please provide more specific details or contact the relevant department directly."
+        # 3. Synthesize
+        final = (
+            list(responses.values())[0]
+            if len(responses) == 1
+            else self._synthesize(query, responses)
+        )
 
-        if analysis['is_urgent']:
-            final_response += "\n\n🚨 **Urgent requests** are prioritized. If you need immediate assistance, please call the emergency hotline."
+        # 4. Append deduplicated sources
+        unique_sources = list(dict.fromkeys(all_sources))
+        if unique_sources:
+            source_list = "\n".join(f"  • {s}" for s in unique_sources)
+            final += f"\n\n---\n📄 **Sources**\n{source_list}"
 
-        return final_response
+        return final
 
-# Global supervisor instance
-supervisor = SupervisorAgent()
+
+# ── Singleton + public entry point (used by chat.py) ────────────────────────
+_master = MasterAgent()
+
 
 def run_assistant(query: str) -> str:
-    """Main entry point - supervisor agent coordinates all requests."""
-    return supervisor.process_query(query)
+    return _master.process_query(query)

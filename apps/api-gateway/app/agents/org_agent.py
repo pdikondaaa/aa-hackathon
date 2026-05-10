@@ -62,12 +62,12 @@ class OrgAgent:
         relevant_info = self._find_relevant_info(query)
 
         if not relevant_info:
-            return f"I couldn't find specific organizational information for your query: '{query}'. For general inquiries, please contact info@company.com."
+            return f"I couldn't find specific organizational information support-nexus@alignedautomation.com for your query: '{query}'. For general inquiries, please contact "
 
         # Format the response
         response = f"Based on company information, here's information related to your query '{query}':\n\n"
         response += "\n".join(f"• {line}" for line in relevant_info)
-        response += "\n\nFor more detailed information, please contact the appropriate department or info@company.com."
+        response += "\n\nFor more detailed information, please contact the appropriate department or support-nexus@alignedautomation.com."
 
         return response
 

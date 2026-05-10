@@ -1,80 +1,74 @@
 import os
-import re
-from typing import Dict, List
+from typing import List
 
+# --- Deep agent (lazy singleton) ---
+_it_deep = None
+_it_deep_failed = False
+
+
+def _get_deep():
+    global _it_deep, _it_deep_failed
+    if _it_deep is None and not _it_deep_failed:
+        try:
+            from app.agents.working.it.it_deep_agent import ITDeepAgent
+            _it_deep = ITDeepAgent()
+        except Exception as exc:
+            print(f"[ITAgent] Deep agent init failed ({exc}); using keyword fallback")
+            _it_deep_failed = True
+    return _it_deep
+
+
+# --- Simple keyword fallback ---
 class ITAgent:
     def __init__(self):
         self.data_file = os.path.join(os.path.dirname(__file__), 'data', 'it_policies.txt')
-        self.policies = self._load_policies()
+        self.policies = self._load()
 
-    def _load_policies(self) -> str:
-        """Load IT policies from file."""
+    def _load(self) -> str:
         try:
             with open(self.data_file, 'r', encoding='utf-8') as f:
                 return f.read()
         except FileNotFoundError:
-            return "IT policies file not found."
+            return ""
 
-    def _find_relevant_info(self, query: str) -> List[str]:
-        """Find relevant information based on query keywords."""
+    def _find_relevant(self, query: str) -> List[str]:
         query_lower = query.lower()
         lines = self.policies.split('\n')
-        relevant_lines = []
-
-        # Keywords related to IT topics
         it_keywords = {
             'access': ['access', 'login', 'password', 'vpn', 'remote'],
-            'email': ['email', 'mail', 'outlook', 'communication'],
-            'software': ['software', 'install', 'application', 'program'],
-            'security': ['security', 'password', 'encryption', 'protection'],
-            'device': ['device', 'computer', 'laptop', 'phone', 'mobile'],
-            'network': ['network', 'internet', 'wifi', 'connection'],
-            'support': ['support', 'help', 'issue', 'problem', 'fix'],
-            'hardware': ['hardware', 'printer', 'monitor', 'keyboard']
+            'email': ['email', 'mail', 'outlook'],
+            'software': ['software', 'install', 'application'],
+            'security': ['security', 'encryption', 'protection', 'mfa'],
+            'device': ['device', 'computer', 'laptop', 'phone'],
+            'network': ['network', 'internet', 'wifi'],
+            'hardware': ['hardware', 'printer', 'monitor'],
         }
-
-        # Find matching keywords
-        matched_categories = []
-        for category, keywords in it_keywords.items():
-            if any(keyword in query_lower for keyword in keywords):
-                matched_categories.append(category)
-
-        # Extract relevant sections
-        current_section = ""
-        in_relevant_section = False
-
+        matched = [cat for cat, kws in it_keywords.items() if any(k in query_lower for k in kws)]
+        relevant, in_section = [], False
         for line in lines:
-            line_lower = line.lower().strip()
-
-            # Check if this is a section header
-            if line.startswith('##') or line.startswith('###'):
-                current_section = line_lower.replace('#', '').strip()
-                in_relevant_section = any(cat in current_section.lower() for cat in matched_categories)
-
-            # If we're in a relevant section or the line contains matched keywords
-            if in_relevant_section or any(keyword in line_lower for cat in matched_categories for keyword in it_keywords[cat]):
-                if line.strip():  # Skip empty lines
-                    relevant_lines.append(line)
-
-        return relevant_lines[:10]  # Limit to top 10 relevant lines
+            if line.startswith('##'):
+                in_section = any(cat in line.lower() for cat in matched)
+            if in_section or any(k in line.lower() for cat in matched for k in it_keywords[cat]):
+                if line.strip():
+                    relevant.append(line)
+        return relevant[:10]
 
     def process_query(self, query: str) -> str:
-        """Process IT-related query and return relevant information."""
-        relevant_info = self._find_relevant_info(query)
+        info = self._find_relevant(query)
+        if not info:
+            return f"Please contact IT Helpdesk at helpdesk@company.com or call +1-800-IT-HELP for: '{query}'."
+        return (
+            "Based on IT policies:\n\n" +
+            "\n".join(f"• {l}" for l in info) +
+            "\n\nContact: helpdesk@company.com | +1-800-IT-HELP"
+        )
 
-        if not relevant_info:
-            return f"I couldn't find specific IT information for your query: '{query}'. Please contact IT Support at helpdesk@company.com or call +1-800-IT-HELP."
 
-        # Format the response
-        response = f"Based on IT policies, here's information related to your query '{query}':\n\n"
-        response += "\n".join(f"• {line}" for line in relevant_info)
-        response += "\n\nFor technical assistance or if you need immediate help, contact IT Support at helpdesk@company.com or call +1-800-IT-HELP."
+_fallback = ITAgent()
 
-        return response
-
-# Global instance
-it_agent_instance = ITAgent()
 
 def it_agent(query: str) -> str:
-    """IT Agent entry point."""
-    return it_agent_instance.process_query(query)
+    deep = _get_deep()
+    if deep:
+        return deep.process_query(query)
+    return _fallback.process_query(query)

@@ -1,78 +1,72 @@
 import os
-import re
-from typing import Dict, List
+from typing import List
 
+# --- Deep agent (lazy singleton) ---
+_admin_deep = None
+_admin_deep_failed = False
+
+
+def _get_deep():
+    global _admin_deep, _admin_deep_failed
+    if _admin_deep is None and not _admin_deep_failed:
+        try:
+            from app.agents.working.admin.admin_deep_agent import AdminDeepAgent
+            _admin_deep = AdminDeepAgent()
+        except Exception as exc:
+            print(f"[AdminAgent] Deep agent init failed ({exc}); using keyword fallback")
+            _admin_deep_failed = True
+    return _admin_deep
+
+
+# --- Simple keyword fallback ---
 class AdminAgent:
     def __init__(self):
         self.data_file = os.path.join(os.path.dirname(__file__), 'data', 'admin_policies.txt')
-        self.policies = self._load_policies()
+        self.policies = self._load()
 
-    def _load_policies(self) -> str:
-        """Load Admin policies from file."""
+    def _load(self) -> str:
         try:
             with open(self.data_file, 'r', encoding='utf-8') as f:
                 return f.read()
         except FileNotFoundError:
-            return "Admin policies file not found."
+            return ""
 
-    def _find_relevant_info(self, query: str) -> List[str]:
-        """Find relevant information based on query keywords."""
+    def _find_relevant(self, query: str) -> List[str]:
         query_lower = query.lower()
         lines = self.policies.split('\n')
-        relevant_lines = []
-
-        # Keywords related to Admin topics
         admin_keywords = {
-            'travel': ['travel', 'trip', 'flight', 'hotel', 'booking'],
-            'expense': ['expense', 'reimbursement', 'cost', 'budget', 'payment'],
-            'office': ['office', 'supplies', 'equipment', 'facility'],
-            'event': ['event', 'meeting', 'conference', 'party'],
+            'travel': ['travel', 'trip', 'flight', 'hotel', 'booking', 'cab'],
+            'expense': ['expense', 'reimbursement', 'cost', 'payment', 'zoho'],
+            'office': ['office', 'supplies', 'equipment', 'facility', 'parking'],
+            'event': ['event', 'meeting', 'conference'],
             'purchase': ['purchase', 'order', 'procurement', 'vendor'],
-            'invoice': ['invoice', 'billing', 'payment', 'receipt']
         }
-
-        # Find matching keywords
-        matched_categories = []
-        for category, keywords in admin_keywords.items():
-            if any(keyword in query_lower for keyword in keywords):
-                matched_categories.append(category)
-
-        # Extract relevant sections
-        current_section = ""
-        in_relevant_section = False
-
+        matched = [cat for cat, kws in admin_keywords.items() if any(k in query_lower for k in kws)]
+        relevant, in_section = [], False
         for line in lines:
-            line_lower = line.lower().strip()
-
-            # Check if this is a section header
-            if line.startswith('##') or line.startswith('###'):
-                current_section = line_lower.replace('#', '').strip()
-                in_relevant_section = any(cat in current_section.lower() for cat in matched_categories)
-
-            # If we're in a relevant section or the line contains matched keywords
-            if in_relevant_section or any(keyword in line_lower for cat in matched_categories for keyword in admin_keywords[cat]):
-                if line.strip():  # Skip empty lines
-                    relevant_lines.append(line)
-
-        return relevant_lines[:10]  # Limit to top 10 relevant lines
+            if line.startswith('##'):
+                in_section = any(cat in line.lower() for cat in matched)
+            if in_section or any(k in line.lower() for cat in matched for k in admin_keywords[cat]):
+                if line.strip():
+                    relevant.append(line)
+        return relevant[:10]
 
     def process_query(self, query: str) -> str:
-        """Process Admin-related query and return relevant information."""
-        relevant_info = self._find_relevant_info(query)
+        info = self._find_relevant(query)
+        if not info:
+            return f"Please contact Admin at admin@company.com for: '{query}'."
+        return (
+            "Based on admin policies:\n\n" +
+            "\n".join(f"• {l}" for l in info) +
+            "\n\nContact: admin@company.com | travel@company.com"
+        )
 
-        if not relevant_info:
-            return f"I couldn't find specific administrative information for your query: '{query}'. Please contact Administration at admin@company.com for assistance."
 
-        # Format the response
-        response = f"Based on administrative policies, here's information related to your query '{query}':\n\n"
-        response += "\n".join(f"• {line}" for line in relevant_info)
-        response += "\n\nFor more detailed information or specific arrangements, please contact Administration at admin@company.com."
+_fallback = AdminAgent()
 
-        return response
-
-# Global instance
-admin_agent_instance = AdminAgent()
 
 def admin_agent(query: str) -> str:
-    """Admin Agent entry point."""
-    return admin_agent_instance.process_query(query)
+    deep = _get_deep()
+    if deep:
+        return deep.process_query(query)
+    return _fallback.process_query(query)

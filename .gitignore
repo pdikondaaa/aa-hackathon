@@ -89,6 +89,7 @@ instance/
 .cache/
 *.db
 *.sqlite
+data/
 
 # Temporary files
 *.tmp
