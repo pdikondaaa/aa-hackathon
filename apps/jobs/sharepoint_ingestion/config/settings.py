@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     CLIENT_ID: str = "f03e6b79-ed73-455c-b86a-f15a5d4b360c"
     CLIENT_SECRET: str = "2a1b1e9d-d34d-4eed-9219-138fa4d7b866"
     TENANT_NAME: str = "alignedautomation.sharepoint.com"
-    SHAREPOINT_SITE_PATH: str = "sites/Nexus/DigitalKnowledgeManagement/HR"
+    SHAREPOINT_SITE_PATH: str = "sites/Nexus/DigitalKnowledgeManagement"
     DOCUMENT_LIBRARY_NAME: str = "Documents"
 
     # ─── Embeddings ───────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     SQL_PORT: str = "5432"
     SQL_USERNAME: str = "root"
     SQL_PWD: str = "Pass@123"           # matches existing platform convention
-    SQL_DB: str = "aura_db"
+    SQL_DB: str = "aura"
 
     # ─── Logging ──────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"

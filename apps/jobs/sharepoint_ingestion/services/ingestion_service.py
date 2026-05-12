@@ -124,14 +124,17 @@ class IngestionService:
         # Upsert document record
         checksum = compute_sha256(result.content)
         doc_data = {
-            "file_name": file_name,
-            "file_path": raw_path.replace("\\", "/"),
-            "sharepoint_path": file_info["path"],
-            "source_url": file_info.get("web_url", ""),
+            "source_system": "sharepoint",
+            "document_name": file_name,
+            "source_path": file_info["path"],
+            "document_type": os.path.splitext(file_name)[1].lower().lstrip("."),
             "checksum": checksum,
-            "file_size": file_info.get("size", 0),
-            "file_type": os.path.splitext(file_name)[1].lower().lstrip("."),
-            "source": "sharepoint",
+            "visibility": "all",
+            "tags": {
+                "file_path": raw_path.replace("\\", "/"),
+                "source_url": file_info.get("web_url", ""),
+                "file_size": file_info.get("size", 0),
+            },
             "last_modified": file_info.get("last_modified"),
         }
         doc_id = self.db.upsert_document(doc_data)
@@ -142,9 +145,9 @@ class IngestionService:
 
         # Insert new chunks + embeddings
         chunk_metadata = {
-            "file_name": file_name,
+            "document_name": file_name,
             "source_url": file_info.get("web_url", ""),
-            "sharepoint_path": file_info["path"],
+            "source_path": file_info["path"],
         }
         self.db.insert_chunks(doc_id, chunks, embeddings, chunk_metadata)
 

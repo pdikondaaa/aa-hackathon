@@ -11,7 +11,7 @@ Tables used:
   documents        — one row per SharePoint file, tracks checksum + metadata
   document_chunks  — one row per text chunk, stores chunk text + embedding vector
 """
-import json
+import re
 from typing import Optional
 
 import numpy as np
@@ -20,9 +20,13 @@ from psycopg2.extras import RealDictCursor, Json, execute_values
 from pgvector.psycopg2 import register_vector
 
 from config.settings import settings
+from utils.hashing import compute_sha256
 from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Always connect to the 'aura' database regardless of SQL_DB env override
+_AURA_URL = re.sub(r'/[^/?#]+(\?.*)?$', r'/aura\1', settings.database_url)
 
 
 class DocumentRepository:
@@ -36,9 +40,9 @@ class DocumentRepository:
     def _get_conn(self):
         if self._conn is None or self._conn.closed:
             logger.debug(
-                f"Connecting to PostgreSQL: {settings.SQL_HOST}:{settings.SQL_PORT}/{settings.SQL_DB}"
+                f"Connecting to PostgreSQL: {settings.SQL_HOST}:{settings.SQL_PORT}/aura"
             )
-            self._conn = psycopg2.connect(settings.database_url)
+            self._conn = psycopg2.connect(_AURA_URL)
             register_vector(self._conn)
         return self._conn
 
@@ -49,55 +53,57 @@ class DocumentRepository:
 
     # ─── Document operations ──────────────────────────────────────────────────
 
-    def get_document_by_sharepoint_path(self, sharepoint_path: str) -> Optional[dict]:
-        """Return the document row for a given SharePoint path, or None."""
+    def get_document_by_source_path(self, source_path: str) -> Optional[dict]:
+        """Return the document row for a given source path, or None."""
         conn = self._get_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT * FROM documents WHERE sharepoint_path = %s",
-                (sharepoint_path,),
+                "SELECT * FROM documents WHERE source_path = %s",
+                (source_path,),
             )
             row = cur.fetchone()
             return dict(row) if row else None
 
     def upsert_document(self, doc: dict) -> str:
         """
-        Insert a new document record or update an existing one (matched on sharepoint_path).
+        Insert a new document record or update an existing one (matched on source_path).
         Returns the UUID of the affected row.
 
         Expected keys in doc:
-          file_name, file_path, sharepoint_path, source_url,
-          checksum, file_size, file_type, source, last_modified
+          source_system, document_name, source_path, document_type,
+          checksum, visibility, tags (dict), last_modified
         """
         conn = self._get_conn()
+        doc_copy = dict(doc)
+        doc_copy["tags"] = Json(doc_copy.get("tags") or {})
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO documents (
-                    file_name, file_path, sharepoint_path, source_url,
-                    checksum, file_size, file_type, source, last_modified, updated_at
+                    source_system, document_name, source_path, document_type,
+                    checksum, visibility, tags, last_modified, indexed_at, status, updated_at
                 )
                 VALUES (
-                    %(file_name)s, %(file_path)s, %(sharepoint_path)s, %(source_url)s,
-                    %(checksum)s, %(file_size)s, %(file_type)s, %(source)s,
-                    %(last_modified)s, NOW()
+                    %(source_system)s, %(document_name)s, %(source_path)s, %(document_type)s,
+                    %(checksum)s, %(visibility)s, %(tags)s,
+                    %(last_modified)s, NOW(), 'indexed', NOW()
                 )
-                ON CONFLICT (sharepoint_path) DO UPDATE SET
-                    file_name     = EXCLUDED.file_name,
-                    file_path     = EXCLUDED.file_path,
-                    source_url    = EXCLUDED.source_url,
+                ON CONFLICT (source_path) DO UPDATE SET
+                    document_name = EXCLUDED.document_name,
+                    document_type = EXCLUDED.document_type,
                     checksum      = EXCLUDED.checksum,
-                    file_size     = EXCLUDED.file_size,
-                    file_type     = EXCLUDED.file_type,
+                    tags          = EXCLUDED.tags,
                     last_modified = EXCLUDED.last_modified,
+                    indexed_at    = NOW(),
+                    status        = 'indexed',
                     updated_at    = NOW()
                 RETURNING id
                 """,
-                doc,
+                doc_copy,
             )
             doc_id = str(cur.fetchone()[0])
             conn.commit()
-        logger.debug(f"Upserted document {doc['file_name']} → id={doc_id}")
+        logger.debug(f"Upserted document {doc['document_name']} → id={doc_id}")
         return doc_id
 
     # ─── Chunk operations ─────────────────────────────────────────────────────
@@ -122,13 +128,13 @@ class DocumentRepository:
         metadata: dict,
     ):
         """
-        Bulk-insert text chunks with their vector embeddings.
+        Bulk-upsert text chunks with their vector embeddings.
 
         Args:
             document_id: UUID string of the parent document row
             chunks:      list of text strings
             embeddings:  parallel list of float vectors (len must equal len(chunks))
-            metadata:    JSONB dict stored on every chunk row (file_name, source_url, etc.)
+            metadata:    JSONB dict stored on every chunk row
         """
         if not chunks:
             return
@@ -137,8 +143,10 @@ class DocumentRepository:
             (
                 document_id,
                 idx,
+                compute_sha256(text.encode("utf-8")),
                 text,
                 np.array(emb, dtype=np.float32),
+                settings.EMBEDDING_MODEL,
                 Json(metadata),
             )
             for idx, (text, emb) in enumerate(zip(chunks, embeddings))
@@ -150,15 +158,20 @@ class DocumentRepository:
                 cur,
                 """
                 INSERT INTO document_chunks
-                    (document_id, chunk_index, chunk_text, embedding, metadata)
+                    (document_id, chunk_index, chunk_hash, chunk_text,
+                     embedding, embedding_model, metadata)
                 VALUES %s
+                ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+                    chunk_hash      = EXCLUDED.chunk_hash,
+                    chunk_text      = EXCLUDED.chunk_text,
+                    embedding       = EXCLUDED.embedding,
+                    embedding_model = EXCLUDED.embedding_model,
+                    metadata        = EXCLUDED.metadata
                 """,
                 records,
             )
             conn.commit()
-        logger.info(
-            f"Inserted {len(records)} chunks for document_id={document_id}"
-        )
+        logger.info(f"Inserted {len(records)} chunks for document_id={document_id}")
 
     # ─── Retrieval (used by runtime retriever service) ────────────────────────
 
@@ -167,7 +180,7 @@ class DocumentRepository:
         Cosine similarity search over document_chunks.
 
         Returns a list of dicts:
-          chunk_text, metadata, file_name, source_url, sharepoint_path, similarity
+          chunk_text, metadata, document_name, source_path, source_url, similarity
         """
         conn = self._get_conn()
         vec = np.array(query_embedding, dtype=np.float32)
@@ -177,9 +190,9 @@ class DocumentRepository:
                 SELECT
                     dc.chunk_text,
                     dc.metadata,
-                    d.file_name,
-                    d.source_url,
-                    d.sharepoint_path,
+                    d.document_name,
+                    d.source_path,
+                    d.tags->>'source_url'   AS source_url,
                     1 - (dc.embedding <=> %s::vector) AS similarity
                 FROM document_chunks dc
                 JOIN documents d ON d.id = dc.document_id

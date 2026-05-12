@@ -55,16 +55,15 @@ class SyncService:
         """
         logger.info("SyncService: fetching SharePoint file list")
         site_id = self.connector.get_site_id()
-        drive_id = self.connector.get_drive_id(site_id)
-        remote_files = self.connector.list_folder(drive_id)
-        logger.info(f"SyncService: {len(remote_files)} eligible files found in SharePoint")
+        remote_files = self.connector.list_all_files(site_id)
+        logger.info(f"SyncService: {len(remote_files)} eligible files found across all sites")
 
         remote_paths = {f["path"] for f in remote_files}
         results = []
 
         # ── Classify each remote file ─────────────────────────────────────────
         for file_info in remote_files:
-            result = self._classify(file_info, drive_id)
+            result = self._classify(file_info)
             results.append(result)
 
         # ── Detect server-side deletions ──────────────────────────────────────
@@ -80,13 +79,15 @@ class SyncService:
             f"Sync summary — new: {new_count}, changed: {changed_count}, "
             f"unchanged: {unchanged_count}, deleted: {deleted_count}"
         )
-        return drive_id, results
+        return site_id, results
 
     # ─── Private helpers ──────────────────────────────────────────────────────
 
-    def _classify(self, file_info: dict, drive_id: str) -> "FileSyncResult":
+    def _classify(self, file_info: dict) -> "FileSyncResult":
         sp_path = file_info["path"]
-        existing = self.db.get_document_by_sharepoint_path(sp_path)
+        # Each file carries the drive_id of the site it came from
+        drive_id = file_info["drive_id"]
+        existing = self.db.get_document_by_source_path(sp_path)
 
         if existing is None:
             # New file — download immediately so content is ready for ingestion
@@ -124,7 +125,7 @@ class SyncService:
                 file_info=file_info,
                 action=SyncAction.UNCHANGED,
                 existing_doc_id=str(existing["id"]),
-                content=content,  # caller may update last_modified only
+                content=content,
             )
 
         return FileSyncResult(
@@ -156,7 +157,9 @@ class SyncService:
         deleted = []
         conn = self.db._get_conn()
         with conn.cursor() as cur:
-            cur.execute("SELECT id, sharepoint_path, file_name FROM documents WHERE source = 'sharepoint'")
+            cur.execute(
+                "SELECT id, source_path, document_name FROM documents WHERE source_system = 'sharepoint'"
+            )
             for doc_id, sp_path, fname in cur.fetchall():
                 if sp_path not in remote_paths:
                     logger.info(f"Detected deleted file: {fname} ({sp_path})")

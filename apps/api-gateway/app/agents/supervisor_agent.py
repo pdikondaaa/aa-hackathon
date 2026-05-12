@@ -65,7 +65,7 @@ class SupervisorAgent:
 
         for i, chunk in enumerate(chunks, 1):
             text = chunk.get("chunk_text", "").strip()
-            file_name = chunk.get("file_name", "Unknown source")
+            file_name = chunk.get("document_name", "Unknown source")
             source_url = chunk.get("source_url") or ""
             similarity = chunk.get("similarity", 0)
 

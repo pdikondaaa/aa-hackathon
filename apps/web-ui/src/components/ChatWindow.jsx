@@ -2,6 +2,21 @@ import React, { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import { askBot } from '../services/api';
 
+const THINKING_PHRASES = [
+  'Searching the knowledge base...',
+  'Reading through documents...',
+  'Cross-referencing sources...',
+  'Scanning relevant policies...',
+  'Connecting the dots...',
+  'Consulting the archives...',
+  'Gathering insights...',
+  'Analysing your question...',
+  'Formulating a response...',
+  'Checking every corner...',
+  'Sifting through records...',
+  'Piecing it all together...',
+];
+
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 const getGreeting = (firstName) => {
@@ -25,12 +40,32 @@ const ChatWindow = ({ config, user: authUser, compact = false }) => {
   const fileInputRef   = useRef(null);
   const recognitionRef = useRef(null);
   const voiceBaseRef = useRef('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [thinkingIndex, setThinkingIndex] = useState(0);
+  const [phraseVisible, setPhraseVisible] = useState(true);
 
   useEffect(() => {
     if (!messages.length) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!loading) {
+      setThinkingIndex(0);
+      setPhraseVisible(true);
+      return;
+    }
+    setPhraseVisible(true);
+    let timeout;
+    const interval = setInterval(() => {
+      setPhraseVisible(false);
+      timeout = setTimeout(() => {
+        setThinkingIndex(prev => (prev + 1) % THINKING_PHRASES.length);
+        setPhraseVisible(true);
+      }, 300);
+    }, 2200);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [loading]);
 
   const handleInput = (e) => {
     setInput(e.target.value);
@@ -228,6 +263,23 @@ const ChatWindow = ({ config, user: authUser, compact = false }) => {
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} config={config} />
             ))}
+
+            {/* Thinking bubble — shown while awaiting API response */}
+            {loading && (
+              <div className="message-wrap assistant" aria-live="polite" aria-label="AURA is thinking">
+                <div className="avatar assistant-avatar" aria-hidden="true">A</div>
+                <div className="message-body">
+                  <div className="bubble bubble-assistant thinking-bubble">
+                    <div className="thinking-dots" aria-hidden="true">
+                      <span /><span /><span />
+                    </div>
+                    <span className={`thinking-phrase${phraseVisible ? ' visible' : ''}`}>
+                      {THINKING_PHRASES[thinkingIndex]}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
         )}

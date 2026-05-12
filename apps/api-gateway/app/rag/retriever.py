@@ -31,7 +31,7 @@ _DB_HOST = os.getenv("SQL_HOST", "localhost")
 _DB_PORT = os.getenv("SQL_PORT", "5432")
 _DB_USER = os.getenv("SQL_USERNAME", "")
 _DB_PWD  = os.getenv("SQL_PWD", "")
-_DB_NAME = os.getenv("SQL_DB", "aura_db")
+_DB_NAME = os.getenv("SQL_DB", "aura")
 _DB_URL  = f"postgresql://{quote_plus(_DB_USER)}:{quote_plus(_DB_PWD)}@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}"
 
 
@@ -42,6 +42,7 @@ def _get_embedder() -> HuggingFaceEmbeddings:
 
 
 def _get_db_conn():
+    print(f"Connecting to DB at '{_DB_URL}'")
     conn = psycopg2.connect(_DB_URL)
     register_vector(conn)
     return conn
@@ -61,9 +62,9 @@ def retrieve_chunks(query: str, top_k: int = 10) -> list:
     Returns:
         List of dicts with keys:
             chunk_text     — raw text of the chunk
-            file_name      — original filename (e.g. HR_Policy.pdf)
-            source_url     — SharePoint web URL for deep-linking
-            sharepoint_path— SharePoint-relative path
+            document_name  — original filename (e.g. HR_Policy.pdf)
+            source_url     — SharePoint web URL for deep-linking (from tags)
+            source_path    — SharePoint-relative path
             metadata       — JSONB dict stored at ingestion time
             similarity     — cosine similarity score (0–1)
     """
@@ -71,15 +72,16 @@ def retrieve_chunks(query: str, top_k: int = 10) -> list:
 
     conn = _get_db_conn()
     try:
+        print(f"Connection :'{conn}'")
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT
                     dc.chunk_text,
                     dc.metadata,
-                    d.file_name,
-                    d.source_url,
-                    d.sharepoint_path,
+                    d.document_name,
+                    d.source_path,
+                    d.tags->>'source_url'          AS source_url,
                     1 - (dc.embedding <=> %s::vector) AS similarity
                 FROM document_chunks dc
                 JOIN documents d ON d.id = dc.document_id

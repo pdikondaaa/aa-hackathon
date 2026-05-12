@@ -29,7 +29,7 @@ def _format_response(query: str, chunks: List[dict]) -> Dict:
 
         sources.append({
             "index": i,
-            "file_name": chunk.get("file_name", "Unknown source"),
+            "file_name": chunk.get("document_name", "Unknown source"),
             "source_url": chunk.get("source_url") or "",
             "similarity": round(chunk.get("similarity", 0) * 100),
         })
