@@ -42,6 +42,7 @@ ENV/
 env/
 .venv
 
+
 # IDE
 .vs
 .vscode/
@@ -65,7 +66,7 @@ yarn-error.log*
 node_modules/
 
 # Environment variables
-# .env
+.env
 .env.local
 .env.*.local
 
