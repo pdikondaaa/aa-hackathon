@@ -4,7 +4,7 @@
 //  STEP 1 — Fill in the three values below
 //  STEP 2 — In Azure Portal → Authentication, add a Redirect URI:
 //           Type: Single-page application (SPA)
-//           URI:  http://localhost:5173   (dev)  or  https://<your-domain>  (prod)
+//           URI:  http://localhost:5174   (dev)  or  https://<your-domain>  (prod)
 //  STEP 3 — In Azure Portal → API permissions, confirm "User.Read" is granted
 //  STEP 4 — MFA is enforced via Azure Conditional Access — no code change needed
 

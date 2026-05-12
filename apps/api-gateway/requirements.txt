@@ -1,10 +1,15 @@
 fastapi
 uvicorn[standard]
 psycopg2-binary
+pgvector
+langchain-huggingface
+sentence-transformers
 langgraph
 langchain
 pandas
 pypdf
 httpx
 python-jose[cryptography]
+python-dotenv
 requests
+numpy

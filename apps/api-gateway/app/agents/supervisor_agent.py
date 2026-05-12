@@ -3,7 +3,16 @@ from app.agents.hr_agent import hr_agent
 from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.org_agent import org_agent
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+# Lazy-import retriever so startup never fails if DB is unavailable
+def _retrieve(query: str, top_k: int = 5) -> List[dict]:
+    try:
+        from app.rag.retriever import retrieve_chunks
+        return retrieve_chunks(query, top_k=top_k)
+    except Exception:
+        return []
+
 
 class SupervisorAgent:
     def __init__(self):
@@ -49,55 +58,52 @@ class SupervisorAgent:
             'needs_multiple_agents': len(departments_mentioned) > 1 or is_complex
         }
 
-    def _generate_supervisor_response(self, query: str, agent: str, confidence: float, analysis: Dict[str, Any]) -> str:
-        """Generate supervisor-level response with context."""
-        agent_name = agent.upper()
-        description = self.agent_descriptions[agent]
+    def _format_rag_response(self, chunks: List[dict]):
+        """Extract answer text and structured sources from vector DB chunks."""
+        sources = []
+        answer_parts = []
 
-        response = f"🤖 **Supervisor Agent Analysis**\n\n"
-        response += f"Query: '{query}'\n"
-        response += f"Routed to: {agent_name} Department\n"
-        response += f"Confidence: {confidence:.2%}\n"
-        response += f"Department: {description}\n\n"
+        for i, chunk in enumerate(chunks, 1):
+            text = chunk.get("chunk_text", "").strip()
+            file_name = chunk.get("document_name", "Unknown source")
+            source_url = chunk.get("source_url") or ""
+            similarity = chunk.get("similarity", 0)
 
-        if analysis['is_urgent']:
-            response += "⚠️ **URGENT REQUEST DETECTED** - This will be prioritized.\n\n"
+            if text:
+                answer_parts.append(text)
 
-        if analysis['needs_multiple_agents']:
-            response += "📋 **MULTI-DEPARTMENT QUERY** - This may involve coordination between departments.\n\n"
+            sources.append({
+                "index": i,
+                "file_name": file_name,
+                "source_url": source_url,
+                "similarity": round(similarity * 100),
+            })
 
-        response += "---\n\n"
-        return response
+        return "\n\n".join(answer_parts), sources
 
-    def process_query(self, query: str) -> str:
-        """Process query through supervisor agent coordination."""
-        # Route the query
+    def process_query(self, query: str) -> Dict[str, Any]:
+        """Route query, retrieve from vector DB, fall back to static agents."""
         agent, confidence = router.route_query(query)
-
-        # Analyze query complexity
         analysis = self._analyze_query_complexity(query)
 
-        # Get response from appropriate agent
-        agent_response = self.agents[agent](query)
+        # Primary path: vector DB retrieval
+        chunks = _retrieve(query, top_k=5)
+        sources = []
 
-        # Generate supervisor context
-        supervisor_context = self._generate_supervisor_response(query, agent, confidence, analysis)
-
-        # Combine responses
-        final_response = supervisor_context + agent_response
-
-        # Add follow-up information for complex queries
-        if analysis['needs_multiple_agents']:
-            final_response += "\n\n💡 **Note:** If this query involves multiple departments, please provide more specific details or contact the relevant department directly."
+        if chunks:
+            answer, sources = self._format_rag_response(chunks)
+        else:
+            # Fallback: static agent response when DB is empty or unavailable
+            answer = self.agents[agent](query)
 
         if analysis['is_urgent']:
-            final_response += "\n\n🚨 **Urgent requests** are prioritized. If you need immediate assistance, please call the emergency hotline."
+            answer += "\n\n**URGENT** — If you need immediate assistance, contact the relevant department directly."
 
-        return final_response
+        return {"answer": answer, "sources": sources}
 
 # Global supervisor instance
 supervisor = SupervisorAgent()
 
-def run_assistant(query: str) -> str:
+def run_assistant(query: str) -> Dict[str, Any]:
     """Main entry point - supervisor agent coordinates all requests."""
     return supervisor.process_query(query)
