@@ -165,6 +165,7 @@ export async function askBot(message) {
     const response = await httpClient.post('/api/chat', { message });
     return {
       answer: response.answer,
+      sources: response.sources || [],
       user_email: response.user_email,
       user_id: response.user_id,
     };

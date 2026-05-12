@@ -33,6 +33,36 @@ const MessageBubble = ({ message, config }) => {
           )}
         </div>
 
+        {/* Source citations */}
+        {!isUser && message.sources && message.sources.length > 0 && (
+          <div className="sources-section">
+            <div className="sources-header">
+              <i className="fas fa-database" /> Sources ({message.sources.length})
+            </div>
+            <div className="sources-list">
+              {message.sources.map((src) => (
+                <div key={src.index} className="source-item">
+                  <span className="source-index">{src.index}</span>
+                  {src.source_url ? (
+                    <a
+                      className="source-link"
+                      href={src.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={src.file_name}
+                    >
+                      {src.file_name}
+                    </a>
+                  ) : (
+                    <span className="source-name">{src.file_name}</span>
+                  )}
+                  <span className="source-relevance">{src.similarity}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Timestamp + feedback row */}
         <div className="message-meta">
           <span className="timestamp">{message.timestamp}</span>

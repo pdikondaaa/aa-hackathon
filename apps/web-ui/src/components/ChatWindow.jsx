@@ -88,6 +88,7 @@ const ChatWindow = ({ config, user: authUser, compact = false }) => {
           id: nextId + 1,
           role: 'assistant',
           content: response.answer,
+          sources: response.sources || [],
           timestamp: now,
           metadata: {
             user_email: response.user_email,

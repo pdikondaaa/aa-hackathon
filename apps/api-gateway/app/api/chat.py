@@ -35,10 +35,11 @@ def chat(
         user_id = user["user_id"]
         
         # Call agent
-        response = run_assistant(req.message)
-        
+        result = run_assistant(req.message)
+
         return {
-            "answer": response,
+            "answer": result["answer"],
+            "sources": result.get("sources", []),
             "user_email": user_email,
             "user_id": user_id,
         }
