@@ -72,6 +72,47 @@ def _verify_signature(token: str, signing_key: Dict[str, Any]) -> None:
         raise JWTError("Signature verification failed")
 
 
+def validate_id_token(token: str) -> Dict[str, Any]:
+    """
+    Validate Azure AD id_token for SSO callback.
+
+    Passes the full JWKS dict to jwt.decode() — python-jose selects the
+    correct key by 'kid' automatically. Passing a single JWK causes
+    signature failures in some python-jose versions, so we avoid it here.
+    Audience is validated manually to handle both str and list formats.
+    """
+    try:
+        jwks = _get_jwks()
+
+        payload = jwt.decode(
+            token,
+            jwks,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
+
+        # Expiry
+        exp = payload.get("exp")
+        if exp and exp < time.time():
+            raise JWTError("Token has expired")
+
+        # Audience — Azure may return str or list
+        aud = payload.get("aud", "")
+        valid_aud = CLIENT_ID in aud if isinstance(aud, list) else aud == CLIENT_ID
+        if not valid_aud:
+            raise JWTError(f"Invalid audience: {aud}")
+
+        # Issuer
+        ISSUER_V1 = f"https://sts.windows.net/{TENANT_ID}/"
+        if payload.get("iss") not in (ISSUER, ISSUER_V1):
+            raise JWTError(f"Invalid issuer: {payload.get('iss')}")
+
+        return payload
+
+    except JWTError as e:
+        raise JWTError(f"Invalid id_token: {str(e)}")
+
+
 def validate_token(token: str) -> Dict[str, Any]:
     """
     Validate JWT token from Azure AD.
@@ -88,13 +129,10 @@ def validate_token(token: str) -> Dict[str, Any]:
     try:
         # Step 1: Get signing key
         signing_key = _get_signing_key(token)
-
         # Step 2: Verify signature
         _verify_signature(token, signing_key)
-
         # Step 3: Decode claims (no verification here)
         payload = jwt.get_unverified_claims(token)
-
         # Step 4: Validate issuer (accept both v1 sts.windows.net and v2 login.microsoftonline.com tokens)
         ISSUER_V1 = f"https://sts.windows.net/{TENANT_ID}/"
         if payload.get("iss") not in (ISSUER, ISSUER_V1):
