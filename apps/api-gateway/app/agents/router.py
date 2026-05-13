@@ -1,9 +1,14 @@
 import re
 from typing import Dict, List, Tuple
 
+
 class QueryRouter:
+    """
+    Keyword + pattern based router — used as fallback when LLM routing
+    is unavailable in the MasterAgent.
+    """
+
     def __init__(self):
-        # Define routing rules with priorities
         self.routing_rules = {
             'employee': {
                 'keywords': [
@@ -26,92 +31,107 @@ class QueryRouter:
             'hr': {
                 'keywords': [
                     'leave', 'vacation', 'holiday', 'sick', 'medical', 'maternity', 'paternity',
-                    'hr', 'human resources', 'employee', 'benefits', 'salary', 'pay',
-                    'performance', 'review', 'training', 'recruitment', 'hiring'
+                    'parental', 'hr', 'human resources', 'employee', 'benefits', 'salary', 'pay',
+                    'performance', 'review', 'training', 'recruit', 'hiring', 'onboard',
+                    'resign', 'posh', 'gratuity', 'pf', 'epf', 'insurance', 'ghi',
+                    'referral', 'certification', 'attendance', 'wfh', 'comp off',
+                    'relocat', 'transfer', 'shifting', 'moving to', 'accommodation',
+                    'home town', 'hometown', 'new city',
                 ],
                 'patterns': [
-                    r'\b(annual|casual|sick|maternity|paternity)\s+leave\b',
+                    r'\b(annual|casual|sick|maternity|paternity|parental)\s+leave\b',
                     r'\b(hr|human resources)\b',
-                    r'\b(employee|staff)\s+(benefits|policies)\b'
+                    r'\b(employee|staff)\s+(benefits|policies|handbook)\b',
+                    r'\b(posh|gratuity|epf|provident\s+fund)\b',
+                    r'\b(relocat|relocation|relocating|transfer)\b',
+                    r'\b(shifting|moving)\s+to\b',
                 ],
-                'priority': 1
+                'priority': 1,
             },
             'it': {
                 'keywords': [
                     'computer', 'laptop', 'software', 'hardware', 'network', 'internet',
                     'email', 'vpn', 'access', 'password', 'login', 'security',
-                    'printer', 'wifi', 'technical', 'support', 'it', 'help'
+                    'printer', 'wifi', 'technical', 'support', 'it', 'helpdesk',
+                    'mfa', '2fa', 'onedrive', 'outlook', 'teams', 'backup',
+                    'install', 'configure', 'antivirus', 'remote access',
                 ],
                 'patterns': [
                     r'\b(it|tech|technical)\s+support\b',
                     r'\b(vpn|remote)\s+access\b',
-                    r'\b(password|login)\s+(reset|issue)\b'
+                    r'\b(password|login)\s+(reset|issue|change)\b',
+                    r'\b(mfa|two.?factor|authenticator)\b',
                 ],
-                'priority': 1
+                'priority': 1,
             },
             'admin': {
                 'keywords': [
                     'travel', 'expense', 'reimbursement', 'booking', 'hotel', 'flight',
                     'office', 'supplies', 'equipment', 'facility', 'event', 'meeting',
-                    'purchase', 'invoice', 'payment', 'vendor', 'administration'
+                    'cab', 'taxi', 'orix', 'cabman', 'parking', 'workplace', 'fountainhead',
+                    'purchase', 'invoice', 'vendor', 'administration',
                 ],
                 'patterns': [
-                    r'\b(travel|business trip)\b',
+                    r'\b(travel|business\s+trip|cab)\b',
                     r'\b(expense\s+report|reimbursement)\b',
-                    r'\b(office|meeting)\s+(supplies|room)\b'
+                    r'\b(office|meeting)\s+(supplies|room|booking)\b',
+                    r'\b(orix|cabman|parking)\b',
                 ],
-                'priority': 1
+                'priority': 1,
+            },
+            'pmo': {
+                'keywords': [
+                    'project', 'pmo', 'milestone', 'delivery', 'timeline', 'sprint',
+                    'resource', 'allocation', 'risk', 'issue', 'blocker',
+                    'onboarding process', 'project overview', 'eli lilly', 'abi', 'ncr',
+                    'spencer', 'dell', 'best practice', 'process document', 'status report',
+                ],
+                'patterns': [
+                    r'\b(pmo|project\s+management\s+office)\b',
+                    r'\b(project|milestone)\s+(status|overview|tracking)\b',
+                    r'\b(onboarding\s+process|process\s+document)\b',
+                ],
+                'priority': 1,
+            },
+            'finance': {
+                'keywords': [
+                    'zoho', 'expense report', 'expense claim', 'submit expense',
+                    'tds', 'tax', 'income tax', 'declaration', 'form 16',
+                    'finance', 'accounting', 'tds deduction', 'joint declaration',
+                    'salary account', 'kotak',
+                ],
+                'patterns': [
+                    r'\b(zoho|expense\s+(claim|report|submission))\b',
+                    r'\b(tds|income\s+tax|tax\s+declaration)\b',
+                    r'\b(form\s*16|joint\s+declaration)\b',
+                ],
+                'priority': 1,
             },
             'org': {
                 'keywords': [
                     'company', 'organization', 'mission', 'vision', 'values', 'culture',
                     'structure', 'department', 'leadership', 'policy', 'procedure',
-                    'communication', 'contact', 'diversity', 'inclusion'
+                    'contact', 'diversity', 'inclusion',
                 ],
                 'patterns': [
-                    r'\b(company|organization)\s+(mission|vision|values)\b',
-                    r'\b(organizational|company)\s+structure\b',
-                    r'\b(contact|communication)\s+information\b'
+                    r'\b(company|organization)\s+(mission|vision|values|structure)\b',
+                    r'\b(contact|communication)\s+information\b',
                 ],
-                'priority': 2  # Lower priority - fallback
-            }
+                'priority': 2,  # fallback domain
+            },
         }
 
-    def _calculate_confidence(self, query: str, agent: str) -> float:
-        """Calculate confidence score for routing to an agent."""
-        query_lower = query.lower()
-        rules = self.routing_rules[agent]
+    def _score(self, query: str, domain: str) -> float:
+        q = query.lower()
+        rules = self.routing_rules[domain]
 
-        score = 0.0
-        total_weight = 0.0
+        kw_hits = sum(1 for kw in rules['keywords'] if kw in q)
+        kw_score = min(1.0, kw_hits / 3.0) * 0.6
 
-        # Keyword matching (weight: 0.6)
-        keyword_matches = 0
-        for keyword in rules['keywords']:
-            if keyword in query_lower:
-                keyword_matches += 1
+        pat_hits = sum(1 for p in rules['patterns'] if re.search(p, q, re.IGNORECASE))
+        pat_score = min(1.0, pat_hits / 2.0) * 0.4
 
-        if rules['keywords']:
-            keyword_score = min(1.0, keyword_matches / 3.0)  # Cap at 3 matches for high confidence
-            score += 0.6 * keyword_score
-            total_weight += 0.6
-
-        # Pattern matching (weight: 0.4)
-        pattern_matches = 0
-        for pattern in rules['patterns']:
-            if re.search(pattern, query_lower, re.IGNORECASE):
-                pattern_matches += 1
-
-        if rules['patterns']:
-            pattern_score = min(1.0, pattern_matches / 2.0)  # Cap at 2 patterns for high confidence
-            score += 0.4 * pattern_score
-            total_weight += 0.4
-
-        # Normalize score
-        if total_weight > 0:
-            score = score / total_weight
-
-        return score
+        return kw_score + pat_score
 
     def _apply_priority_overrides(
         self, query_lower: str, scores: Dict[str, float]
@@ -152,11 +172,11 @@ class QueryRouter:
 
         if best_score < 0.05:
             return 'org', best_score
+        return best, best_score
 
-        return best_agent, best_score
 
-# Global router instance
 router = QueryRouter()
+
 
 def route(query: str) -> str:
     """Legacy route function for backward compatibility."""

@@ -6,10 +6,17 @@ langchain-huggingface
 sentence-transformers
 langgraph
 langchain
+langchain-ollama
+langchain-community
+langchain-text-splitters
+faiss-cpu
 pandas
 pypdf
 httpx
 python-jose[cryptography]
 python-dotenv
 requests
+tavily-python
+docx2txt
+python-pptx
 numpy
