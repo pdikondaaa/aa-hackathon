@@ -30,8 +30,8 @@ load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 _EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 _DB_HOST = os.getenv("SQL_HOST", "localhost")
 _DB_PORT = os.getenv("SQL_PORT", "5432")
-_DB_USER = os.getenv("SQL_USERNAME", "")
-_DB_PWD  = os.getenv("SQL_PWD", "")
+_DB_USER = os.getenv("SQL_USERNAME", "postgres")
+_DB_PWD  = os.getenv("SQL_PWD", "Alexa@1234")
 _DB_NAME = os.getenv("SQL_DB", "aura")
 _DB_URL  = f"postgresql://{quote_plus(_DB_USER)}:{quote_plus(_DB_PWD)}@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}"
 

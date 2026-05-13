@@ -6,20 +6,22 @@ import {
   fetchUserProfile, buildUser,
   checkUserAuthorization, getUserInfo,
 } from './utils/authService';
-import TopBar     from './components/TopBar';
-import Sidebar    from './components/Sidebar';
-import ChatWindow from './components/ChatWindow';
-import RightPanel from './components/RightPanel';
-import PersonalNotes from './components/PersonalNotes';
-import LoginPage  from './components/LoginPage';
+import TopBar          from './components/TopBar';
+import Sidebar         from './components/Sidebar';
+import ChatWindow      from './components/ChatWindow';
+import RightPanel      from './components/RightPanel';
+import PersonalNotes   from './components/PersonalNotes';
+import LoginPage       from './components/LoginPage';
+import EscalationDrawer from './components/EscalationDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
 
 export default function App() {
-  const [activeNav,      setActiveNav]      = useState(chatConfig.navigation[0].id);
-  const [sidebarOpen,    setSidebarOpen]    = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [chatKey,        setChatKey]        = useState(0);
-  const [isDark,         setIsDark]         = useState(false);
+  const [activeNav,       setActiveNav]       = useState(chatConfig.navigation[0].id);
+  const [sidebarOpen,     setSidebarOpen]     = useState(true);
+  const [rightPanelOpen,  setRightPanelOpen]  = useState(false);
+  const [chatKey,         setChatKey]         = useState(0);
+  const [isDark,          setIsDark]          = useState(false);
+  const [escalationOpen,  setEscalationOpen]  = useState(false);
 
   const [user,        setUser]        = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -162,6 +164,7 @@ export default function App() {
               key={chatKey}
               config={chatConfig}
               user={user}
+              onOpenEscalation={() => setEscalationOpen(true)}
             />
           </main>
         )}
@@ -173,6 +176,11 @@ export default function App() {
           />
         )}
       </div>
+      <EscalationDrawer
+        isOpen={escalationOpen}
+        onClose={() => setEscalationOpen(false)}
+        user={user}
+      />
     </div>
   );
 }

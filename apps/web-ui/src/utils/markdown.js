@@ -9,8 +9,11 @@ const parseBold = (text) =>
 
 const parseLinks = (text) =>
   text.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    (_, label, href) =>
+      /^https?:\/\//.test(href)
+        ? `<a href="${href}" target="_blank" rel="noreferrer">${label}</a>`
+        : `<a href="${href}" class="esc-inline-link">${label}</a>`,
   );
 
 export const parseMarkdown = (raw) => {
