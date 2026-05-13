@@ -1,5 +1,27 @@
 from typing import List
 
+_llm = None
+
+
+def _get_llm():
+    global _llm
+    if _llm is not None:
+        return _llm
+    try:
+        from langchain_ollama import ChatOllama
+        from app.agents.working.config import LLMConfig
+        cfg = LLMConfig()
+        _llm = ChatOllama(
+            base_url=cfg.base_url,
+            model=cfg.model,
+            temperature=0.1,
+            num_predict=cfg.max_tokens,
+        )
+        print("[OrgAgent] LLM ready")
+    except Exception as exc:
+        print(f"[OrgAgent] LLM unavailable ({exc})")
+    return _llm
+
 
 def _retrieve(query: str, top_k: int = 5) -> List[dict]:
     try:
@@ -10,49 +32,27 @@ def _retrieve(query: str, top_k: int = 5) -> List[dict]:
 
 
 def org_agent(query: str) -> str:
-    """Org Agent — retrieves answers from the vector DB."""
+    """Org Agent — retrieves answers from the vector DB and synthesizes with LLM."""
     chunks = _retrieve(query, top_k=5)
+    if not chunks:
+        return "I couldn't find specific information for your query. Please contact info@company.com."
 
-        # Find matching keywords
-        matched_categories = []
-        for category, keywords in org_keywords.items():
-            if any(keyword in query_lower for keyword in keywords):
-                matched_categories.append(category)
+    context = "\n\n".join(
+        f"[{c.get('document_name', 'Company Document')}]\n{c['chunk_text'].strip()}"
+        for c in chunks if c.get("chunk_text")
+    )
 
-        # Extract relevant sections
-        current_section = ""
-        in_relevant_section = False
-
-        for line in lines:
-            line_lower = line.lower().strip()
-
-            # Check if this is a section header
-            if line.startswith('##') or line.startswith('###'):
-                current_section = line_lower.replace('#', '').strip()
-                in_relevant_section = any(cat in current_section.lower() for cat in matched_categories)
-
-            # If we're in a relevant section or the line contains matched keywords
-            if in_relevant_section or any(keyword in line_lower for cat in matched_categories for keyword in org_keywords[cat]):
-                if line.strip():  # Skip empty lines
-                    relevant_lines.append(line)
-
-        return relevant_lines[:10]  # Limit to top 10 relevant lines
-
-    def process_query(self, query: str) -> str:
-        """Process Organization-related query and return relevant information."""
-        relevant_info = self._find_relevant_info(query)
-
-        if not relevant_info:
-            return f"I couldn't find specific organizational information support-nexus@alignedautomation.com for your query: '{query}'. For general inquiries, please contact "
-
-        # Format the response
-        response = f"Based on company information, here's information related to your query '{query}':\n\n"
-        response += "\n".join(f"• {line}" for line in relevant_info)
-        response += "\n\nFor more detailed information, please contact the appropriate department or support-nexus@alignedautomation.com."
-
-        return response
-
-# Global instance
-org_agent_instance = OrgAgent()
+    llm = _get_llm()
+    if llm:
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            from app.agents.working.personalities import ORG_PERSONALITY
+            messages = [
+                SystemMessage(content=ORG_PERSONALITY + f"\n\n**Company Information:**\n{context}"),
+                HumanMessage(content=query),
+            ]
+            return llm.invoke(messages).content
+        except Exception as exc:
+            print(f"[OrgAgent] LLM invoke error ({exc}); returning raw context")
 
     return "\n\n".join(c["chunk_text"].strip() for c in chunks if c.get("chunk_text"))

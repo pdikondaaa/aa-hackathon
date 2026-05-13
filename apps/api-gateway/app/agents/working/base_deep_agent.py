@@ -4,7 +4,7 @@ Each domain agent subclasses this, supplying its data folders, personality,
 and fallback contact — all execution logic lives here.
 """
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .config import DeepAgentConfig
 from .knowledge_base import KnowledgeBase
@@ -16,13 +16,12 @@ DATA_ROOT = os.path.join(_AGENTS_DIR, "data")
 
 class BaseDeepAgent:
     """
-    Three-tier execution (most capable → simplest):
-      1. RAG   — FAISS retriever + ChatOllama
-      2. LLM   — ChatOllama with manual context
-      3. Keyword — plain text search, no LLM
+    Two-tier execution:
+      1. LLM  — pgvector DB embeddings (primary) + local KB (supplementary) + ChatOllama
+      2. Keyword — pgvector chunks formatted as readable prose, no LLM
 
     After every process_query() call, self.last_sources holds the list
-    of document filenames that were actually used to build the answer.
+    of document filenames/URLs that were used to build the answer.
     """
 
     _DATA_FOLDERS: List[str] = []
@@ -37,7 +36,6 @@ class BaseDeepAgent:
             emb_config=self._config.embeddings,
         )
         self._llm = None
-        self._chain = None
         self._mode = "keyword"
         self.last_sources: List[str] = []
         self._setup_llm()
@@ -48,11 +46,33 @@ class BaseDeepAgent:
 
     def process_query(self, query: str) -> str:
         self.last_sources = []
-        if self._mode == "rag":
-            return self._rag_query(query)
         if self._mode == "llm":
             return self._llm_query(query)
         return self._keyword_query(query)
+
+    # ------------------------------------------------------------------
+    # pgvector retrieval helper
+    # ------------------------------------------------------------------
+
+    def _retrieve_pgvector(self, query: str, top_k: int = 5) -> Tuple[str, List[str]]:
+        """Query the PostgreSQL/pgvector DB. Returns (context_text, source_names)."""
+        try:
+            from app.rag.retriever import retrieve_chunks
+            chunks = retrieve_chunks(query, top_k=top_k)
+            if not chunks:
+                return "", []
+            context = "\n\n".join(
+                f"[{c.get('document_name', 'Company Document')}]\n{c['chunk_text']}"
+                for c in chunks if c.get("chunk_text")
+            )
+            sources = [
+                c.get("source_url") or c.get("document_name", "")
+                for c in chunks if c.get("source_url") or c.get("document_name")
+            ]
+            return context, sources
+        except Exception as exc:
+            print(f"[{self.__class__.__name__}] pgvector retrieval error ({exc})")
+            return "", []
 
     # ------------------------------------------------------------------
     # Setup
@@ -61,9 +81,6 @@ class BaseDeepAgent:
     def _setup_llm(self):
         try:
             from langchain_ollama import ChatOllama
-            from langchain_core.prompts import ChatPromptTemplate
-            from langchain.chains.combine_documents import create_stuff_documents_chain
-            from langchain.chains import create_retrieval_chain
 
             self._llm = ChatOllama(
                 base_url=self._config.llm.base_url,
@@ -71,71 +88,45 @@ class BaseDeepAgent:
                 temperature=self._config.llm.temperature,
                 num_predict=self._config.llm.max_tokens,
             )
-            retriever = self._kb.as_retriever()
-            if retriever:
-                system_prompt = self._PERSONALITY + "\n\n**Context from company documents:**\n{context}"
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    ("human", "{input}"),
-                ])
-                self._chain = create_retrieval_chain(
-                    retriever, create_stuff_documents_chain(self._llm, prompt)
-                )
-                self._mode = "rag"
-            else:
-                self._mode = "llm"
+            self._mode = "llm"
+            print(f"[{self.__class__.__name__}] mode=llm | model={self._config.llm.model}")
 
-            print(f"[{self.__class__.__name__}] mode={self._mode} | model={self._config.llm.model}")
-
-        except ImportError as exc:
-            print(f"[{self.__class__.__name__}] LangChain/Ollama unavailable ({exc}) — keyword fallback")
+        except Exception as exc:
+            print(f"[{self.__class__.__name__}] LLM setup failed ({exc}) — keyword fallback")
             self._mode = "keyword"
 
     # ------------------------------------------------------------------
-    # Tier 1 — RAG
-    # ------------------------------------------------------------------
-
-    def _rag_query(self, query: str) -> str:
-        try:
-            web_context = tavily_search(query) if is_tavily_available() else ""
-            input_query = f"{query}\n\n[Additional web context:\n{web_context}]" if web_context else query
-
-            result = self._chain.invoke({"input": input_query})
-
-            # Extract exact source documents used
-            self.last_sources = list(dict.fromkeys(
-                doc.metadata.get("source", "")
-                for doc in result.get("context", [])
-                if doc.metadata.get("source")
-            ))
-
-            answer = result.get("answer", "")
-            if answer:
-                return answer
-        except Exception as exc:
-            print(f"[{self.__class__.__name__}] RAG error ({exc}); falling back to LLM tier")
-        return self._llm_query(query)
-
-    # ------------------------------------------------------------------
-    # Tier 2 — LLM + manual context
+    # Tier 1 — LLM + pgvector (primary) + local KB (supplementary)
     # ------------------------------------------------------------------
 
     def _llm_query(self, query: str) -> str:
         try:
             from langchain_core.messages import SystemMessage, HumanMessage
 
-            docs = self._kb.retrieve(query)
-            self.last_sources = list(dict.fromkeys(
-                d.metadata.get("source", "") for d in docs if d.metadata.get("source")
-            ))
+            # pgvector is primary — always query DB embeddings first
+            pg_context, pg_sources = self._retrieve_pgvector(query, top_k=8)
+            self.last_sources = list(dict.fromkeys(s for s in pg_sources if s))
 
+            # local KB as supplementary context
+            docs = self._kb.retrieve(query)
+            for d in docs:
+                src = d.metadata.get("source", "")
+                if src and src not in self.last_sources:
+                    self.last_sources.append(src)
             local_context = "\n\n".join(
                 f"[{d.metadata.get('source', '')}]\n{d.page_content}" for d in docs
             )
+
             web_context = tavily_search(query) if is_tavily_available() else ""
-            full_context = local_context
+
+            # pgvector always listed first so LLM sees it as authoritative
+            context_parts = [p for p in [pg_context, local_context] if p]
+            full_context = "\n\n".join(context_parts)
             if web_context:
-                full_context += f"\n\n[Live web context — use only if doc context is insufficient]\n{web_context}"
+                full_context += f"\n\n[Live web context — use only if above is insufficient]\n{web_context}"
+
+            if not full_context:
+                return self._keyword_query(query)
 
             messages = [
                 SystemMessage(content=self._PERSONALITY + f"\n\n**Context:**\n{full_context}"),
@@ -147,36 +138,65 @@ class BaseDeepAgent:
         return self._keyword_query(query)
 
     # ------------------------------------------------------------------
-    # Tier 3 — Keyword fallback
+    # Tier 2 — Keyword fallback (no LLM: format pgvector chunks as prose)
     # ------------------------------------------------------------------
 
     def _keyword_query(self, query: str) -> str:
-        docs = self._kb.retrieve(query)
-        self.last_sources = list(dict.fromkeys(
-            d.metadata.get("source", "") for d in docs if d.metadata.get("source")
-        ))
+        pg_context, pg_sources = self._retrieve_pgvector(query, top_k=8)
+        self.last_sources = list(dict.fromkeys(s for s in pg_sources if s))
 
-        lines = [
-            line.strip()
-            for doc in docs
-            for line in doc.page_content.split("\n")
-            if line.strip()
-        ]
         web_context = tavily_search(query) if is_tavily_available() else ""
 
-        if not lines and not web_context:
-            return (
-                f"I couldn't find specific information for your query. "
-                f"Please contact {self._FALLBACK_CONTACT}."
-            )
+        if pg_context:
+            return self._format_pg_as_prose(pg_context, web_context)
 
-        response = ""
-        if lines:
-            response += "Based on company documents:\n\n"
-            response += "\n".join(f"• {line}" for line in lines[:12])
+        # last resort: local KB keyword search
+        docs = self._kb.retrieve(query)
+        for d in docs:
+            src = d.metadata.get("source", "")
+            if src and src not in self.last_sources:
+                self.last_sources.append(src)
+        if docs:
+            local_text = "\n\n".join(d.page_content for d in docs[:3])
+            return self._format_pg_as_prose(local_text, web_context)
 
         if web_context:
-            response += ("\n\n" if response else "") + f"**Additional web context:**\n\n{web_context}"
+            return f"{web_context}\n\nFor more details, contact {self._FALLBACK_CONTACT}."
 
-        response += f"\n\nFor more details, contact {self._FALLBACK_CONTACT}."
-        return response
+        return (
+            f"I couldn't find specific information for your query. "
+            f"Please contact {self._FALLBACK_CONTACT}."
+        )
+
+    def _format_pg_as_prose(self, context: str, web_context: str = "") -> str:
+        """Group pgvector chunks by document name and return readable paragraphs."""
+        sections: List[tuple] = []
+        current_doc = ""
+        current_lines: List[str] = []
+
+        for raw_line in context.split("\n"):
+            line = raw_line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                if current_lines:
+                    sections.append((current_doc, " ".join(current_lines)))
+                current_doc = line[1:-1]
+                current_lines = []
+            elif line:
+                current_lines.append(line)
+
+        if current_lines:
+            sections.append((current_doc, " ".join(current_lines)))
+
+        if not sections:
+            return context
+
+        parts = []
+        for doc_name, content in sections:
+            header = f"**{doc_name}**\n" if doc_name else ""
+            parts.append(f"{header}{content}")
+
+        result = "\n\n".join(parts)
+        if web_context:
+            result += f"\n\n**Additional Information:**\n{web_context}"
+        result += f"\n\nFor more details, contact {self._FALLBACK_CONTACT}."
+        return result

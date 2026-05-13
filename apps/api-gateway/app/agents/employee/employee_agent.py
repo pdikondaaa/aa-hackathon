@@ -68,6 +68,24 @@ def _order_by() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Self-service pattern — queries about the logged-in user's own info
+# ---------------------------------------------------------------------------
+
+_SELF_RE = re.compile(
+    r"""
+    \bmy\s+(?:mobile|phone|email|designation|department|manager|reporting\s+manager|
+              role|grade|level|skill|project|blood\s*group|date\s+of\s+joining|
+              joining|detail|info(?:rmation)?|profile|team|location|
+              nationality|experience|contact|address|work\s+phone)
+    |\bwho\s+am\s+i\b
+    |\babout\s+me\b
+    |\bmy\s+(?:employee|hr|personal)\s+(?:detail|info|profile|record|data)
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
 # Query builder — natural language → (sql, params, intent)
 # ---------------------------------------------------------------------------
 
@@ -472,12 +490,25 @@ def _format_results(rows: List[Dict], intent: str) -> str:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def employee_agent(query: str) -> str:
+def employee_agent(query: str, user_email: str = "") -> str:
     """
     Employee Agent — answers employee queries by querying
     the Zoho People database (people.vb_employees) directly.
+
+    When user_email is provided, self-referential queries ("my designation",
+    "who am I", etc.) are resolved against the logged-in user's record.
     """
     try:
+        # Self-service: resolve "my X" / "who am I" against the caller's record
+        if user_email and _SELF_RE.search(query):
+            rows = _run(
+                f'SELECT * FROM {EMPLOYEE_VIEW} WHERE "{COL_EMAIL}" ILIKE %s LIMIT 1',
+                (user_email,),
+            )
+            if rows:
+                return _fmt_detail_card(rows[0])
+            # fall through to general search if email not found
+
         sql, params, intent = _build_query(query)
         rows = _run(sql, params)
 

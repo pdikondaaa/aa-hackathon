@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class LLMConfig:
-    base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
-    model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "llama3"))
+    base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434"))
+    model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "gpt-oss"))
     temperature: float = 0.1
     max_tokens: int = 2048
 

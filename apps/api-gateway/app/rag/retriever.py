@@ -17,7 +17,7 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 import numpy as np
-import psycopg2
+from psycopg2 import pool as _pg_pool
 from psycopg2.extras import RealDictCursor
 from pgvector.psycopg2 import register_vector
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -34,6 +34,8 @@ _DB_PWD  = os.getenv("SQL_PWD", "")
 _DB_NAME = os.getenv("SQL_DB", "aura")
 _DB_URL  = f"postgresql://{quote_plus(_DB_USER)}:{quote_plus(_DB_PWD)}@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}"
 
+_conn_pool: Optional[_pg_pool.ThreadedConnectionPool] = None
+
 
 @lru_cache(maxsize=1)
 def _get_embedder() -> HuggingFaceEmbeddings:
@@ -41,11 +43,25 @@ def _get_embedder() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(model_name=_EMBEDDING_MODEL)
 
 
+def _get_pool() -> _pg_pool.ThreadedConnectionPool:
+    global _conn_pool
+    if _conn_pool is None:
+        print(f"[retriever] Creating connection pool → {_DB_URL}")
+        _conn_pool = _pg_pool.ThreadedConnectionPool(1, 8, _DB_URL)
+    return _conn_pool
+
+
 def _get_db_conn():
-    print(f"Connecting to DB at '{_DB_URL}'")
-    conn = psycopg2.connect(_DB_URL)
+    conn = _get_pool().getconn()
     register_vector(conn)
     return conn
+
+
+def _release_conn(conn) -> None:
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
+        pass
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -72,7 +88,6 @@ def retrieve_chunks(query: str, top_k: int = 10) -> list:
 
     conn = _get_db_conn()
     try:
-        print(f"Connection :'{conn}'")
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
@@ -92,7 +107,7 @@ def retrieve_chunks(query: str, top_k: int = 10) -> list:
             )
             return [dict(row) for row in cur.fetchall()]
     finally:
-        conn.close()
+        _release_conn(conn)
 
 
 def retrieve_context_text(query: str, top_k: int = 10) -> str:
