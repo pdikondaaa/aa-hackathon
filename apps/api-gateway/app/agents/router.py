@@ -5,6 +5,24 @@ class QueryRouter:
     def __init__(self):
         # Define routing rules with priorities
         self.routing_rules = {
+            'employee': {
+                'keywords': [
+                    'employee', 'staff', 'colleague', 'coworker', 'team member',
+                    'who is', 'find person', 'contact details', 'email of', 'phone of',
+                    'mobile of', 'designation of', 'job title of', 'department of',
+                    'reporting to', 'manager of', 'works in', 'people directory',
+                    'employee directory', 'employee list', 'staff list', 'org chart',
+                    'head count', 'headcount', 'how many employees', 'total employees',
+                ],
+                'patterns': [
+                    r'\bwho\s+is\s+[A-Z][a-z]+\b',
+                    r'\b(find|search|get|show)\s+(employee|staff|person|colleague)\b',
+                    r'\b(email|phone|mobile|contact)\s+(of|for)\s+\w+\b',
+                    r'\b(employees?|staff)\s+(in|from|of)\s+\w+\b',
+                    r'\b(designation|title|role)\s+of\s+\w+\b',
+                ],
+                'priority': 0,  # Highest priority for direct employee lookups
+            },
             'hr': {
                 'keywords': [
                     'leave', 'vacation', 'holiday', 'sick', 'medical', 'maternity', 'paternity',
@@ -95,49 +113,43 @@ class QueryRouter:
 
         return score
 
-    def route_query(self, query: str) -> Tuple[str, float]:
-        """
-        Route query to the most appropriate agent.
-
-        Returns:
-            Tuple of (agent_name, confidence_score)
-        """
-        if not query or not query.strip():
-            return 'org', 0.0
-
-        scores = {}
-        for agent in self.routing_rules:
-            scores[agent] = self._calculate_confidence(query, agent)
-
-        # Find the agent with highest score
+    def _apply_priority_overrides(
+        self, query_lower: str, scores: Dict[str, float]
+    ) -> Tuple[str, float]:
+        """Apply domain-specific priority rules and return (best_agent, best_score)."""
         best_agent = max(scores, key=scores.get)
         best_score = scores[best_agent]
 
-        # Apply priority adjustments
-        query_lower = query.lower()
+        priority_rules = [
+            ('employee', ['who is', 'find employee', 'employee directory', 'email of',
+                          'phone of', 'contact of', 'designation of', 'how many employees']),
+            ('hr',       ['leave', 'vacation', 'maternity', 'paternity', 'sick day']),
+            ('it',       ['computer', 'software', 'password', 'login', 'network']),
+            ('admin',    ['travel', 'expense', 'booking']),
+        ]
 
-        # HR gets priority for leave-related queries
-        if 'leave' in query_lower and best_agent != 'hr':
-            hr_score = scores.get('hr', 0)
-            if hr_score > 0.1:  # If HR has any reasonable match
-                best_agent = 'hr'
-                best_score = hr_score
+        for agent, triggers in priority_rules:
+            if best_agent == agent:
+                continue
+            if any(t in query_lower for t in triggers):
+                candidate_score = scores.get(agent, 0)
+                if candidate_score > 0.1:
+                    best_agent = agent
+                    best_score = candidate_score
+                    break  # first matching rule wins
 
-        # IT gets priority for technical issues
-        if any(word in query_lower for word in ['computer', 'software', 'password', 'login', 'network']) and best_agent != 'it':
-            it_score = scores.get('it', 0)
-            if it_score > 0.1:
-                best_agent = 'it'
-                best_score = it_score
+        return best_agent, best_score
 
-        # Admin gets priority for travel/expenses
-        if any(word in query_lower for word in ['travel', 'expense', 'booking']) and best_agent != 'admin':
-            admin_score = scores.get('admin', 0)
-            if admin_score > 0.1:
-                best_agent = 'admin'
-                best_score = admin_score
+    def route_query(self, query: str) -> Tuple[str, float]:
+        """Route query to the most appropriate agent."""
+        if not query or not query.strip():
+            return 'org', 0.0
 
-        # If confidence is too low, default to org
+        scores = {agent: self._calculate_confidence(query, agent)
+                  for agent in self.routing_rules}
+
+        best_agent, best_score = self._apply_priority_overrides(query.lower(), scores)
+
         if best_score < 0.05:
             return 'org', best_score
 
@@ -148,5 +160,5 @@ router = QueryRouter()
 
 def route(query: str) -> str:
     """Legacy route function for backward compatibility."""
-    agent, confidence = router.route_query(query)
+    agent, _ = router.route_query(query)
     return agent

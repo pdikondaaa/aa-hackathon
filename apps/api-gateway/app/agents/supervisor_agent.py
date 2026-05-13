@@ -3,6 +3,7 @@ from app.agents.hr_agent import hr_agent
 from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.org_agent import org_agent
+from app.agents.employee import employee_agent
 from typing import Dict, Any, List
 
 # Lazy-import retriever so startup never fails if DB is unavailable
@@ -20,14 +21,16 @@ class SupervisorAgent:
             'hr': hr_agent,
             'admin': admin_agent,
             'it': it_agent,
-            'org': org_agent
+            'org': org_agent,
+            'employee': employee_agent,
         }
 
         self.agent_descriptions = {
             'hr': 'Human Resources - handles leave policies, employee benefits, performance reviews, and HR procedures',
             'admin': 'Administration - manages travel, expenses, office supplies, events, and administrative procedures',
             'it': 'Information Technology - handles technical support, software/hardware issues, security, and IT policies',
-            'org': 'Organization - provides company information, policies, structure, and general organizational details'
+            'org': 'Organization - provides company information, policies, structure, and general organizational details',
+            'employee': 'Employee Directory - looks up employee details, contact info, department, title, and reporting lines from the live HR database',
         }
 
     def _analyze_query_complexity(self, query: str) -> Dict[str, Any]:
@@ -83,18 +86,22 @@ class SupervisorAgent:
 
     def process_query(self, query: str) -> Dict[str, Any]:
         """Route query, retrieve from vector DB, fall back to static agents."""
-        agent, confidence = router.route_query(query)
+        agent, _ = router.route_query(query)
         analysis = self._analyze_query_complexity(query)
 
-        # Primary path: vector DB retrieval
-        chunks = _retrieve(query, top_k=5)
         sources = []
 
-        if chunks:
-            answer, sources = self._format_rag_response(chunks)
+        if agent == 'employee':
+            # Employee queries go directly to the live Zoho HR database — no vector search
+            answer = self.agents['employee'](query)
         else:
-            # Fallback: static agent response when DB is empty or unavailable
-            answer = self.agents[agent](query)
+            # Primary path: vector DB retrieval
+            chunks = _retrieve(query, top_k=5)
+            if chunks:
+                answer, sources = self._format_rag_response(chunks)
+            else:
+                # Fallback: static agent response when DB is empty or unavailable
+                answer = self.agents[agent](query)
 
         if analysis['is_urgent']:
             answer += "\n\n**URGENT** — If you need immediate assistance, contact the relevant department directly."
