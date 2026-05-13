@@ -43,6 +43,8 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'skill set', 'employee directory', 'staff directory',
         'my designation', 'my manager', 'my department', 'my team',
         'my mobile', 'my email', 'my profile', 'my details',
+        'who is', 'profile of', 'details of', 'info about', 'information about',
+        'find employee', 'look up', 'lookup', 'search employee',
     ],
 }
 
@@ -70,6 +72,12 @@ _EMP_PATTERNS = [
     re.compile(r"\bmy\s+(?:level|skill|project|blood|joining|detail|info|profile|team|location|experience|contact)\b", re.IGNORECASE),
     # identity: "who am I", "about me"
     re.compile(r"\b(?:who\s+am\s+i|about\s+me)\b", re.IGNORECASE),
+    # person lookup: "who is Amol", "who is Amol Metkari"
+    re.compile(r"\bwho\s+is\s+\w", re.IGNORECASE),
+    # profile/details/info of a person: "profile of Amol", "details of Priya", "info about Rahul"
+    re.compile(r"\b(?:profile|details?|information|info)\s+(?:of|about|for)\s+\w", re.IGNORECASE),
+    # find/search person: "find Amol", "look up Priya", "search for Rahul"
+    re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
 ]
 
 
@@ -323,7 +331,7 @@ class MasterAgent:
                         return unquote(qs["file"][0])
                 except Exception:
                     pass
-                return url.split("/")[-1] or url
+                return unquote(url.split("/")[-1]) or url
 
             source_list = "\n".join(
                 f"  • [{_source_label(s)}]({s})" for s in unique_sources

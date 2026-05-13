@@ -21,9 +21,10 @@ from psycopg2 import pool as _pg_pool
 from psycopg2.extras import RealDictCursor
 from pgvector.psycopg2 import register_vector
 from langchain_huggingface import HuggingFaceEmbeddings
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 # ── Configuration (reads from environment / .env) ─────────────────────────────
 _EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

@@ -1,6 +1,11 @@
 import os
+from pathlib import Path
 from urllib.parse import quote_plus
+from pydantic import Field
 from pydantic_settings import BaseSettings
+
+# Resolve repo root at import time (5 levels up from this file)
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 # Resolve job root at import time (jobs/sharepoint_ingestion/)
 _JOB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -8,12 +13,13 @@ _JOB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Settings(BaseSettings):
     # ─── Azure AD / SharePoint ────────────────────────────────────────────────
-    TENANT_ID: str = "3dcd35b5-f9c5-48ca-8653-821568ad3397"
-    CLIENT_ID: str = "f03e6b79-ed73-455c-b86a-f15a5d4b360c"
-    CLIENT_SECRET: str = "2a1b1e9d-d34d-4eed-9219-138fa4d7b866"
-    TENANT_NAME: str = "alignedautomation.sharepoint.com"
-    SHAREPOINT_SITE_PATH: str = "sites/Nexus/DigitalKnowledgeManagement"
-    DOCUMENT_LIBRARY_NAME: str = "Documents"
+    # Field names kept for backward compat; env vars come from root .env
+    TENANT_ID: str = Field(default="3dcd35b5-f9c5-48ca-8653-821568ad3397", validation_alias="AZURE_TENANT_ID")
+    CLIENT_ID: str = Field(default="f03e6b79-ed73-455c-b86a-f15a5d4b360c", validation_alias="SHAREPOINT_CLIENT_ID")
+    CLIENT_SECRET: str = Field(default="", validation_alias="SHAREPOINT_CLIENT_SECRET")
+    TENANT_NAME: str = Field(default="alignedautomation.sharepoint.com", validation_alias="SHAREPOINT_TENANT_NAME")
+    SHAREPOINT_SITE_PATH: str = Field(default="sites/Nexus/DigitalKnowledgeManagement", validation_alias="SHAREPOINT_SITE_PATH")
+    DOCUMENT_LIBRARY_NAME: str = Field(default="Documents", validation_alias="SHAREPOINT_DOCUMENT_LIBRARY")
 
     # ─── Embeddings ───────────────────────────────────────────────────────────
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -33,7 +39,7 @@ class Settings(BaseSettings):
     SQL_HOST: str = "localhost"
     SQL_PORT: str = "5432"
     SQL_USERNAME: str = "root"
-    SQL_PWD: str = "Pass@123"           # matches existing platform convention
+    SQL_PWD: str = "Pass@123"
     SQL_DB: str = "aura"
 
     # ─── Logging ──────────────────────────────────────────────────────────────
@@ -55,7 +61,12 @@ class Settings(BaseSettings):
     def graph_scopes(self) -> list:
         return ["https://graph.microsoft.com/.default"]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {
+        "env_file": str(_REPO_ROOT / ".env"),
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+        "populate_by_name": True,
+    }
 
 
 settings = Settings()

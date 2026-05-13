@@ -12,8 +12,9 @@ from contextlib import redirect_stdout, redirect_stderr
 # Make `app` importable
 sys.path.insert(0, os.path.dirname(__file__))
 
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 # ── Enable ANSI colours on Windows ──────────────────────────────────────────
 os.system("")

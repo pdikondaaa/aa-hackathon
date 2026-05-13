@@ -4,9 +4,10 @@ from typing import Dict, List, Tuple
 
 import psycopg2
 import psycopg2.extras
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()  # ensure .env is loaded before reading env vars at call time
+load_dotenv(Path(__file__).resolve().parents[5] / ".env")
 
 from app.agents.employee.config import (
     EMPLOYEE_VIEW,

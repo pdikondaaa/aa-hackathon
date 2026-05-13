@@ -622,6 +622,8 @@ button, a, [role="button"] {
 .message-content ul, .message-content ol { padding-left: 18px; margin: 4px 0; }
 .message-content li          { margin-bottom: 3px; list-style: disc; }
 .message-content ol li       { list-style: decimal; }
+.message-content a           { color: #2563eb; text-decoration: underline; }
+.message-content a:hover     { color: #1d4ed8; }
 
 .message-meta { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
 .message-wrap.user .message-meta { justify-content: flex-end; }

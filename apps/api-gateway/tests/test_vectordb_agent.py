@@ -16,8 +16,9 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 # ── expected values ───────────────────────────────────────────────────────────
 # all-MiniLM-L6-v2 produces 384-dim vectors; nomic-embed-text produces 768-dim.

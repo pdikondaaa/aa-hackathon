@@ -26,8 +26,8 @@ def _load_dotenv(dotenv_path: Path):
                 os.environ[key] = value
 
 
-# Try to load environment variables from a .env file in the workspace root.
-BASE_DIR = Path(__file__).resolve().parents[3]
+# Load from the repo root .env (aa-hackathon/.env)
+BASE_DIR = Path(__file__).resolve().parents[5]
 _dotenv_path = BASE_DIR / ".env"
 _load_dotenv(_dotenv_path)
 

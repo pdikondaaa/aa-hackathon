@@ -16,8 +16,9 @@ import os
 # Add api-gateway/ to sys.path so `app` is importable when running directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 from app.agents.deep.config import DeepAgentConfig
 from app.agents.deep.hr_deep_agent import HRDeepAgent

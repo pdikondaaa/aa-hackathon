@@ -7,6 +7,12 @@ const EMOJI_PREFIX = /^[✅⏳❌🏥💰📚🏠🎯🔔📋]/u;
 const parseBold = (text) =>
   text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 
+const parseLinks = (text) =>
+  text.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+  );
+
 export const parseMarkdown = (raw) => {
   const lines = raw.split('\n');
   const output = [];
@@ -28,11 +34,13 @@ export const parseMarkdown = (raw) => {
       continue;
     }
 
+    const renderInline = (t) => parseLinks(parseBold(t));
+
     // Unordered list item
     if (line.startsWith('- ')) {
       if (listType === 'ol') flushList();
       listType = 'ul';
-      listBuffer.push(`<li>${parseBold(line.slice(2))}</li>`);
+      listBuffer.push(`<li>${renderInline(line.slice(2))}</li>`);
       continue;
     }
 
@@ -41,19 +49,19 @@ export const parseMarkdown = (raw) => {
     if (olMatch) {
       if (listType === 'ul') flushList();
       listType = 'ol';
-      listBuffer.push(`<li>${parseBold(olMatch[2])}</li>`);
+      listBuffer.push(`<li>${renderInline(olMatch[2])}</li>`);
       continue;
     }
 
     // Emoji-prefixed status lines — keep as block items outside a list
     if (EMOJI_PREFIX.test(line)) {
       flushList();
-      output.push(`<p class="emoji-line">${parseBold(line)}</p>`);
+      output.push(`<p class="emoji-line">${renderInline(line)}</p>`);
       continue;
     }
 
     flushList();
-    output.push(`<p>${parseBold(line)}</p>`);
+    output.push(`<p>${renderInline(line)}</p>`);
   }
 
   flushList();
