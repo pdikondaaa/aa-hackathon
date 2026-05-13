@@ -1,17 +1,3 @@
-"""
-Master Agent — single entry point for all user queries.
-
-Architecture (master-slave):
-  User query
-      ↓
-  MasterAgent  (this file)
-      ├─ step 1: LLM routing  → decide which domain agents to call
-      │          (keyword fallback if LLM is unavailable)
-      ├─ step 2: dispatch     → call one or many slave agents
-      ├─ step 3: synthesize   → if multi-domain, LLM merges responses
-      └─ step 4: cite sources → append exact document names used
-"""
-
 import re
 import json
 from typing import Dict, List, Optional
