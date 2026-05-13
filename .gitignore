@@ -67,6 +67,7 @@ node_modules/
 
 apps/jobs/sharepoint_ingestion/storage/
 
+
 # Environment variables
 *.env
 *.env.local
