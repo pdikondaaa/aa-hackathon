@@ -5,11 +5,21 @@ import { parseMarkdown } from '../utils/markdown';
 // Assistant bubbles include thumbs-up / thumbs-down feedback that toggles colour on click.
 const MessageBubble = ({ message, config, onOpenEscalation }) => {
   const [feedback, setFeedback] = useState(null); // null | 'up' | 'down'
+  const [copied, setCopied]     = useState(false);
 
   const isUser = message.role === 'user';
 
   // Toggle: click same button again to clear feedback
   const handleFeedback = (type) => setFeedback((prev) => (prev === type ? null : type));
+
+  const handleCopy = () => {
+    // Strip HTML tags to get plain text
+    const plain = message.content.replace(/<[^>]+>/g, '');
+    navigator.clipboard.writeText(plain).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   return (
     <div className={`message-wrap${isUser ? ' user' : ' assistant'}`}>
@@ -94,6 +104,14 @@ const MessageBubble = ({ message, config, onOpenEscalation }) => {
               >
                 <i className="fas fa-thumbs-down" />
               </button>
+              <button
+                className={`feedback-btn${copied ? ' active-copy' : ''}`}
+                onClick={handleCopy}
+                title={copied ? 'Copied!' : 'Copy response'}
+                aria-label="Copy response"
+              >
+                <i className={`fas ${copied ? 'fa-check' : 'fa-copy'}`} />
+              </button>
               {feedback && (
                 <span className="feedback-thanks" role="status">
                   {config.labels.feedbackThanks}
@@ -107,7 +125,7 @@ const MessageBubble = ({ message, config, onOpenEscalation }) => {
       {/* Avatar — user side */}
       {isUser && (
         <div className="avatar user-avatar" aria-hidden="true">
-          {config.user.initials}
+          {config.user?.initials}
         </div>
       )}
     </div>

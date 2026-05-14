@@ -1,7 +1,7 @@
 import React from 'react';
 
 const NEXT_STEPS = [
-  { icon: 'fa-calendar-check', title: '30-Day Review',       desc: 'Scheduled with Rajesh Kumar on 28 May 2026',   color: '#1D76BC' },
+  { icon: 'fa-calendar-check', title: '30-Day Review',       desc: 'Scheduled with Sachin Kumar on 28 May 2026',   color: '#1D76BC' },
   { icon: 'fa-users',          title: 'Team All-Hands',       desc: 'Engineering pod meetup — May 15, 10:00 AM',    color: '#27AAE1' },
   { icon: 'fa-graduation-cap', title: 'Complete Training',    desc: '3 training modules still pending completion',  color: '#4ED44E' },
   { icon: 'fa-trophy',         title: '90-Day Milestone',     desc: 'Performance check on 25 Jul 2026',             color: '#2A3D90' },

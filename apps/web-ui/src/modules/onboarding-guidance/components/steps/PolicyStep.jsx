@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { POLICIES } from '../../constants/onboardingData';
 
-const PolicyStep = ({ user }) => {
+const PolicyStep = ({ user, onNext }) => {
   const [policies, setPolicies]       = useState(POLICIES);
   const [selectedId, setSelectedId]   = useState(POLICIES[0].id);
   const [signerName, setSignerName]   = useState(user?.name || 'Amol Metkari');
@@ -19,17 +19,6 @@ const PolicyStep = ({ user }) => {
 
   return (
     <div className="og-step-content">
-      <div className="og-step-header">
-        <div className="og-step-header-top">
-          <div>
-            <h2 className="og-step-title">Policy &amp; compliance</h2>
-            <p className="og-step-subtitle">
-              Review and acknowledge company policies. You can download copies for your records.
-            </p>
-          </div>
-        </div>
-      </div>
-
       <div className="og-policy-layout">
         {/* Left: document list */}
         <div className="og-policy-list-panel">
@@ -80,13 +69,61 @@ const PolicyStep = ({ user }) => {
               </div>
 
               <div className="og-policy-preview-area">
-                <div className="og-policy-section-label">SECTION 01</div>
-                <div className="og-policy-preview-title">{selectedPolicy.title}</div>
-                <p className="og-policy-preview-text">{selectedPolicy.description}</p>
-                <div className="og-policy-preview-lines">
-                  <div /><div /><div style={{ width: '75%' }} />
-                  <div /><div style={{ width: '60%' }} />
-                </div>
+                {selectedPolicy.sections ? (
+                  selectedPolicy.sections.map(section => (
+                    <div key={section.id} className="og-policy-section">
+                      {section.type === 'dos' && (
+                        <>
+                          <div className="og-policy-section-heading og-policy-dos-heading">
+                            <i className="fas fa-check-circle" /> {section.heading}
+                          </div>
+                          <ul className="og-policy-item-list">
+                            {section.items.map((item, i) => (
+                              <li key={i} className="og-policy-dos-item">
+                                <i className="fas fa-check" />
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                      {section.type === 'donts' && (
+                        <>
+                          <div className="og-policy-section-heading og-policy-donts-heading">
+                            <i className="fas fa-times-circle" /> {section.heading}
+                          </div>
+                          <ul className="og-policy-item-list">
+                            {section.items.map((item, i) => (
+                              <li key={i} className="og-policy-donts-item">
+                                <i className="fas fa-times" />
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                      {section.type === 'list' && (
+                        <>
+                          <div className="og-policy-section-heading">{section.heading}</div>
+                          <ul className="og-policy-bullet-list">
+                            {section.items.map((item, i) => <li key={i}>{item}</li>)}
+                          </ul>
+                        </>
+                      )}
+                      {!section.type && (
+                        <>
+                          <div className="og-policy-section-heading">{section.heading}</div>
+                          <p className="og-policy-preview-text">{section.body}</p>
+                        </>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    <div className="og-policy-preview-title">{selectedPolicy.title}</div>
+                    <p className="og-policy-preview-text">{selectedPolicy.description}</p>
+                  </>
+                )}
               </div>
 
               {!selectedPolicy.signed ? (
@@ -127,6 +164,11 @@ const PolicyStep = ({ user }) => {
             </>
           )}
         </div>
+      </div>
+      <div className="og-step-footer" style={{ justifyContent: 'flex-end' }}>
+        <button className="og-btn-primary" onClick={onNext}>
+          Continue <i className="fas fa-arrow-right" />
+        </button>
       </div>
     </div>
   );

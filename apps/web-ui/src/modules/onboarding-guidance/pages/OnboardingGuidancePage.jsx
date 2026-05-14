@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import StepNavigator  from '../components/StepNavigator';
 import WelcomeStep    from '../components/steps/WelcomeStep';
 import ProfileStep    from '../components/steps/ProfileStep';
@@ -10,6 +10,7 @@ import DocumentsStep  from '../components/steps/DocumentsStep';
 import AllSetStep     from '../components/steps/AllSetStep';
 import { WIZARD_STEPS } from '../constants/onboardingData';
 import ChatWindow from '../../../components/ChatWindow';
+import { fetchEmployeeProfile, fetchPeers } from '../services/onboardingApi';
 
 const STEP_COMPONENTS = {
   'welcome':   WelcomeStep,
@@ -22,14 +23,61 @@ const STEP_COMPONENTS = {
   'all-set':   AllSetStep,
 };
 
-const INITIAL_COMPLETED = ['welcome', 'profile'];
+const INITIAL_COMPLETED = [];
 
 const OnboardingGuidancePage = ({ user, config }) => {
-  const [activeStepId, setActiveStepId] = useState('it-access');
-  const [completed, setCompleted]       = useState(INITIAL_COMPLETED);
-  const [chatOpen, setChatOpen]         = useState(false);
-  const [chatMounted, setChatMounted]   = useState(false);
-  const chatKeyRef                      = useRef(Date.now());
+  const [activeStepId, setActiveStepId]   = useState('welcome');
+  const [completed, setCompleted]         = useState(INITIAL_COMPLETED);
+  const [chatOpen, setChatOpen]           = useState(false);
+  const [chatMounted, setChatMounted]     = useState(false);
+  const [fabPos, setFabPos]               = useState(null); // null = CSS default position
+  const [employeeData, setEmployeeData]   = useState(null);
+  const [peersData, setPeersData]         = useState(null);
+  const chatKeyRef                        = useRef(Date.now());
+  const dragRef                           = useRef({ dragging: false, moved: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
+
+  useEffect(() => {
+    const email = user?.email || user?.username;
+    if (!email) return;
+    fetchEmployeeProfile(email)
+      .then(data => {
+        setEmployeeData(data);
+        return fetchPeers(email);
+      })
+      .then(setPeersData)
+      .catch(err => console.warn('Onboarding data fetch failed:', err.message));
+  }, [user]);
+
+  const handleFabPointerDown = (e) => {
+    if (e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = { dragging: true, moved: false, startX: e.clientX, startY: e.clientY, startLeft: rect.left, startTop: rect.top };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleFabPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d.dragging) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    if (!d.moved) e.currentTarget.setAttribute('data-dragging', '');
+    d.moved = true;
+    setFabPos({
+      left: Math.max(0, Math.min(window.innerWidth - e.currentTarget.offsetWidth, d.startLeft + dx)),
+      top:  Math.max(0, Math.min(window.innerHeight - e.currentTarget.offsetHeight, d.startTop + dy)),
+    });
+  };
+
+  const handleFabPointerUp = (e) => {
+    const d = dragRef.current;
+    if (!d.dragging) return;
+    d.dragging = false;
+    e.currentTarget.removeAttribute('data-dragging');
+    if (!d.moved) {
+      chatOpen ? setChatOpen(false) : handleOpenChat();
+    }
+  };
 
   const activeStep    = WIZARD_STEPS.find(s => s.id === activeStepId);
   const activeIndex   = WIZARD_STEPS.findIndex(s => s.id === activeStepId);
@@ -80,6 +128,12 @@ const OnboardingGuidancePage = ({ user, config }) => {
               <span className="og-breadcrumb-root">Onboarding</span>
               <i className="fas fa-chevron-right og-breadcrumb-sep" aria-hidden="true" />
               <span className="og-breadcrumb-current">{activeStep?.title}</span>
+              {activeStep?.subtitle && (
+                <>
+                  <i className="fas fa-chevron-right og-breadcrumb-sep" aria-hidden="true" />
+                  <span className="og-breadcrumb-sub">{activeStep.subtitle}</span>
+                </>
+              )}
             </nav>
 
             <div className="og-step-counter">
@@ -100,7 +154,7 @@ const OnboardingGuidancePage = ({ user, config }) => {
 
           {/* Scrollable step content */}
           <div className="og-wizard-body">
-            <StepContent user={user} onNext={handleNext} />
+            <StepContent user={user} employeeData={employeeData} peersData={peersData} onNext={handleNext} />
           </div>
 
         </div>
@@ -109,7 +163,10 @@ const OnboardingGuidancePage = ({ user, config }) => {
       {/* ── Floating AI chat button ───────────────────────────── */}
       <button
         className={`og-chat-fab${chatOpen ? ' og-chat-fab--open' : ''}`}
-        onClick={() => (chatOpen ? setChatOpen(false) : handleOpenChat())}
+        style={fabPos ? { top: fabPos.top, left: fabPos.left, bottom: 'auto', right: 'auto' } : undefined}
+        onPointerDown={handleFabPointerDown}
+        onPointerMove={handleFabPointerMove}
+        onPointerUp={handleFabPointerUp}
         aria-label={chatOpen ? 'Close AI Assistant' : 'Ask AI Assistant'}
       >
         <i className={`fas ${chatOpen ? 'fa-times' : 'fa-robot'}`} />
