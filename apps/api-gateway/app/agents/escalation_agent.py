@@ -3,7 +3,7 @@ ESCALATION_MESSAGE = (
     "by the appropriate team. All escalations are handled manually and you will be "
     "contacted directly.\n\n"
     "Please fill out the form below to provide additional details:\n"
-    "https://www.google.com"
+    "[📋 Open Escalation Form](#escalation)"
 )
 
 
