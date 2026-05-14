@@ -8,7 +8,8 @@ from app.api.config.db_config import get_db_connection
 class FeedbackService:
 
     # ------------------------------------------------------------------ #
-    # Submit feedback  POST /api/messages/{id}/feedback                   #
+    # Submit / upsert feedback  POST /api/messages/{id}/feedback          #
+    # Safe to call even if a record already exists (changes the rating).  #
     # ------------------------------------------------------------------ #
     def submit_feedback(
         self,
@@ -42,6 +43,11 @@ class FeedbackService:
                     INSERT INTO feedback
                         (id, message_id, user_id, rating, category, comment, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (message_id, user_id)
+                    DO UPDATE SET
+                        rating   = EXCLUDED.rating,
+                        category = COALESCE(EXCLUDED.category, feedback.category),
+                        comment  = COALESCE(EXCLUDED.comment, feedback.comment)
                     RETURNING id, message_id, user_id, rating, category, comment, created_at
                     """,
                     (feedback_id, message_id, user_id, rating, category, comment, now),
@@ -54,7 +60,7 @@ class FeedbackService:
                         (id, user_id, action, entity_type, entity_id, status, created_at)
                     VALUES (%s, %s, 'create', 'feedback', %s, 'success', %s)
                     """,
-                    (audit_id, user_id, feedback_id, now),
+                    (audit_id, user_id, row["id"], now),
                 )
             conn.commit()
 
@@ -89,6 +95,48 @@ class FeedbackService:
             conn.commit()
 
         return dict(row) if row else None
+
+    # ------------------------------------------------------------------ #
+    # Delete feedback  DELETE /api/feedback/{id}                          #
+    # ------------------------------------------------------------------ #
+    def delete_feedback(self, feedback_id: str, user_id: str) -> bool:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM feedback WHERE id = %s AND user_id = %s RETURNING id",
+                    (feedback_id, user_id),
+                )
+                deleted = cur.fetchone() is not None
+            conn.commit()
+        return deleted
+
+    # ------------------------------------------------------------------ #
+    # Get feedback for a conversation  GET /api/conversations/{id}/feedback
+    # Returns a map of message_id → {id, rating} for the given user.    #
+    # ------------------------------------------------------------------ #
+    def get_conversation_feedback(self, conversation_id: str, user_id: str) -> Optional[dict]:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Verify the conversation belongs to this user
+                cur.execute(
+                    "SELECT id FROM conversations WHERE id = %s AND user_id = %s AND is_deleted = FALSE",
+                    (conversation_id, user_id),
+                )
+                if not cur.fetchone():
+                    return None
+
+                cur.execute(
+                    """
+                    SELECT f.id, f.message_id, f.rating, f.category, f.comment, f.created_at
+                    FROM feedback f
+                    JOIN messages m ON m.id = f.message_id
+                    WHERE m.conversation_id = %s AND f.user_id = %s
+                    """,
+                    (conversation_id, user_id),
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+
+        return {r["message_id"]: r for r in rows}
 
     # ------------------------------------------------------------------ #
     # List feedback (admin)  GET /api/admin/feedback                      #

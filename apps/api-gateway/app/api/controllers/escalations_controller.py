@@ -10,8 +10,17 @@ from app.api.models.escalation_model import (
     EscalationStatusUpdate,
 )
 from app.api.services.escalations_service import EscalationsService
+from app.api.services.user_service import get_or_create_user
 
 _service = EscalationsService()
+
+
+def _resolve_user(current_user: dict) -> str:
+    return get_or_create_user(
+        current_user["user_id"],
+        current_user["email"],
+        current_user.get("name") or current_user["email"],
+    )
 
 esc_router   = APIRouter(prefix="/api/escalations", tags=["Escalations"])
 admin_router = APIRouter(prefix="/api/admin",       tags=["Escalations"])
@@ -54,9 +63,11 @@ def list_my_escalations(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None, description="Filter by status"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Return escalation records."""
-    return _service.list_my_escalations("dev-user", page, limit, status)
+    """Return escalation records for the authenticated user."""
+    user_id = _resolve_user(current_user)
+    return _service.list_my_escalations(user_id, page, limit, status)
 
 
 # ------------------------------------------------------------------ #
@@ -67,9 +78,10 @@ def list_my_escalations(
     response_model=EscalationRecord,
     summary="Get escalation",
 )
-def get_escalation(id: str):
+def get_escalation(id: str, current_user: dict = Depends(get_current_user)):
     """View full status and details of a single escalation."""
-    record = _service.get_escalation(id, "dev-user")
+    user_id = _resolve_user(current_user)
+    record = _service.get_escalation(id, user_id)
     if not record:
         raise HTTPException(status_code=404, detail="Escalation not found")
     return record
@@ -83,12 +95,13 @@ def get_escalation(id: str):
     response_model=EscalationRecord,
     summary="Update escalation status",
 )
-def update_escalation_status(id: str, body: EscalationStatusUpdate):
+def update_escalation_status(id: str, body: EscalationStatusUpdate, current_user: dict = Depends(get_current_user)):
     """Move escalation through submitted → in_progress → resolved (admin/team).
     Optionally set assigned_team, assigned_to, and resolution_notes."""
+    user_id = _resolve_user(current_user)
     record = _service.update_status(
         id,
-        "dev-user",
+        user_id,
         body.status,
         body.assigned_team,
         body.assigned_to,

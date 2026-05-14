@@ -1,16 +1,38 @@
 import React, { useState } from 'react';
 import { parseMarkdown } from '../utils/markdown';
+import { submitFeedback, deleteFeedback } from '../services/api';
 
 // Single chat message — user bubble (right) or assistant bubble (left).
 // Assistant bubbles include thumbs-up / thumbs-down feedback that toggles colour on click.
-const MessageBubble = ({ message, config, onOpenEscalation }) => {
-  const [feedback, setFeedback] = useState(null); // null | 'up' | 'down'
-  const [copied, setCopied]     = useState(false);
+const MessageBubble = ({ message, config, conversationId, onOpenEscalation }) => {
+  const [feedback, setFeedback] = useState(message.initialFeedback?.rating ?? null);
+  const [feedbackId, setFeedbackId] = useState(message.initialFeedback?.id ?? null);
+  const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const isUser = message.role === 'user';
 
-  // Toggle: click same button again to clear feedback
-  const handleFeedback = (type) => setFeedback((prev) => (prev === type ? null : type));
+  const handleFeedback = async (type) => {
+    if (submitting || !message.backendId) return;
+    setSubmitting(true);
+    try {
+      if (feedback === type) {
+        // Same button clicked again — toggle off
+        if (feedbackId) await deleteFeedback(feedbackId);
+        setFeedback(null);
+        setFeedbackId(null);
+      } else {
+        // New vote or change vote — upsert
+        const result = await submitFeedback(message.backendId, type);
+        setFeedback(type);
+        setFeedbackId(result.id);
+      }
+    } catch (e) {
+      console.error('Feedback failed:', e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleCopy = () => {
     // Strip HTML tags to get plain text
@@ -43,7 +65,10 @@ const MessageBubble = ({ message, config, onOpenEscalation }) => {
                 const anchor = e.target.closest('a');
                 if (anchor && anchor.getAttribute('href') === '#escalation') {
                   e.preventDefault();
-                  onOpenEscalation?.();
+                  onOpenEscalation?.({
+                    conversationId: conversationId ?? message.conversationId ?? null,
+                    messageId: message.backendId ?? null,
+                  });
                 }
               }}
             />
@@ -84,25 +109,27 @@ const MessageBubble = ({ message, config, onOpenEscalation }) => {
         <div className="message-meta">
           <span className="timestamp">{message.timestamp}</span>
 
-          {!isUser && (
+          {!isUser && message.backendId && (
             <div className="feedback-buttons" role="group" aria-label="Message feedback">
               <button
                 className={`feedback-btn${feedback === 'up' ? ' active-up' : ''}`}
                 onClick={() => handleFeedback('up')}
+                disabled={submitting}
                 title="Helpful"
                 aria-pressed={feedback === 'up'}
                 aria-label="Mark as helpful"
               >
-                <i className="fas fa-thumbs-up" />
+                <i className={`fas fa-thumbs-up${submitting ? ' fa-spin' : ''}`} />
               </button>
               <button
                 className={`feedback-btn${feedback === 'down' ? ' active-down' : ''}`}
                 onClick={() => handleFeedback('down')}
+                disabled={submitting}
                 title="Not helpful"
                 aria-pressed={feedback === 'down'}
                 aria-label="Mark as not helpful"
               >
-                <i className="fas fa-thumbs-down" />
+                <i className={`fas fa-thumbs-down${submitting ? ' fa-spin' : ''}`} />
               </button>
               <button
                 className={`feedback-btn${copied ? ' active-copy' : ''}`}

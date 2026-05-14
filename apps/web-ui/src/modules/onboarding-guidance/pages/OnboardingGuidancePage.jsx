@@ -33,19 +33,28 @@ const OnboardingGuidancePage = ({ user, config }) => {
   const [fabPos, setFabPos]               = useState(null); // null = CSS default position
   const [employeeData, setEmployeeData]   = useState(null);
   const [peersData, setPeersData]         = useState(null);
+  const [profileError, setProfileError]   = useState(null);
   const chatKeyRef                        = useRef(Date.now());
   const dragRef                           = useRef({ dragging: false, moved: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
 
   useEffect(() => {
     const email = user?.email || user?.username;
-    if (!email) return;
+    if (!email) {
+      setPeersData({ peers: [] });
+      return;
+    }
+    setProfileError(null);
     fetchEmployeeProfile(email)
       .then(data => {
         setEmployeeData(data);
         return fetchPeers(email);
       })
       .then(setPeersData)
-      .catch(err => console.warn('Onboarding data fetch failed:', err.message));
+      .catch(err => {
+        console.warn('Onboarding data fetch failed:', err.message);
+        setProfileError(err.message);
+        setPeersData({ peers: [] });
+      });
   }, [user]);
 
   const handleFabPointerDown = (e) => {
@@ -154,7 +163,7 @@ const OnboardingGuidancePage = ({ user, config }) => {
 
           {/* Scrollable step content */}
           <div className="og-wizard-body">
-            <StepContent user={user} employeeData={employeeData} peersData={peersData} onNext={handleNext} />
+            <StepContent user={user} employeeData={employeeData} peersData={peersData} profileError={profileError} onNext={handleNext} />
           </div>
 
         </div>
