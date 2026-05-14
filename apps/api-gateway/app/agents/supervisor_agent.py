@@ -1,6 +1,7 @@
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from difflib import SequenceMatcher
 from urllib.parse import urlparse, parse_qs, unquote
 from typing import Dict, List, Optional
 
@@ -30,6 +31,22 @@ _GREETING_RESPONSE = (
 )
 
 # ── Domain keyword map (used when LLM routing is unavailable) ─────────────────
+# ── Escalation fuzzy matcher ─────────────────────────────────────────────────
+_ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
+
+
+def _is_escalation_query(query: str) -> bool:
+    q = query.lower()
+    if "escalat" in q:
+        return True
+    for word in re.split(r"[\s.,!?;:]+", q):
+        if len(word) < 5:
+            continue
+        if any(SequenceMatcher(None, word, t).ratio() >= 0.75 for t in _ESC_TARGETS):
+            return True
+    return False
+
+# ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     'hr': [
         'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
@@ -121,6 +138,20 @@ Valid values: hr, it, admin, pmo, finance, org, employee
 Reply:"""
 
 
+_SYNTHESIS_PROMPT = """\
+You are AURA, an internal company assistant for Aligned Automation.
+Multiple departments have provided information relevant to the user's query.
+Synthesize their responses into a single, coherent, concise answer.
+Do not repeat information. Do not mention department names unless necessary.
+
+Department responses:
+{responses}
+
+User query: "{query}"
+
+Synthesized answer:"""
+
+
 class MasterAgent:
     """Single orchestrator — routes to one domain agent and returns its response."""
 
@@ -202,8 +233,8 @@ class MasterAgent:
                     def __init__(self, fn) -> None:
                         self._fn = fn
 
-                    def process_query(self, _q: str, **__) -> str:
-                        return self._fn()
+                    def process_query(self, q: str = "", user_id: str = "", **__) -> str:
+                        return self._fn(query=q, user_id=user_id or None)
 
                 agent = _EscWrapper(_esc_fn)
 
@@ -268,13 +299,15 @@ class MasterAgent:
         # Keyword fallback
         return self._route_keywords(query)
 
-    def _run_agent(self, domain: str, query: str, user_email: str = ""):
+    def _run_agent(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
         agent = self._get_slave(domain)
         if not agent:
             return None, []
         try:
             if domain == 'employee':
                 resp = agent.process_query(query, user_email=user_email)
+            elif domain == 'escalation':
+                resp = agent.process_query(query, user_id=user_id)
             else:
                 resp = agent.process_query(query)
             sources = getattr(agent, 'last_sources', [])
@@ -315,11 +348,47 @@ class MasterAgent:
             return response.content.strip() or None
         except FuturesTimeout:
             print(f"[MasterAgent] Contextual block response timed out for category={category}")
+    def _synthesize(self, query: str, responses: Dict[str, str]) -> str:
+        formatted = "\n\n".join(
+            f"[{domain.upper()} Department]\n{resp}"
+            for domain, resp in responses.items()
+        )
+        if self._llm:
+            try:
+                from langchain_ollama import ChatOllama
+                from app.agents.working.config import LLMConfig
+                cfg = LLMConfig()
+                synth_llm = ChatOllama(
+                    base_url=cfg.base_url,
+                    model=cfg.model,
+                    temperature=0.1,
+                    num_predict=cfg.max_tokens,
+                )
+                prompt = _SYNTHESIS_PROMPT.format(query=query, responses=formatted)
+                return synth_llm.invoke(prompt).content
+            except Exception as exc:
+                print(f"[MasterAgent] Synthesis LLM error ({exc}); using section format")
+        parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
+        return "\n\n---\n\n".join(parts)
+
+    def _run_slave(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
+        slave = self._get_slave(domain)
+        if not slave:
+            return domain, None, []
+        try:
+            if domain == 'employee':
+                resp = slave.process_query(query, user_email=user_email)
+            elif domain == 'escalation':
+                resp = slave.process_query(query, user_id=user_id)
+            else:
+                resp = slave.process_query(query)
+            sources = getattr(slave, 'last_sources', [])
+            return domain, resp, [s for s in sources if s]
         except Exception as exc:
             print(f"[MasterAgent] Contextual block response error ({exc})")
         return None
 
-    def process_query(self, query: str, user_email: str = "") -> str:
+    def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
         q = query.strip()
         if not q:
             return "Please enter a question."
@@ -338,7 +407,7 @@ class MasterAgent:
             return self._contextual_block_response(q, category) or fallback
 
         domain = self._route(q)
-        resp, sources = self._run_agent(domain, q, user_email)
+        resp, sources = self._run_agent(domain, q, user_email, user_id)
 
         if not resp:
             return (
@@ -368,5 +437,5 @@ class MasterAgent:
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "") -> str:
-    return _master.process_query(query, user_email=user_email)
+def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
+    return _master.process_query(query, user_email=user_email, user_id=user_id)

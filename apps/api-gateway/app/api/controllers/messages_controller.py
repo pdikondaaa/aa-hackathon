@@ -1,16 +1,26 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from app.api.auth.auth_handler import get_current_user
 from app.api.services.messages_service import MessagesService
+from app.api.services.user_service import get_or_create_user
 
 _service = MessagesService()
 
 # Two prefixes — conversation-scoped and message-scoped — share one file
 conv_router = APIRouter(prefix="/api/conversations", tags=["Messages"])
 msg_router  = APIRouter(prefix="/api/messages",      tags=["Messages"])
+
+
+def _resolve_user(current_user: dict) -> str:
+    return get_or_create_user(
+        current_user["user_id"],
+        current_user["email"],
+        current_user.get("name") or current_user["email"],
+    )
 
 
 # ---------- Shared models ----------
@@ -55,10 +65,11 @@ class SendMessageIn(BaseModel):
     status_code=202,
     summary="Send message",
 )
-def send_message(id: str, body: SendMessageIn):
+def send_message(id: str, body: SendMessageIn, current_user: dict = Depends(get_current_user)):
     """Accept a user message, store it, and enqueue the assistant reply.
     Returns the assistant message record (status='pending' until the agent writes back)."""
-    result = _service.send_message(id, "dev-user", body.content)
+    user_id = _resolve_user(current_user)
+    result = _service.send_message(id, user_id, body.content)
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return result
@@ -76,9 +87,11 @@ def list_messages(
     id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
 ):
     """Load chat history for an open conversation."""
-    result = _service.list_messages(id, "dev-user", page, limit)
+    user_id = _resolve_user(current_user)
+    result = _service.list_messages(id, user_id, page, limit)
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return result
@@ -92,9 +105,10 @@ def list_messages(
     response_model=MessageOut,
     summary="Get message",
 )
-def get_message(id: str):
+def get_message(id: str, current_user: dict = Depends(get_current_user)):
     """Fetch a single message."""
-    message = _service.get_message(id, "dev-user")
+    user_id = _resolve_user(current_user)
+    message = _service.get_message(id, user_id)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
     return message
@@ -109,9 +123,10 @@ def get_message(id: str):
     status_code=202,
     summary="Regenerate response",
 )
-def regenerate_response(id: str):
+def regenerate_response(id: str, current_user: dict = Depends(get_current_user)):
     """Mark the assistant message as superseded and enqueue a fresh generation."""
-    result = _service.regenerate_response(id, "dev-user")
+    user_id = _resolve_user(current_user)
+    result = _service.regenerate_response(id, user_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Assistant message not found")
     return result
@@ -125,9 +140,10 @@ def regenerate_response(id: str):
     response_model=MessageOut,
     summary="Stop generation",
 )
-def stop_generation(id: str):
+def stop_generation(id: str, current_user: dict = Depends(get_current_user)):
     """Cancel an in-flight stream for the given assistant message."""
-    result = _service.stop_generation(id, "dev-user")
+    user_id = _resolve_user(current_user)
+    result = _service.stop_generation(id, user_id)
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -144,9 +160,10 @@ def stop_generation(id: str):
     response_model=list[CitationOut],
     summary="Get citations",
 )
-def get_citations(id: str):
+def get_citations(id: str, current_user: dict = Depends(get_current_user)):
     """Expand citation details — returns the document chunks that sourced the reply."""
-    citations = _service.get_citations(id, "dev-user")
+    user_id = _resolve_user(current_user)
+    citations = _service.get_citations(id, user_id)
     if citations is None:
         raise HTTPException(status_code=404, detail="Message not found")
     return citations

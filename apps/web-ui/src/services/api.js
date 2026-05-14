@@ -44,6 +44,9 @@ class HTTPClient {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return null;
+      }
       return await response.json();
     } catch (error) {
       console.error(`Request failed for ${endpoint}:`, error);
@@ -135,12 +138,64 @@ export async function askBot(message) {
   }
 }
 
+// ── Conversations API ──────────────────────────────────────────────────────
+
+export async function createConversation(title) {
+  return httpClient.post('/api/conversations', { title: title || null });
+}
+
+export async function listConversations(page = 1, limit = 20, search) {
+  const params = new URLSearchParams({ page, limit });
+  if (search) params.set('search', search);
+  return httpClient.get(`/api/conversations?${params}`);
+}
+
+export async function getConversation(conversationId) {
+  return httpClient.get(`/api/conversations/${conversationId}`);
+}
+
+// ── Messages API ───────────────────────────────────────────────────────────
+
+export async function postMessage(conversationId, content) {
+  return httpClient.post(`/api/conversations/${conversationId}/messages`, { content });
+}
+
+export async function listMessages(conversationId, page = 1, limit = 50) {
+  return httpClient.get(`/api/conversations/${conversationId}/messages?page=${page}&limit=${limit}`);
+}
+
+export async function getMessageCitations(messageId) {
+  return httpClient.get(`/api/messages/${messageId}/citations`);
+}
+
+// ── Feedback API ───────────────────────────────────────────────────────────
+
+export async function submitFeedback(messageId, rating, category, comment) {
+  return httpClient.post(`/api/messages/${messageId}/feedback`, { rating, category, comment });
+}
+
+export async function deleteFeedback(feedbackId) {
+  return httpClient.delete(`/api/feedback/${feedbackId}`);
+}
+
+export async function getConversationFeedback(conversationId) {
+  return httpClient.get(`/api/conversations/${conversationId}/feedback`);
+}
+
+// ── Escalations API ────────────────────────────────────────────────────────
+
 export async function submitEscalation(payload) {
   return httpClient.post('/api/escalations', {
     ...payload,
     escalation_type: payload.escalation_type?.toLowerCase(),
     priority: payload.priority?.toLowerCase(),
   });
+}
+
+export async function listMyEscalations(page = 1, limit = 10, status) {
+  const params = new URLSearchParams({ page, limit });
+  if (status) params.set('status', status);
+  return httpClient.get(`/api/escalations?${params}`);
 }
 
 export default httpClient;

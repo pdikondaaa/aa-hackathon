@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.agents.supervisor_agent import run_assistant
 from app.api.config.db_config import get_db_connection
 
 
@@ -17,9 +18,9 @@ class MessagesService:
         prompt_log_id = str(uuid.uuid4())
         routing_log_id = str(uuid.uuid4())
 
+        # ── Phase 1: persist records and verify ownership ──────────────────
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                # Verify conversation belongs to user
                 cur.execute(
                     "SELECT id FROM conversations WHERE id = %s AND user_id = %s AND is_deleted = FALSE",
                     (conversation_id, user_id),
@@ -27,52 +28,59 @@ class MessagesService:
                 if not cur.fetchone():
                     return None
 
-                # Persist user message
                 cur.execute(
                     """
                     INSERT INTO messages (id, conversation_id, role, content, status, created_at)
                     VALUES (%s, %s, 'user', %s, 'done', %s)
-                    RETURNING id, conversation_id, role, content, status, created_at
                     """,
                     (user_msg_id, conversation_id, content, now),
                 )
 
-                # Persist assistant placeholder (to be updated by the agent layer)
                 cur.execute(
                     """
                     INSERT INTO messages (id, conversation_id, role, content, status, created_at)
                     VALUES (%s, %s, 'assistant', '', 'pending', %s)
-                    RETURNING id, conversation_id, role, content, status, created_at
                     """,
                     (assistant_msg_id, conversation_id, now),
                 )
-                assistant_row = dict(cur.fetchone())
 
-                # agent_routing_logs — agent layer fills the remaining columns
                 cur.execute(
-                    """
-                    INSERT INTO agent_routing_logs
-                        (id, message_id, created_at)
-                    VALUES (%s, %s, %s)
-                    """,
+                    "INSERT INTO agent_routing_logs (id, message_id, created_at) VALUES (%s, %s, %s)",
                     (routing_log_id, user_msg_id, now),
                 )
 
-                # prompt_logs — agent layer fills agent_name, model_name, prompts, response, latency
                 cur.execute(
-                    """
-                    INSERT INTO prompt_logs (id, message_id, created_at)
-                    VALUES (%s, %s, %s)
-                    """,
+                    "INSERT INTO prompt_logs (id, message_id, created_at) VALUES (%s, %s, %s)",
                     (prompt_log_id, user_msg_id, now),
                 )
 
-                # bump conversation updated_at
                 cur.execute(
                     "UPDATE conversations SET updated_at = %s WHERE id = %s",
                     (now, conversation_id),
                 )
+            conn.commit()
 
+        # ── Phase 2: call the agent (outside the DB transaction) ───────────
+        try:
+            answer = run_assistant(content, user_id=user_id)
+            final_status = "done"
+        except Exception as exc:
+            print(f"Agent error for message {assistant_msg_id}: {exc}")
+            answer = "Sorry, I encountered an error while processing your request. Please try again."
+            final_status = "error"
+
+        # ── Phase 3: write the real answer back ────────────────────────────
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE messages SET content = %s, status = %s
+                    WHERE id = %s
+                    RETURNING id, conversation_id, role, content, status, created_at
+                    """,
+                    (answer, final_status, assistant_msg_id),
+                )
+                assistant_row = dict(cur.fetchone())
             conn.commit()
 
         return assistant_row
