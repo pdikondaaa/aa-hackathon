@@ -22,7 +22,7 @@ const INITIAL_FORM = {
   requested_action: '',
 };
 
-const EscalationDrawer = ({ isOpen, onClose, user }) => {
+const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) => {
   const [form, setForm]         = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted]   = useState(false);
@@ -46,8 +46,8 @@ const EscalationDrawer = ({ isOpen, onClose, user }) => {
 
     try {
       await submitEscalation({
-        conversation_id: null,
-        message_id: null,
+        conversation_id: conversationId ?? null,
+        message_id: messageId ?? null,
         escalation_type: form.escalation_type,
         subject: form.subject,
         reason: form.reason,

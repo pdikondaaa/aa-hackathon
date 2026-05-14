@@ -1,10 +1,41 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { listMyEscalations } from '../services/api';
 
-// Right overview panel — stats cards, activity feed, escalations, upcoming events.
+const DOMAIN_COLORS = {
+  hr:           '#1D76BC',
+  it:           '#27AAE1',
+  admin:        '#2A3D90',
+  organization: '#4ED44E',
+};
+
+const STATUS_CONFIG = {
+  submitted:   { label: 'Open',        color: '#f05252' },
+  in_progress: { label: 'In Progress', color: '#f59e0b' },
+  resolved:    { label: 'Resolved',    color: '#4ED44E' },
+};
+
 const RightPanel = ({ config, onClose }) => {
-  const { stats, recentActivity, escalations, upcoming, labels } = config;
+  const { stats, upcoming, labels } = config;
 
-  // Determine delta colour class
+  const [escalations, setEscalations] = useState([]);
+  const [escLoading, setEscLoading]   = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setEscLoading(true);
+      try {
+        const res = await listMyEscalations(1, 10);
+        if (!cancelled) setEscalations(res?.data || []);
+      } catch (e) {
+        console.error('Failed to load escalations:', e);
+      } finally {
+        if (!cancelled) setEscLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const deltaClass = (positive) => {
     if (positive === true)  return 'positive';
     if (positive === false) return 'negative';
@@ -36,37 +67,49 @@ const RightPanel = ({ config, onClose }) => {
         </div>
       </section>
 
-      
-
       {/* ── Escalations ───────────────────────────────────── */}
       <section className="right-section">
         <p className="right-section-label">{labels.escalations}</p>
-        <ul className="escalation-list">
-          {escalations.map((esc) => (
-            <li
-              key={esc.id}
-              className="escalation-card"
-              style={{ borderLeftColor: esc.domainColor }}
-            >
-              <p className="escalation-title">{esc.title}</p>
-              <div className="escalation-meta">
-                <span className="escalation-id">{esc.id}</span>
-                <span
-                  className="escalation-domain"
-                  style={{ backgroundColor: `${esc.domainColor}22`, color: esc.domainColor }}
+        {escLoading ? (
+          <p style={{ opacity: 0.5, fontSize: '13px', padding: '8px 0' }}>
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : escalations.length === 0 ? (
+          <p style={{ opacity: 0.4, fontSize: '13px', padding: '8px 0' }}>No escalations found</p>
+        ) : (
+          <ul className="escalation-list">
+            {escalations.map((esc) => {
+              const domainColor  = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
+              const statusCfg    = STATUS_CONFIG[esc.status] || { label: esc.status, color: '#a8bdd4' };
+              const shortId      = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
+              return (
+                <li
+                  key={esc.id}
+                  className="escalation-card"
+                  style={{ borderLeftColor: domainColor }}
                 >
-                  {esc.domain}
-                </span>
-                <span
-                  className="escalation-badge"
-                  style={{ backgroundColor: `${esc.statusColor}22`, color: esc.statusColor }}
-                >
-                  {esc.status}
-                </span>
-              </div>
-            </li>
-          ))}
-        </ul>
+                  <p className="escalation-title">{esc.subject}</p>
+                  <div className="escalation-meta">
+                    <span className="escalation-id">{shortId}</span>
+                    <span
+                      className="escalation-domain"
+                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
+                    >
+                      {esc.escalation_type.toUpperCase()}
+                    </span>
+                    <span
+                      className="escalation-badge"
+                      style={{ backgroundColor: `${statusCfg.color}22`, color: statusCfg.color }}
+                    >
+                      {statusCfg.label}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       {/* ── Upcoming Events ───────────────────────────────── */}

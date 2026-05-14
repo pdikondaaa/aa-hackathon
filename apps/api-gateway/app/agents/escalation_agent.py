@@ -1,8 +1,9 @@
 ESCALATION_MESSAGE = (
-    "Your concern has been noted. Your query has been escalated and will be reviewed "
-    "by the appropriate team. All escalations are handled manually and you will be "
-    "contacted directly.\n\n"
-    "Please fill out the form below to provide additional details:\n"
+    "Your request requires further review by the concerned team. Please provide a few"
+    "additional details in the form below so the team can better understand your concern"
+    "and take the appropriate action.\n\n"
+    "Once submitted, the information will be reviewed and you may be contacted"
+    "for any further clarification if required.\n\n"
     "[📋 Open Escalation Form](#escalation)"
 )
 
