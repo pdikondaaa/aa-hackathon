@@ -21,7 +21,10 @@ class Embedder:
     def _get_model(self) -> HuggingFaceEmbeddings:
         if self._model is None:
             logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
-            self._model = HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL)
+            self._model = HuggingFaceEmbeddings(
+                model_name=settings.EMBEDDING_MODEL,
+                model_kwargs={"trust_remote_code": True},
+            )
         return self._model
 
     def embed(self, texts: list) -> list:

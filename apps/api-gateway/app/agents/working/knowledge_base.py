@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 from typing import List
 
@@ -29,7 +30,8 @@ class KnowledgeBase:
         self._mode = "keyword"
 
         self._raw_docs = self._load_folders(data_folders)
-        self._try_build_faiss()
+        # Build FAISS index in background — pgvector + keyword search work immediately
+        threading.Thread(target=self._try_build_faiss, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Public API
