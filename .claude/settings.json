@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"d:\\\\AA Internal Projects\\\\AA Hackathon 2026\\\\aa-hackathon\\\\apps\\\\web-ui\\\\src\\\\modules\\\\onboarding-guidance\\\\components\" -Force | Select-Object Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\){\"DIR\"}else{\"FILE\"}}} | Format-Table -AutoSize)",
+      "Bash(find \"d:\\\\\\\\AA Internal Projects\\\\\\\\AA Hackathon 2026\\\\\\\\aa-hackathon\\\\\\\\apps\\\\\\\\web-ui\\\\\\\\src\" -type f -name \"*sidebar*\" -o -name \"*nav*\" -o -name \"*layout*\")"
+    ]
+  }
+}

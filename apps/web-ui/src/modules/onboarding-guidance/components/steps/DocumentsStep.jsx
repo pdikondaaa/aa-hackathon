@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { REQUIRED_DOCUMENTS } from '../../constants/onboardingData';
 
-const DocumentsStep = () => {
+const DocumentsStep = ({ onNext }) => {
   const [docs, setDocs] = useState(REQUIRED_DOCUMENTS);
 
   const handleUpload = (id) => {
@@ -18,13 +18,7 @@ const DocumentsStep = () => {
     <div className="og-step-content">
       <div className="og-step-header">
         <div className="og-step-header-top">
-          <div>
-            <h2 className="og-step-title">Documents</h2>
-            <p className="og-step-subtitle">
-              Upload your required documents to complete verification.
-            </p>
-          </div>
-
+         
           <div className="og-step-stat-group">
             <div className="og-step-stat-box">
               <div className="og-step-stat-label">Uploaded</div>
@@ -97,6 +91,12 @@ const DocumentsStep = () => {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="og-step-footer" style={{ justifyContent: 'flex-end' }}>
+        <button className="og-btn-primary" onClick={onNext}>
+          Continue <i className="fas fa-arrow-right" />
+        </button>
       </div>
 
       <div className="og-docs-note">

@@ -261,7 +261,7 @@ const ChatWindow = ({ config, user: authUser, compact = false }) => {
           /* ── Message list ────────────────────────────────── */
           <div className="messages-list">
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} config={config} />
+              <MessageBubble key={msg.id} message={msg} config={config} user={user} />
             ))}
 
             {/* Thinking bubble — shown while awaiting API response */}
@@ -336,9 +336,9 @@ const ChatWindow = ({ config, user: authUser, compact = false }) => {
               >
                 <i className="fas fa-paperclip" />
               </button>
-              <button className="chat-input-icon-btn" title="Search" aria-label="Search">
+              {/* <button className="chat-input-icon-btn" title="Search" aria-label="Search">
                 <i className="fas fa-search" />
-              </button>
+              </button> */}
               {SpeechRecognition && (
                 <button
                   className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}`}
