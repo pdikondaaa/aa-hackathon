@@ -62,7 +62,7 @@ class MessagesService:
 
         # ── Phase 2: call the agent (outside the DB transaction) ───────────
         try:
-            answer = run_assistant(content)
+            answer = run_assistant(content, user_id=user_id)
             final_status = "done"
         except Exception as exc:
             print(f"Agent error for message {assistant_msg_id}: {exc}")
