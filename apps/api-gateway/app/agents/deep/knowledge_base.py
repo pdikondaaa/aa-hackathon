@@ -2,10 +2,7 @@ import os
 from typing import List
 
 from langchain_core.documents import Document
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except ImportError:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter  # langchain <0.2 fallback
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .config import KnowledgeBaseConfig, EmbeddingsConfig
 
