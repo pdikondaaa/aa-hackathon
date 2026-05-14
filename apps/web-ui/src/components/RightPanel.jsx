@@ -8,11 +8,6 @@ const DOMAIN_COLORS = {
   organization: '#4ED44E',
 };
 
-const STATUS_CONFIG = {
-  submitted:   { label: 'Open',        color: '#f05252' },
-  in_progress: { label: 'In Progress', color: '#f59e0b' },
-  resolved:    { label: 'Resolved',    color: '#4ED44E' },
-};
 
 const RightPanel = ({ config, onClose }) => {
   const { stats, upcoming, labels } = config;
@@ -25,7 +20,7 @@ const RightPanel = ({ config, onClose }) => {
     (async () => {
       setEscLoading(true);
       try {
-        const res = await listMyEscalations(1, 10);
+        const res = await listMyEscalations(1, 3);
         if (!cancelled) setEscalations(res?.data || []);
       } catch (e) {
         console.error('Failed to load escalations:', e);
@@ -81,7 +76,6 @@ const RightPanel = ({ config, onClose }) => {
           <ul className="escalation-list">
             {escalations.map((esc) => {
               const domainColor  = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
-              const statusCfg    = STATUS_CONFIG[esc.status] || { label: esc.status, color: '#a8bdd4' };
               const shortId      = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
               return (
                 <li
@@ -97,12 +91,6 @@ const RightPanel = ({ config, onClose }) => {
                       style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
                     >
                       {esc.escalation_type.toUpperCase()}
-                    </span>
-                    <span
-                      className="escalation-badge"
-                      style={{ backgroundColor: `${statusCfg.color}22`, color: statusCfg.color }}
-                    >
-                      {statusCfg.label}
                     </span>
                   </div>
                 </li>

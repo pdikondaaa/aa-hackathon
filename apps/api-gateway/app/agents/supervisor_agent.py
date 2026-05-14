@@ -1,8 +1,24 @@
 import re
 import json
+from difflib import SequenceMatcher
 from urllib.parse import urlparse, parse_qs, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List, Optional
+
+# ── Escalation fuzzy matcher ─────────────────────────────────────────────────
+_ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
+
+
+def _is_escalation_query(query: str) -> bool:
+    q = query.lower()
+    if "escalat" in q:
+        return True
+    for word in re.split(r"[\s.,!?;:]+", q):
+        if len(word) < 5:
+            continue
+        if any(SequenceMatcher(None, word, t).ratio() >= 0.75 for t in _ESC_TARGETS):
+            return True
+    return False
 
 # ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
@@ -195,8 +211,8 @@ class MasterAgent:
                 class _EscWrapper:
                     last_sources: List[str] = []
 
-                    def process_query(self, q: str) -> str:
-                        return _fn()
+                    def process_query(self, q: str, user_id: str = "") -> str:
+                        return _fn(query=q, user_id=user_id or None)
 
                 agent = _EscWrapper()
 
@@ -244,7 +260,7 @@ class MasterAgent:
 
     def _route(self, query: str) -> List[str]:
         # Escalation check is highest priority — always bypasses other routing
-        if 'escalat' in query.lower():
+        if _is_escalation_query(query):
             print("[MasterAgent] Escalation keyword → ['escalation']")
             return ['escalation']
         if _is_employee_query(query):
@@ -278,13 +294,15 @@ class MasterAgent:
         parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
         return "\n\n---\n\n".join(parts)
 
-    def _run_slave(self, domain: str, query: str, user_email: str = ""):
+    def _run_slave(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
         slave = self._get_slave(domain)
         if not slave:
             return domain, None, []
         try:
             if domain == 'employee':
                 resp = slave.process_query(query, user_email=user_email)
+            elif domain == 'escalation':
+                resp = slave.process_query(query, user_id=user_id)
             else:
                 resp = slave.process_query(query)
             sources = getattr(slave, 'last_sources', [])
@@ -293,7 +311,7 @@ class MasterAgent:
             print(f"[MasterAgent] Slave '{domain}' error: {exc}")
             return domain, None, []
 
-    def process_query(self, query: str, user_email: str = "") -> str:
+    def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
         if not query or not query.strip():
             return "Please enter a question."
 
@@ -303,7 +321,7 @@ class MasterAgent:
         all_sources: List[str] = []
 
         with ThreadPoolExecutor(max_workers=min(len(domains), 4)) as pool:
-            futures = {pool.submit(self._run_slave, d, query, user_email): d for d in domains}
+            futures = {pool.submit(self._run_slave, d, query, user_email, user_id): d for d in domains}
             for fut in as_completed(futures):
                 domain, resp, sources = fut.result()
                 if resp:
@@ -345,5 +363,5 @@ class MasterAgent:
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "") -> str:
-    return _master.process_query(query, user_email=user_email)
+def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
+    return _master.process_query(query, user_email=user_email, user_id=user_id)
