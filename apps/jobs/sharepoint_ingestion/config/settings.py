@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     DOCUMENT_LIBRARY_NAME: str = Field(default="Documents", validation_alias="SHAREPOINT_DOCUMENT_LIBRARY")
 
     # ─── Embeddings ───────────────────────────────────────────────────────────
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
+    EMBEDDING_DIMENSION: int = 768
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
     CHUNK_SIZE: int = 1000
@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     # ─── PostgreSQL ───────────────────────────────────────────────────────────
     SQL_HOST: str = "localhost"
     SQL_PORT: str = "5432"
-    SQL_USERNAME: str = "root"
-    SQL_PWD: str = "Pass@123"
+    SQL_USERNAME: str = "postgres"
+    SQL_PWD: str = "Admin@1"
     SQL_DB: str = "aura"
 
     # ─── Logging ──────────────────────────────────────────────────────────────

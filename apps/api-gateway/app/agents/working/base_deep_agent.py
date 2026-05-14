@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple
 from .config import DeepAgentConfig
 from .knowledge_base import KnowledgeBase
 from app.agents.working.tools.tavily_search import tavily_search, is_tavily_available
+from app.agents.guardrails import GENERIC_GUARDRAIL, ORG_GUARDRAIL
 
 _AGENTS_DIR = os.path.join(os.path.dirname(__file__), "..")
 DATA_ROOT = os.path.join(_AGENTS_DIR, "data")
@@ -128,8 +129,13 @@ class BaseDeepAgent:
             if not full_context:
                 return self._keyword_query(query)
 
+            system_content = (
+                self._PERSONALITY
+                + f"\n\n{GENERIC_GUARDRAIL}\n\n{ORG_GUARDRAIL}"
+                + f"\n\n**Context:**\n{full_context}"
+            )
             messages = [
-                SystemMessage(content=self._PERSONALITY + f"\n\n**Context:**\n{full_context}"),
+                SystemMessage(content=system_content),
                 HumanMessage(content=query),
             ]
             return self._llm.invoke(messages).content

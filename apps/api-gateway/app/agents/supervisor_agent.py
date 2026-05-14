@@ -1,10 +1,36 @@
 import re
-import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
 from urllib.parse import urlparse, parse_qs, unquote
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional
 
+from app.agents.guardrails import check_input
+
+# ── Greeting / small-talk fast-path ──────────────────────────────────────────
+_GREETING_RE = re.compile(
+    r"""^[\s!.,?]*
+    (?:hi+|hello+|hey+|howdy|greetings|good\s+(?:morning|afternoon|evening|day)|
+       how\s+are\s+you|how'?s\s+it\s+going|what'?s\s+up|sup|
+       thanks?|thank\s+you|thx|ty|
+       bye|goodbye|see\s+you|take\s+care)
+    [\s!.,?]*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_GREETING_RESPONSE = (
+    "Hello! I'm AURA, your Aligned Automation assistant.\n\n"
+    "I can help you with:\n"
+    "- **HR** — leave, benefits, payroll, appraisals, policies\n"
+    "- **IT** — technical support, VPN, passwords, software\n"
+    "- **Admin** — travel, cab bookings, office facilities\n"
+    "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
+    "- **PMO** — project status, milestones, resources\n"
+    "- **Employee Directory** — find colleagues, contact details\n\n"
+    "What can I help you with today?"
+)
+
+# ── Domain keyword map (used when LLM routing is unavailable) ─────────────────
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
 _ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
 
@@ -26,73 +52,62 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
         'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
         'gratuity', 'referral', 'certification', 'attendance', 'wfh',
-        'hrone', 'practo', 'takeCare', 'appraisal', 'salary', 'reimbursement',
+        'hrone', 'practo', 'takeCare', 'appraisal', 'salary', 'notice period',
+        'resignation', 'onboarding', 'offboarding', 'increment',
     ],
     'it': [
         'technical', 'mfa', 'vpn', 'password', 'laptop', 'software',
         'network', 'security', 'onedrive', 'outlook', 'wifi',
         'remote access', 'polycom', 'hardware', 'printer', 'access',
+        'helpdesk', 'antivirus', 'backup', 'teams', 'install',
     ],
     'admin': [
-        'travel', 'cab', 'orix', 'parking', 'workplace', 'office supplies',
-        'fountainhead', 'booking', 'transport', 'hotel', 'flight',
+        'travel', 'cab', 'orix', 'cabman', 'parking', 'workplace', 'office supplies',
+        'fountainhead', 'booking', 'transport', 'hotel', 'flight', 'visa letter',
+        'meeting room', 'facility', 'vendor', 'invoice',
     ],
     'pmo': [
-        'project', 'onboarding', 'abi', 'ncr', 'spencer', 'dell',
-        'eli lilly', 'pmo', 'stress', 'timeline', 'milestone', 'delivery',
+        'project', 'milestone', 'abi', 'ncr', 'spencer', 'dell',
+        'eli lilly', 'pmo', 'timeline', 'delivery', 'resource allocation',
+        'risk', 'blocker', 'change request', 'go-live', 'status report',
     ],
     'finance': [
-        'zoho', 'expense', 'tds', 'tax', 'declaration', 'invoice',
-        'reimbursement', 'budget',
+        'zoho', 'expense', 'tds', 'tax', 'declaration', 'form 16',
+        'reimbursement', 'kotak', 'income tax', 'investment proof', 'budget',
     ],
     'org': [
-        'company', 'mission', 'structure', 'organization', 'who are',
-        'about', 'values', 'vision',
+        'company', 'mission', 'structure', 'organization', 'organisation',
+        'about', 'values', 'vision', 'culture', 'leadership', 'diversity',
     ],
     'employee': [
         'blood group', 'date of joining', 'joining date',
         'mobile number', 'work phone', 'phone number',
         'employee count', 'total employees', 'how many employees',
         'employees in', 'employees from', 'staff in', 'staff from',
-        'team members', 'people in',
-        'reporting manager', 'reports to', 'reporting to', 'manager of',
-        'skill set', 'employee directory', 'staff directory',
-        'my designation', 'my manager', 'my department', 'my team',
+        'team members', 'people in', 'reporting manager', 'reports to',
+        'reporting to', 'manager of', 'skill set', 'employee directory',
+        'staff directory', 'my designation', 'my manager', 'my department',
         'my mobile', 'my email', 'my profile', 'my details',
-        'who is', 'profile of', 'details of', 'info about', 'information about',
+        'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
     ],
 }
 
-# ── Employee query pattern pre-router ─────────────────────────────────────────
-# Split into small patterns (one concern each) to stay within complexity limits.
+# ── Employee query pre-classifier (regex, no LLM) ────────────────────────────
 _EMP_PATTERNS = [
-    # possessive field (part 1): "Amol's phone/email/designation/department"
     re.compile(r"\w+'s\s+(?:mobile|phone|email|designation|department|work.?phone)", re.IGNORECASE),
-    # possessive field (part 2): "Amol's manager/role/grade/skill/project/joining"
     re.compile(r"\w+'s\s+(?:manager|role|grade|level|skill|project|blood.?group|joining)", re.IGNORECASE),
-    # field of/for person (part 1): "mobile/phone/email/designation of Amol"
     re.compile(r"\b(?:mobile|work\s+phone|phone\s+number|email|designation)\s+(?:of|for)\s+[a-z]", re.IGNORECASE),
-    # field of/for person (part 2): "blood group/joining date/manager of Amol"
     re.compile(r"\b(?:blood\s+group|joining\s+date|date\s+of\s+joining|manager)\s+(?:of|for)\s+[a-z]", re.IGNORECASE),
-    # headcount: "how many employees"
     re.compile(r"\b(?:how\s+many|count|number\s+of|total)\s+employees?\b", re.IGNORECASE),
-    # department listing: "employees in IT", "staff from Mumbai"
     re.compile(r"\bemployees?\s+(?:in|from|under|of)\b", re.IGNORECASE),
     re.compile(r"\b(?:staff|people|team)\s+(?:in|from|at|under)\b", re.IGNORECASE),
-    # org structure: "manager of Priya", "reports to Sunita"
     re.compile(r"\b(?:manager\s+of|reports?\s+to|reporting\s+to|team\s+under)\s+[a-z]", re.IGNORECASE),
-    # self-service (part 1): "my mobile/phone/email/designation/department/manager/role/grade"
     re.compile(r"\bmy\s+(?:mobile|phone|email|designation|department|manager|role|grade)\b", re.IGNORECASE),
-    # self-service (part 2): "my level/skill/project/blood/joining/detail/info/profile/team"
     re.compile(r"\bmy\s+(?:level|skill|project|blood|joining|detail|info|profile|team|location|experience|contact)\b", re.IGNORECASE),
-    # identity: "who am I", "about me"
     re.compile(r"\b(?:who\s+am\s+i|about\s+me)\b", re.IGNORECASE),
-    # person lookup: "who is Amol", "who is Amol Metkari"
     re.compile(r"\bwho\s+is\s+\w", re.IGNORECASE),
-    # profile/details/info of a person: "profile of Amol", "details of Priya", "info about Rahul"
     re.compile(r"\b(?:profile|details?|information|info)\s+(?:of|about|for)\s+\w", re.IGNORECASE),
-    # find/search person: "find Amol", "look up Priya", "search for Rahul"
     re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
 ]
 
@@ -100,52 +115,62 @@ _EMP_PATTERNS = [
 def _is_employee_query(query: str) -> bool:
     return any(p.search(query) for p in _EMP_PATTERNS)
 
-# ── LLM routing prompt ───────────────────────────────────────────────────────
-_ROUTING_PROMPT = """\
-You are a query router for an internal company assistant called AURA.
 
-Available departments and what they handle:
-- hr: leave policies, benefits, payroll, performance, POSH, maternity/paternity, GHI insurance, PF/EPF, gratuity, referral, certification, attendance, WFH, HROne system, Practo, IL TakeCare
-- it: technical support, MFA, VPN, passwords, laptop, software, network, security, OneDrive, Outlook, email backup, WiFi, remote access, Polycom
-- admin: travel bookings, cab/ORIX, parking, workplace guidelines, office supplies, Fountainhead guidelines
-- pmo: project tracking, onboarding process, project overviews (ABI/NCR/Spencer/Dell/Eli Lilly), PMO best practices, stress management
-- finance: ZOHO expenses, TDS declarations, tax forms, expense submission
-- org: company mission, structure, general company information
-- employee: employee directory lookups — find employees by name, get contact details (mobile, work phone, email), list employees by department or location, org chart and reporting structure, headcount queries, skill-based searches, personal profile ("my designation", "my manager", "who am I")
+# ── LLM routing prompt — asks for ONE domain ─────────────────────────────────
+_ROUTING_PROMPT = """\
+You are a query router for AURA, an internal company assistant for Aligned Automation.
+
+Departments and what they own:
+- hr: leave, benefits, payroll, appraisals, POSH, maternity/paternity, GHI, PF/EPF, gratuity, referral, WFH, HROne, Practo, IL TakeCare, resignation, notice period
+- it: technical support, MFA, VPN, passwords, laptop, software, network, security, OneDrive, Outlook, WiFi, remote access, Polycom, antivirus
+- admin: travel bookings, cab/ORIX/Cabman, parking, workplace guidelines, office supplies, Fountainhead, meeting rooms, facility
+- pmo: project tracking, milestones, onboarding process docs, project overviews (ABI/NCR/Spencer/Dell/Eli Lilly), risk management, PMO best practices
+- finance: ZOHO expenses, TDS declarations, income tax, Form 16, expense reimbursement submission, Kotak salary account
+- org: company mission, structure, values, culture, leadership, general company information
+- employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 
 User query: "{query}"
 
-Which departments should handle this query? A query may need more than one department.
-Reply with ONLY a valid JSON array. Examples:
-  ["hr"]
-  ["it"]
-  ["hr", "it"]
-  ["admin", "finance"]
+Which ONE department should handle this query?
+Reply with ONLY the department name, one word, lowercase. No explanation.
+Valid values: hr, it, admin, pmo, finance, org, employee
 
 Reply:"""
 
-# ── Synthesis prompt ─────────────────────────────────────────────────────────
-_SYNTHESIS_PROMPT = """\
-You are AURA, a helpful internal company assistant.
-Multiple departments have provided information for the user's query.
-Synthesize their answers into one clear, well-organized response.
-Mention which department is responsible for each part of the answer.
 
-User query: "{query}"
+_SYNTHESIS_PROMPT = """\
+You are AURA, an internal company assistant for Aligned Automation.
+Multiple departments have provided information relevant to the user's query.
+Synthesize their responses into a single, coherent, concise answer.
+Do not repeat information. Do not mention department names unless necessary.
 
 Department responses:
 {responses}
 
-Provide a unified, concise, and accurate answer."""
+User query: "{query}"
+
+Synthesized answer:"""
 
 
 class MasterAgent:
-    """Orchestrates all domain slave agents."""
+    """Single orchestrator — routes to one domain agent and returns its response."""
+
+    # Domains to pre-warm at startup (excludes employee/escalation — no heavy init)
+    _PREWARM_DOMAINS = ['hr', 'it', 'admin', 'pmo', 'finance', 'org']
 
     def __init__(self):
         self._slaves: Dict[str, object] = {}
         self._llm = None
         self._setup_llm()
+        threading.Thread(target=self._prewarm, daemon=True).start()
+
+    def _prewarm(self) -> None:
+        """Load all domain agents in background so first user query isn't slow."""
+        for domain in self._PREWARM_DOMAINS:
+            try:
+                self._get_slave(domain)
+            except Exception as exc:
+                print(f"[MasterAgent] Pre-warm failed for '{domain}': {exc}")
 
     def _setup_llm(self):
         try:
@@ -156,7 +181,7 @@ class MasterAgent:
                 base_url=cfg.base_url,
                 model=cfg.model,
                 temperature=0,
-                num_predict=64,
+                num_predict=16,
             )
             print("[MasterAgent] LLM routing ready")
         except Exception as exc:
@@ -169,108 +194,160 @@ class MasterAgent:
         agent = None
         try:
             if domain == 'hr':
-                from app.agents.working.hr.hr_deep_agent import HRDeepAgent
-                agent = HRDeepAgent()
+                from app.agents.working.hr_agent import HRAgent
+                agent = HRAgent()
             elif domain == 'it':
-                from app.agents.working.it.it_deep_agent import ITDeepAgent
-                agent = ITDeepAgent()
+                from app.agents.working.it_agent import ITAgent
+                agent = ITAgent()
             elif domain == 'admin':
-                from app.agents.working.admin.admin_deep_agent import AdminDeepAgent
-                agent = AdminDeepAgent()
+                from app.agents.working.admin_agent import AdminAgent
+                agent = AdminAgent()
             elif domain == 'pmo':
-                from app.agents.working.pmo.pmo_deep_agent import PMODeepAgent
-                agent = PMODeepAgent()
+                from app.agents.working.pmo_agent import PMOAgent
+                agent = PMOAgent()
             elif domain == 'finance':
-                from app.agents.working.finance.finance_deep_agent import FinanceDeepAgent
-                agent = FinanceDeepAgent()
+                from app.agents.working.finance_agent import FinanceAgent
+                agent = FinanceAgent()
             elif domain == 'org':
-                from app.agents.org_agent import org_agent as _fn
-
-                class _OrgWrapper:
-                    last_sources: List[str] = []
-
-                    def process_query(self, q: str) -> str:
-                        return _fn(q)
-
-                agent = _OrgWrapper()
-
+                from app.agents.org_agent import OrgDeepAgent
+                agent = OrgDeepAgent()
             elif domain == 'employee':
-                from app.agents.employee.employee_agent import employee_agent as _fn
+                from app.agents.employee.employee_agent import employee_agent as _emp_fn
 
                 class _EmpWrapper:
                     last_sources: List[str] = []
 
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
                     def process_query(self, q: str, user_email: str = "") -> str:
-                        return _fn(q, user_email=user_email)
+                        return self._fn(q, user_email=user_email)
 
-                agent = _EmpWrapper()
-
+                agent = _EmpWrapper(_emp_fn)
             elif domain == 'escalation':
-                from app.agents.escalation_agent import escalation_agent as _fn
+                from app.agents.escalation_agent import escalation_agent as _esc_fn
 
                 class _EscWrapper:
                     last_sources: List[str] = []
 
-                    def process_query(self, q: str, user_id: str = "") -> str:
-                        return _fn(query=q, user_id=user_id or None)
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
 
-                agent = _EscWrapper()
+                    def process_query(self, q: str = "", user_id: str = "", **__) -> str:
+                        return self._fn(query=q, user_id=user_id or None)
+
+                agent = _EscWrapper(_esc_fn)
 
             if agent:
                 self._slaves[domain] = agent
-                print(f"[MasterAgent] Slave loaded: {domain}")
+                print(f"[MasterAgent] Agent loaded: {domain}")
         except Exception as exc:
-            print(f"[MasterAgent] Could not load slave '{domain}': {exc}")
+            print(f"[MasterAgent] Could not load agent '{domain}': {exc}")
 
         return agent
 
-    def _route_llm(self, query: str) -> List[str]:
+    def _route_llm(self, query: str) -> Optional[str]:
         if not self._llm:
-            return []
+            return None
         try:
             prompt = _ROUTING_PROMPT.format(query=query)
-            response = self._llm.invoke(prompt)
-            content = response.content.strip()
-            match = re.search(r'\[[^\]]*\]', content, re.DOTALL)
-            if match:
-                domains = json.loads(match.group())
-                valid = [d for d in domains if d in DOMAIN_KEYWORDS]
-                if valid:
-                    print(f"[MasterAgent] LLM routed → {valid}")
-                    return valid
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(self._llm.invoke, prompt)
+                response = future.result(timeout=5)
+            tokens = response.content.strip().lower().split()
+            if not tokens:
+                return None
+            domain = tokens[0]
+            if domain in DOMAIN_KEYWORDS:
+                print(f"[MasterAgent] LLM routed → {domain}")
+                return domain
+        except FuturesTimeout:
+            print("[MasterAgent] LLM routing timed out — falling back to keywords")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing error ({exc})")
-        return []
+        return None
 
-    def _route_keywords(self, query: str) -> List[str]:
+    def _route_keywords(self, query: str) -> str:
         q = query.lower()
         scores = {
             domain: sum(1 for kw in keywords if kw in q)
             for domain, keywords in DOMAIN_KEYWORDS.items()
         }
-        scores = {d: s for d, s in scores.items() if s > 0}
-        if not scores:
-            return ['hr']
-        top_score = max(scores.values())
-        threshold = max(1, top_score // 2)
-        ranked = sorted(scores.items(), key=lambda x: -x[1])
-        selected = [d for d, s in ranked if s >= threshold][:3]
-        print(f"[MasterAgent] Keyword routed → {selected}")
-        return selected
+        best = max(scores, key=scores.get)
+        if scores[best] == 0:
+            print("[MasterAgent] No keyword match — defaulting to hr")
+            return 'hr'
+        print(f"[MasterAgent] Keyword routed → {best} (score={scores[best]})")
+        return best
 
-    def _route(self, query: str) -> List[str]:
-        # Escalation check is highest priority — always bypasses other routing
-        if _is_escalation_query(query):
-            print("[MasterAgent] Escalation keyword → ['escalation']")
-            return ['escalation']
+    def _route(self, query: str) -> str:
+        # Escalation keyword — highest priority, bypass LLM
+        if 'escalat' in query.lower():
+            print("[MasterAgent] Escalation keyword → escalation")
+            return 'escalation'
+
+        # Employee pattern pre-classifier — deterministic, no LLM needed
         if _is_employee_query(query):
-            print("[MasterAgent] Employee pattern → ['employee']")
-            return ['employee']
-        domains = self._route_llm(query)
-        if not domains:
-            domains = self._route_keywords(query)
-        return domains
+            print("[MasterAgent] Employee pattern → employee")
+            return 'employee'
 
+        # LLM routing — preferred when available
+        domain = self._route_llm(query)
+        if domain:
+            return domain
+
+        # Keyword fallback
+        return self._route_keywords(query)
+
+    def _run_agent(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
+        agent = self._get_slave(domain)
+        if not agent:
+            return None, []
+        try:
+            if domain == 'employee':
+                resp = agent.process_query(query, user_email=user_email)
+            elif domain == 'escalation':
+                resp = agent.process_query(query, user_id=user_id)
+            else:
+                resp = agent.process_query(query)
+            sources = getattr(agent, 'last_sources', [])
+            return resp, [s for s in sources if s]
+        except Exception as exc:
+            print(f"[MasterAgent] Agent '{domain}' error: {exc}")
+            return None, []
+
+    def _contextual_block_response(self, query: str, category: str) -> Optional[str]:
+        """
+        Generate a query-aware response for distress and out-of-scope blocks.
+        Returns None if LLM is unavailable or times out — caller falls back to static message.
+        """
+        if not self._llm:
+            return None
+        from app.agents.guardrails import DISTRESS_PROMPT, ORG_SCOPE_PROMPT
+        prompts = {
+            'distress': DISTRESS_PROMPT,
+            'org_scope': ORG_SCOPE_PROMPT,
+        }
+        prompt_template = prompts.get(category)
+        if not prompt_template:
+            return None
+        try:
+            from langchain_ollama import ChatOllama
+            from app.agents.working.config import LLMConfig
+            cfg = LLMConfig()
+            llm = ChatOllama(
+                base_url=cfg.base_url,
+                model=cfg.model,
+                temperature=0.3,
+                num_predict=200,
+            )
+            prompt = prompt_template.format(query=query)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(llm.invoke, prompt)
+                response = future.result(timeout=10)
+            return response.content.strip() or None
+        except FuturesTimeout:
+            print(f"[MasterAgent] Contextual block response timed out for category={category}")
     def _synthesize(self, query: str, responses: Dict[str, str]) -> str:
         formatted = "\n\n".join(
             f"[{domain.upper()} Department]\n{resp}"
@@ -308,40 +385,37 @@ class MasterAgent:
             sources = getattr(slave, 'last_sources', [])
             return domain, resp, [s for s in sources if s]
         except Exception as exc:
-            print(f"[MasterAgent] Slave '{domain}' error: {exc}")
-            return domain, None, []
+            print(f"[MasterAgent] Contextual block response error ({exc})")
+        return None
 
     def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
-        if not query or not query.strip():
+        q = query.strip()
+        if not q:
             return "Please enter a question."
 
-        domains = self._route(query)
+        # Fast-path: greetings and small talk — no DB, no LLM
+        if _GREETING_RE.match(q):
+            return _GREETING_RESPONSE
 
-        responses: Dict[str, str] = {}
-        all_sources: List[str] = []
+        # Guardrail pre-check — before any routing or LLM call
+        is_blocked, category, fallback = check_input(q)
+        if is_blocked:
+            # Adversarial categories always get a static response — never feed to LLM
+            if category in ('jailbreak', 'security', 'harmful'):
+                return fallback
+            # Distress and out-of-scope get a contextual LLM response where possible
+            return self._contextual_block_response(q, category) or fallback
 
-        with ThreadPoolExecutor(max_workers=min(len(domains), 4)) as pool:
-            futures = {pool.submit(self._run_slave, d, query, user_email, user_id): d for d in domains}
-            for fut in as_completed(futures):
-                domain, resp, sources = fut.result()
-                if resp:
-                    responses[domain] = resp
-                    all_sources.extend(sources)
+        domain = self._route(q)
+        resp, sources = self._run_agent(domain, q, user_email, user_id)
 
-        if not responses:
+        if not resp:
             return (
                 "I couldn't find relevant information for your query. "
                 "Please reach out to the appropriate department directly."
             )
 
-        final = (
-            next(iter(responses.values()))
-            if len(responses) == 1
-            else self._synthesize(query, responses)
-        )
-
-        unique_sources = list(dict.fromkeys(all_sources))
-        if unique_sources:
+        if sources:
             def _source_label(url: str) -> str:
                 try:
                     qs = parse_qs(urlparse(url).query)
@@ -352,14 +426,14 @@ class MasterAgent:
                 return unquote(url.split("/")[-1]) or url
 
             source_list = "\n".join(
-                f"  • [{_source_label(s)}]({s})" for s in unique_sources
+                f"  • [{_source_label(s)}]({s})" for s in dict.fromkeys(sources)
             )
-            final += f"\n\n---\n📄 **Sources**\n{source_list}"
+            resp += f"\n\n---\n📄 **Sources**\n{source_list}"
 
-        return final
+        return resp
 
 
-# ── Singleton + public entry point (used by chat.py) ────────────────────────
+# ── Singleton + public entry point ───────────────────────────────────────────
 _master = MasterAgent()
 
 
