@@ -3,7 +3,7 @@ import { parseMarkdown } from '../utils/markdown';
 
 // Single chat message — user bubble (right) or assistant bubble (left).
 // Assistant bubbles include thumbs-up / thumbs-down feedback that toggles colour on click.
-const MessageBubble = ({ message, config, user }) => {
+const MessageBubble = ({ message, config, onOpenEscalation }) => {
   const [feedback, setFeedback] = useState(null); // null | 'up' | 'down'
   const [copied, setCopied]     = useState(false);
 
@@ -39,6 +39,13 @@ const MessageBubble = ({ message, config, user }) => {
             <div
               className="message-content"
               dangerouslySetInnerHTML={{ __html: parseMarkdown(message.content) }}
+              onClick={(e) => {
+                const anchor = e.target.closest('a');
+                if (anchor && anchor.getAttribute('href') === '#escalation') {
+                  e.preventDefault();
+                  onOpenEscalation?.();
+                }
+              }}
             />
           )}
         </div>

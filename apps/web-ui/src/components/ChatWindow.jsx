@@ -26,7 +26,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -261,7 +261,12 @@ const ChatWindow = ({ config, user: authUser, compact = false }) => {
           /* ── Message list ────────────────────────────────── */
           <div className="messages-list">
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} config={config} user={user} />
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                config={config}
+                onOpenEscalation={onOpenEscalation}
+              />
             ))}
 
             {/* Thinking bubble — shown while awaiting API response */}
