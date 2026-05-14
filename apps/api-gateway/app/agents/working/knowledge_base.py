@@ -3,10 +3,7 @@ from pathlib import Path
 from typing import List
 
 from langchain_core.documents import Document
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except ImportError:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .config import KnowledgeBaseConfig, EmbeddingsConfig
 

@@ -28,11 +28,11 @@ load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 # ── Configuration (reads from environment / .env) ─────────────────────────────
 _EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-_DB_HOST = os.getenv("SQL_HOST", "localhost")
-_DB_PORT = os.getenv("SQL_PORT", "5432")
-_DB_USER = os.getenv("SQL_USERNAME", "postgres")
-_DB_PWD  = os.getenv("SQL_PWD", "Alexa@1234")
-_DB_NAME = os.getenv("SQL_DB", "aura")
+_DB_HOST = os.getenv("SQL_HOST", os.getenv("DB_HOST", "localhost"))
+_DB_PORT = os.getenv("SQL_PORT", os.getenv("DB_PORT", "5432"))
+_DB_USER = os.getenv("SQL_USERNAME", os.getenv("DB_USER", "postgres"))
+_DB_PWD = os.getenv("SQL_PWD", os.getenv("DB_PASSWORD", "Alexa@1234"))
+_DB_NAME = os.getenv("SQL_DB", os.getenv("DB_NAME", "aura"))
 _DB_URL  = f"postgresql://{quote_plus(_DB_USER)}:{quote_plus(_DB_PWD)}@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}"
 
 _conn_pool: Optional[_pg_pool.ThreadedConnectionPool] = None

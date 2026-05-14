@@ -13,6 +13,8 @@ from app.api.controllers.feedback_controller import admin_router as feedback_adm
 from app.api.controllers.escalations_controller import esc_router as escalations_router
 from app.api.controllers.escalations_controller import admin_router as escalations_admin_router
 from app.api.controllers.pii_controller import router as pii_router
+from app.api.onboarding import router as onboarding_router
+
 
 tags_metadata = [
     {"name": "Chat", "description": "AI-powered chat endpoints secured with Azure AD authentication."},
@@ -52,3 +54,4 @@ app.include_router(escalations_admin_router)
 app.include_router(pii_router)
 app.include_router(health_router)
 app.include_router(debug_router)
+app.include_router(onboarding_router)

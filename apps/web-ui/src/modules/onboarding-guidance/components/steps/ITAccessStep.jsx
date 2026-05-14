@@ -7,47 +7,19 @@ const STATUS_CONFIG = {
   'in-progress':   { label: 'In progress',   icon: 'fa-clock',          cls: 'og-tool-badge-progress'},
 };
 
-const ITAccessStep = () => {
+const ITAccessStep = ({ onNext }) => {
   const provisioned  = IT_TOOLS.filter(t => t.status === 'completed').length;
   const actionNeeded = IT_TOOLS.filter(t => t.status === 'action-needed').length;
 
   return (
     <div className="og-step-content">
-      <div className="og-step-header">
-        <div className="og-step-header-top">
-          <div>
-            <h2 className="og-step-title">IT access &amp; credentials</h2>
-            <p className="og-step-subtitle">
-              We've started provisioning your tools. Complete the action items below before your start date.
-            </p>
-          </div>
-
-          <div className="og-step-stat-group">
-            <div className="og-step-stat-box">
-              <div className="og-step-stat-label">Provisioned</div>
-              <div className="og-step-stat-value">{provisioned}/{IT_TOOLS.length}</div>
-            </div>
-            <div className="og-step-stat-divider" />
-            <div className="og-step-stat-box">
-              <div className="og-step-stat-label">ETA</div>
-              <div className="og-step-stat-value">2 days</div>
-            </div>
-            <div className="og-step-stat-divider" />
-            <div className="og-step-stat-box">
-              <div className="og-step-stat-label">IT contact</div>
-              <div className="og-step-stat-value" style={{ fontSize: 12 }}>it@aligned.com</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
+    
       {actionNeeded > 0 && (
         <div className="og-alert-banner">
           <i className="fas fa-exclamation-triangle" />
           <span>{actionNeeded} item{actionNeeded > 1 ? 's' : ''} require your attention before day one.</span>
         </div>
       )}
-
       <div className="og-tools-grid">
         {IT_TOOLS.map(tool => {
           const statusCfg = STATUS_CONFIG[tool.status] || STATUS_CONFIG['in-progress'];
@@ -76,6 +48,11 @@ const ITAccessStep = () => {
             </div>
           );
         })}
+      </div>
+      <div className="og-step-footer" style={{ justifyContent: 'flex-end', paddingBottom: 0 }}>
+        <button className="og-btn-primary" onClick={onNext}>
+          Continue <i className="fas fa-arrow-right" />
+        </button>
       </div>
     </div>
   );

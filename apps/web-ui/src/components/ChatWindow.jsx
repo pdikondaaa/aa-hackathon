@@ -341,9 +341,9 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
               >
                 <i className="fas fa-paperclip" />
               </button>
-              <button className="chat-input-icon-btn" title="Search" aria-label="Search">
+              {/* <button className="chat-input-icon-btn" title="Search" aria-label="Search">
                 <i className="fas fa-search" />
-              </button>
+              </button> */}
               {SpeechRecognition && (
                 <button
                   className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}`}

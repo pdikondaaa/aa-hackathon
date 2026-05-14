@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const FIELDS = [
   { label: 'Full Name',        icon: 'fa-user',        key: 'name'       },
@@ -11,42 +11,47 @@ const FIELDS = [
   { label: 'Emergency Contact',icon: 'fa-heart',       key: 'emergency'  },
 ];
 
-const ProfileStep = ({ user }) => {
+const formatDate = (iso) => {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+const ProfileStep = ({ user, employeeData, onNext }) => {
   const [saved, setSaved] = useState(false);
   const [fields, setFields] = useState({
-    name:       user?.name       || 'Amol Metkari',
-    email:      user?.email      || 'amol.metkari@alignedautomation.com',
-    empId:      'AA-2026-0042',
-    department: user?.department || 'TSS',
-    jobTitle:   user?.jobTitle   || 'Software Engineer',
-    startDate:  '28 Apr 2026',
-    phone:      '+91 98765 43210',
+    name:       user?.name  || '',
+    email:      user?.email || '',
+    empId:      '',
+    department: '',
+    jobTitle:   '',
+    startDate:  '',
+    phone:      '',
     emergency:  'Not provided',
   });
+
+  useEffect(() => {
+    if (!employeeData) return;
+    setFields(prev => ({
+      ...prev,
+      name:       employeeData.full_name      || prev.name,
+      email:      employeeData.email          || prev.email,
+      empId:      employeeData.employee_id    || prev.empId,
+      department: employeeData.department     || prev.department,
+      jobTitle:   employeeData.designation    || prev.jobTitle,
+      startDate:  formatDate(employeeData.date_of_joining) || prev.startDate,
+      phone:      employeeData.mobile || employeeData.work_phone || prev.phone,
+    }));
+  }, [employeeData]);
 
   const handleChange = (key, value) => {
     setFields(prev => ({ ...prev, [key]: value }));
     setSaved(false);
   };
 
-  const handleSave = () => setSaved(true);
+  const handleSave = () => { setSaved(true); onNext?.(); };
 
   return (
-    <div className="og-step-content">
-      <div className="og-step-header">
-        <div className="og-step-header-top">
-          <div>
-            <h2 className="og-step-title">Your Profile</h2>
-            <p className="og-step-subtitle">Review and complete your personal and employment details.</p>
-          </div>
-          {saved && (
-            <span className="og-saved-badge">
-              <i className="fas fa-check" /> Saved
-            </span>
-          )}
-        </div>
-      </div>
-
+    <div className="og-step-content og-profile-step">
       {/* Profile avatar row */}
       <div className="og-profile-avatar-row">
         <div className="og-profile-avatar">
@@ -55,9 +60,6 @@ const ProfileStep = ({ user }) => {
         <div>
           <div className="og-profile-avatar-name">{fields.name}</div>
           <div className="og-profile-avatar-role">{fields.jobTitle} · {fields.department}</div>
-          <button className="og-btn-ghost" style={{ marginTop: 6 }}>
-            <i className="fas fa-camera" /> Change photo
-          </button>
         </div>
       </div>
 
