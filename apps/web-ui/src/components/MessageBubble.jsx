@@ -125,7 +125,7 @@ const MessageBubble = ({ message, config, onOpenEscalation }) => {
       {/* Avatar — user side */}
       {isUser && (
         <div className="avatar user-avatar" aria-hidden="true">
-          {(user || config.user).initials}
+          {config.user?.initials}
         </div>
       )}
     </div>
