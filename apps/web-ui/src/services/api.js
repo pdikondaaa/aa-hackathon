@@ -2,10 +2,6 @@ import { msalInstance } from '../utils/authService';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-/**
- * HTTP Client with interceptor support
- * Automatically injects token for all requests except health endpoints
- */
 class HTTPClient {
   constructor(baseURL) {
     this.baseURL = baseURL;
@@ -13,23 +9,14 @@ class HTTPClient {
     this.responseInterceptors = [];
   }
 
-  /**
-   * Add request interceptor
-   */
   addRequestInterceptor(callback) {
     this.requestInterceptors.push(callback);
   }
 
-  /**
-   * Add response interceptor
-   */
   addResponseInterceptor(callback) {
     this.responseInterceptors.push(callback);
   }
 
-  /**
-   * Make HTTP request with interceptors
-   */
   async request(endpoint, options = {}) {
     let config = {
       method: options.method || 'GET',
@@ -40,17 +27,14 @@ class HTTPClient {
       ...options,
     };
 
-    // Run request interceptors
     for (const interceptor of this.requestInterceptors) {
       config = await interceptor(config, endpoint);
     }
 
     const url = `${this.baseURL}${endpoint}`;
-
     try {
       const response = await fetch(url, config);
 
-      // Run response interceptors
       let result = { status: response.status, ok: response.ok, response };
       for (const interceptor of this.responseInterceptors) {
         result = await interceptor(result);
@@ -92,16 +76,10 @@ class HTTPClient {
   }
 }
 
-/**
- * Create HTTP client instance
- */
 const httpClient = new HTTPClient(API_URL);
 
-/**
- * Request interceptor: Inject token for non-health endpoints
- */
+// Inject Azure AD Bearer token — no cookies needed, just the Authorization header
 httpClient.addRequestInterceptor(async (config, endpoint) => {
-  // Skip token injection for health endpoints
   if (endpoint.includes('/health') || endpoint.includes('/ping')) {
     return config;
   }
@@ -114,11 +92,7 @@ httpClient.addRequestInterceptor(async (config, endpoint) => {
     }
 
     const scopes = [`${import.meta.env.VITE_AZURE_CLIENT_ID}/.default`];
-    
-    const response = await msalInstance.acquireTokenSilent({
-      scopes,
-      account,
-    });
+    const response = await msalInstance.acquireTokenSilent({ scopes, account });
 
     config.headers = config.headers || {};
     config.headers['Authorization'] = `Bearer ${response.accessToken}`;
@@ -130,24 +104,13 @@ httpClient.addRequestInterceptor(async (config, endpoint) => {
   return config;
 });
 
-/**
- * Response interceptor: Handle errors
- */
 httpClient.addResponseInterceptor(async (result) => {
   if (result.status === 401) {
     console.error('Unauthorized - token may be expired');
-    // Could trigger re-login here
   }
   return result;
 });
 
-/**
- * Public API functions
- */
-
-/**
- * Check API health (no auth required)
- */
 export async function checkHealth() {
   try {
     return await httpClient.get('/health');
@@ -157,9 +120,6 @@ export async function checkHealth() {
   }
 }
 
-/**
- * Send message to chat API (authenticated - token auto-injected)
- */
 export async function askBot(message) {
   try {
     const response = await httpClient.post('/api/chat', { message });
@@ -173,6 +133,14 @@ export async function askBot(message) {
     console.error('Chat request failed:', error);
     throw error;
   }
+}
+
+export async function submitEscalation(payload) {
+  return httpClient.post('/api/escalations', {
+    ...payload,
+    escalation_type: payload.escalation_type?.toLowerCase(),
+    priority: payload.priority?.toLowerCase(),
+  });
 }
 
 export default httpClient;
