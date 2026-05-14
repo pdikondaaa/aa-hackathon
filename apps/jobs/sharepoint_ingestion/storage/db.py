@@ -44,7 +44,16 @@ class DocumentRepository:
             )
             self._conn = psycopg2.connect(_AURA_URL)
             register_vector(self._conn)
+        elif self._conn.status == psycopg2.extensions.STATUS_IN_TRANSACTION:
+            self._conn.rollback()
         return self._conn
+
+    def _rollback(self):
+        try:
+            if self._conn and not self._conn.closed:
+                self._conn.rollback()
+        except Exception:
+            pass
 
     def close(self):
         if self._conn and not self._conn.closed:
@@ -56,13 +65,17 @@ class DocumentRepository:
     def get_document_by_source_path(self, source_path: str) -> Optional[dict]:
         """Return the document row for a given source path, or None."""
         conn = self._get_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT * FROM documents WHERE source_path = %s",
-                (source_path,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM documents WHERE source_path = %s",
+                    (source_path,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception:
+            self._rollback()
+            raise
 
     def upsert_document(self, doc: dict) -> str:
         """
@@ -76,33 +89,37 @@ class DocumentRepository:
         conn = self._get_conn()
         doc_copy = dict(doc)
         doc_copy["tags"] = Json(doc_copy.get("tags") or {})
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO documents (
-                    source_system, document_name, source_path, document_type,
-                    checksum, visibility, tags, last_modified, indexed_at, status, updated_at
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO documents (
+                        source_system, document_name, source_path, document_type,
+                        checksum, visibility, tags, last_modified, indexed_at, status, updated_at
+                    )
+                    VALUES (
+                        %(source_system)s, %(document_name)s, %(source_path)s, %(document_type)s,
+                        %(checksum)s, %(visibility)s, %(tags)s,
+                        %(last_modified)s, NOW(), 'indexed', NOW()
+                    )
+                    ON CONFLICT (source_path) DO UPDATE SET
+                        document_name = EXCLUDED.document_name,
+                        document_type = EXCLUDED.document_type,
+                        checksum      = EXCLUDED.checksum,
+                        tags          = EXCLUDED.tags,
+                        last_modified = EXCLUDED.last_modified,
+                        indexed_at    = NOW(),
+                        status        = 'indexed',
+                        updated_at    = NOW()
+                    RETURNING id
+                    """,
+                    doc_copy,
                 )
-                VALUES (
-                    %(source_system)s, %(document_name)s, %(source_path)s, %(document_type)s,
-                    %(checksum)s, %(visibility)s, %(tags)s,
-                    %(last_modified)s, NOW(), 'indexed', NOW()
-                )
-                ON CONFLICT (source_path) DO UPDATE SET
-                    document_name = EXCLUDED.document_name,
-                    document_type = EXCLUDED.document_type,
-                    checksum      = EXCLUDED.checksum,
-                    tags          = EXCLUDED.tags,
-                    last_modified = EXCLUDED.last_modified,
-                    indexed_at    = NOW(),
-                    status        = 'indexed',
-                    updated_at    = NOW()
-                RETURNING id
-                """,
-                doc_copy,
-            )
-            doc_id = str(cur.fetchone()[0])
-            conn.commit()
+                doc_id = str(cur.fetchone()[0])
+                conn.commit()
+        except Exception:
+            self._rollback()
+            raise
         logger.debug(f"Upserted document {doc['document_name']} → id={doc_id}")
         return doc_id
 
@@ -111,13 +128,17 @@ class DocumentRepository:
     def delete_document_chunks(self, document_id: str):
         """Remove all existing chunks for a document (called before re-ingestion)."""
         conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM document_chunks WHERE document_id = %s",
-                (document_id,),
-            )
-            deleted = cur.rowcount
-            conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM document_chunks WHERE document_id = %s",
+                    (document_id,),
+                )
+                deleted = cur.rowcount
+                conn.commit()
+        except Exception:
+            self._rollback()
+            raise
         logger.debug(f"Deleted {deleted} stale chunks for document_id={document_id}")
 
     def insert_chunks(
@@ -153,24 +174,28 @@ class DocumentRepository:
         ]
 
         conn = self._get_conn()
-        with conn.cursor() as cur:
-            execute_values(
-                cur,
-                """
-                INSERT INTO document_chunks
-                    (document_id, chunk_index, chunk_hash, chunk_text,
-                     embedding, embedding_model, metadata)
-                VALUES %s
-                ON CONFLICT (document_id, chunk_index) DO UPDATE SET
-                    chunk_hash      = EXCLUDED.chunk_hash,
-                    chunk_text      = EXCLUDED.chunk_text,
-                    embedding       = EXCLUDED.embedding,
-                    embedding_model = EXCLUDED.embedding_model,
-                    metadata        = EXCLUDED.metadata
-                """,
-                records,
-            )
-            conn.commit()
+        try:
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO document_chunks
+                        (document_id, chunk_index, chunk_hash, chunk_text,
+                         embedding, embedding_model, metadata)
+                    VALUES %s
+                    ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+                        chunk_hash      = EXCLUDED.chunk_hash,
+                        chunk_text      = EXCLUDED.chunk_text,
+                        embedding       = EXCLUDED.embedding,
+                        embedding_model = EXCLUDED.embedding_model,
+                        metadata        = EXCLUDED.metadata
+                    """,
+                    records,
+                )
+                conn.commit()
+        except Exception:
+            self._rollback()
+            raise
         logger.info(f"Inserted {len(records)} chunks for document_id={document_id}")
 
     # ─── Retrieval (used by runtime retriever service) ────────────────────────

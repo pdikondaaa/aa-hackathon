@@ -21,6 +21,7 @@ langchain-text-splitters>=0.3.0
 # ── Embeddings ─────────────────────────────────────────────────────────────
 langchain-huggingface>=0.1.0
 sentence-transformers>=3.0.0
+einops>=0.7.0
 # CPU-only torch is sufficient for embedding generation in a batch job
 torch>=2.0.0
 
