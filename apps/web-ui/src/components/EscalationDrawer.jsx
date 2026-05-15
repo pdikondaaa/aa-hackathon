@@ -1,5 +1,25 @@
 import React, { useState } from 'react';
-import { submitEscalation } from '../services/api';
+import { submitEscalation, refineEmail } from '../services/api';
+
+const ESCALATION_RECIPIENTS = {
+  IT:           import.meta.env.VITE_ESCALATION_EMAIL_IT   || 'it.support@alignedautomation.com',
+  HR:           import.meta.env.VITE_ESCALATION_EMAIL_HR   || 'hr@alignedautomation.com',
+  Admin:        import.meta.env.VITE_ESCALATION_EMAIL_ADMIN || 'admin@alignedautomation.com',
+  Organization: import.meta.env.VITE_ESCALATION_EMAIL_ORG  || 'management@alignedautomation.com',
+};
+
+const buildMailto = (to, subject, body) =>
+  `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+function buildEscalationEmailBody(form) {
+  let body = `I am raising a ${form.escalation_type} escalation.\n\nSubject: ${form.subject}\n\nDetails:\n${form.reason}\n\nPriority: ${form.priority}`;
+  if (form.category)         body += `\nCategory: ${form.category}`;
+  if (form.affected_system)  body += `\nAffected System: ${form.affected_system}`;
+  if (form.business_impact)  body += `\nBusiness Impact: ${form.business_impact}`;
+  if (form.requested_action) body += `\nRequested Action: ${form.requested_action}`;
+  body += '\n\nPlease review and take appropriate action at your earliest convenience.';
+  return body;
+}
 
 const ESCALATION_TYPES = ['HR', 'IT', 'Admin', 'Organization'];
 const PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
@@ -23,10 +43,12 @@ const INITIAL_FORM = {
 };
 
 const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) => {
-  const [form, setForm]         = useState(INITIAL_FORM);
+  const [form, setForm]             = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted]   = useState(false);
   const [error, setError]           = useState(null);
+  const [emailDraft, setEmailDraft] = useState(null);
+  const [emailLoading, setEmailLoading] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -60,8 +82,32 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
         },
       });
 
+      const capturedForm = { ...form };
       setSubmitted(true);
       setForm(INITIAL_FORM);
+
+      // Generate email draft in the background from submitted form data
+      (async () => {
+        setEmailLoading(true);
+        try {
+          const recipient  = ESCALATION_RECIPIENTS[capturedForm.escalation_type] || '';
+          const draftBody  = buildEscalationEmailBody(capturedForm);
+          const result     = await refineEmail({
+            to:      recipient,
+            subject: `[Escalation] ${capturedForm.escalation_type} – ${capturedForm.subject}`,
+            body:    draftBody,
+          });
+          setEmailDraft({
+            to:      recipient,
+            subject: result.refined_subject,
+            body:    result.refined_body,
+          });
+        } catch {
+          setEmailDraft(null);
+        } finally {
+          setEmailLoading(false);
+        }
+      })();
     } catch (err) {
       setError('Failed to submit escalation. Please try again.');
     } finally {
@@ -73,7 +119,14 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
     setSubmitted(false);
     setError(null);
     setForm(INITIAL_FORM);
+    setEmailDraft(null);
+    setEmailLoading(false);
     onClose();
+  };
+
+  const handleOpenOutlook = () => {
+    if (!emailDraft) return;
+    window.location.href = buildMailto(emailDraft.to, emailDraft.subject, emailDraft.body);
   };
 
   return (
@@ -118,7 +171,47 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
             </div>
             <h3>Escalation Submitted</h3>
             <p>Your escalation has been recorded and routed to the appropriate team. You'll receive an update shortly.</p>
-            <button className="esc-btn-primary" onClick={handleClose}>
+
+            {/* Email draft section */}
+            <div className="esc-email-draft">
+              <div className="esc-email-draft-header">
+                <i className="fas fa-envelope" />
+                <span>Send Email Notification</span>
+              </div>
+
+              {emailLoading && (
+                <div className="esc-email-draft-loading">
+                  <i className="fas fa-spinner fa-spin" />
+                  <span>Drafting escalation email…</span>
+                </div>
+              )}
+
+              {!emailLoading && emailDraft && (
+                <>
+                  <div className="esc-email-draft-preview">
+                    <div className="esc-email-draft-row">
+                      <span className="esc-email-draft-lbl">To</span>
+                      <span className="esc-email-draft-val">{emailDraft.to}</span>
+                    </div>
+                    <div className="esc-email-draft-row">
+                      <span className="esc-email-draft-lbl">Subject</span>
+                      <span className="esc-email-draft-val">{emailDraft.subject}</span>
+                    </div>
+                    <div className="esc-email-draft-body">{emailDraft.body}</div>
+                  </div>
+                  <button className="esc-outlook-btn" onClick={handleOpenOutlook}>
+                    <i className="fab fa-microsoft" />
+                    Open in Outlook and Send Notification
+                  </button>
+                </>
+              )}
+
+              {!emailLoading && !emailDraft && (
+                <p className="esc-email-draft-note">Email draft unavailable — you can still notify the team manually.</p>
+              )}
+            </div>
+
+            <button className="esc-btn-secondary" onClick={handleClose}>
               Done
             </button>
           </div>

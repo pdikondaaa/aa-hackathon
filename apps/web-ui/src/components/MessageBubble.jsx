@@ -2,9 +2,83 @@ import React, { useState } from 'react';
 import { parseMarkdown } from '../utils/markdown';
 import { submitFeedback, deleteFeedback } from '../services/api';
 
+const buildMailto = (to, subject, body) => {
+  const params = [`subject=${encodeURIComponent(subject)}`, `body=${encodeURIComponent(body)}`];
+  return `mailto:${encodeURIComponent(to)}?${params.join('&')}`;
+};
+
+const EmailDraftCard = ({ draft }) => {
+  const [to, setTo]           = useState(draft.to);
+  const [subject, setSubject] = useState(draft.subject);
+  const [body, setBody]       = useState(draft.body);
+  const [launched, setLaunched] = useState(false);
+
+  const handleSend = () => {
+    window.location.href = buildMailto(to, subject, body);
+    setLaunched(true);
+    setTimeout(() => setLaunched(false), 3000);
+  };
+
+  return (
+    <div className="email-draft-card">
+      <div className="email-draft-header">
+        <i className="fas fa-envelope-open-text" />
+        <span>Email Draft</span>
+        <span className="email-draft-badge">AI Generated</span>
+      </div>
+
+      <div className="email-draft-fields">
+        <div className="email-draft-field">
+          <label className="email-draft-label">To</label>
+          <input
+            className="email-draft-input"
+            type="email"
+            value={to}
+            onChange={e => setTo(e.target.value)}
+            placeholder="recipient@example.com"
+          />
+        </div>
+        <div className="email-draft-field">
+          <label className="email-draft-label">Subject</label>
+          <input
+            className="email-draft-input"
+            type="text"
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+          />
+        </div>
+        <div className="email-draft-field">
+          <label className="email-draft-label">Body</label>
+          <textarea
+            className="email-draft-textarea"
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            rows={6}
+          />
+        </div>
+      </div>
+
+      <button
+        className={`email-draft-send-btn${launched ? ' launched' : ''}`}
+        onClick={handleSend}
+        disabled={!to.trim() || !subject.trim()}
+      >
+        {launched ? (
+          <><i className="fas fa-check" /> Outlook is opening...</>
+        ) : (
+          <><i className="fab fa-microsoft" /> Send Email</>
+        )}
+      </button>
+    </div>
+  );
+};
+
 // Single chat message — user bubble (right) or assistant bubble (left).
 // Assistant bubbles include thumbs-up / thumbs-down feedback that toggles colour on click.
-const MessageBubble = ({ message, config, conversationId, onOpenEscalation }) => {
+const getInitials = (name = '') =>
+  name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation }) => {
   const [feedback, setFeedback] = useState(message.initialFeedback?.rating ?? null);
   const [feedbackId, setFeedbackId] = useState(message.initialFeedback?.id ?? null);
   const [submitting, setSubmitting] = useState(false);
@@ -51,13 +125,16 @@ const MessageBubble = ({ message, config, conversationId, onOpenEscalation }) =>
         <div className="avatar assistant-avatar" aria-hidden="true">A</div>
       )}
 
-      <div className="message-body">
-        {/* Bubble */}
+      <div className={`message-body${message.emailDraft ? ' message-body--wide' : ''}`}>
+        {/* Email draft card — replaces the standard bubble */}
+        {message.emailDraft ? (
+          <EmailDraftCard draft={message.emailDraft} />
+        ) : (
+        /* Standard bubble */
         <div className={`bubble${isUser ? ' bubble-user' : ' bubble-assistant'}`}>
           {isUser ? (
             <p>{message.content}</p>
           ) : (
-            /* Assistant messages support simple markdown */
             <div
               className="message-content"
               dangerouslySetInnerHTML={{ __html: parseMarkdown(message.content) }}
@@ -74,9 +151,10 @@ const MessageBubble = ({ message, config, conversationId, onOpenEscalation }) =>
             />
           )}
         </div>
+        )}
 
         {/* Source citations */}
-        {!isUser && message.sources && message.sources.length > 0 && (
+        {!isUser && !message.emailDraft && message.sources && message.sources.length > 0 && (
           <div className="sources-section">
             <div className="sources-header">
               <i className="fas fa-database" /> Sources ({message.sources.length})
@@ -152,7 +230,7 @@ const MessageBubble = ({ message, config, conversationId, onOpenEscalation }) =>
       {/* Avatar — user side */}
       {isUser && (
         <div className="avatar user-avatar" aria-hidden="true">
-          {config.user?.initials}
+          {getInitials(user?.name) || config.user?.initials}
         </div>
       )}
     </div>

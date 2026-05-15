@@ -1,5 +1,5 @@
 import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
-import { msalConfig, loginRequest, graphRequest, graphConfig } from '../config/authConfig';
+import { msalConfig, loginRequest, graphRequest, graphConfig, plannerRequest } from '../config/authConfig';
 import {
   isUserAuthorized,
   getUserRole,
@@ -124,6 +124,79 @@ export function buildUser(profile) {
     jobTitle:   profile.jobTitle           || '',
     photo:      profile.photo              || null,
   };
+}
+
+// ─── Microsoft Planner Integration ────────────────────────────────────────────
+
+async function acquirePlannerToken() {
+  try {
+    const account = msalInstance.getActiveAccount();
+    return await msalInstance.acquireTokenSilent({ ...plannerRequest, account });
+  } catch (err) {
+    if (err instanceof InteractionRequiredAuthError) {
+      try {
+        return await msalInstance.acquireTokenPopup({ ...plannerRequest });
+      } catch {
+        return null;
+      }
+    }
+    throw err;
+  }
+}
+
+export async function fetchPlannerTasks() {
+  try {
+    const token = await acquirePlannerToken();
+    if (!token) return { tasks: [], error: 'consent_required' };
+
+    const res = await fetch('https://graph.microsoft.com/v1.0/me/planner/tasks', {
+      headers: { Authorization: `Bearer ${token.accessToken}` },
+    });
+
+    if (!res.ok) {
+      if (res.status === 403) return { tasks: [], error: 'no_permission' };
+      return { tasks: [], error: 'fetch_failed' };
+    }
+
+    const data = await res.json();
+    const rawTasks = data.value || [];
+
+    // Fetch plan titles in parallel (deduplicated by planId)
+    const planIds = [...new Set(rawTasks.map(t => t.planId).filter(Boolean))];
+    const planTitles = {};
+    await Promise.all(
+      planIds.map(async (planId) => {
+        try {
+          const planRes = await fetch(`https://graph.microsoft.com/v1.0/planner/plans/${planId}`, {
+            headers: { Authorization: `Bearer ${token.accessToken}` },
+          });
+          if (planRes.ok) {
+            const plan = await planRes.json();
+            planTitles[planId] = plan.title;
+          }
+        } catch { /* ignore individual plan fetch failures */ }
+      })
+    );
+
+    return {
+      tasks: rawTasks.map(t => ({
+        id: t.id,
+        title: t.title,
+        percentComplete: t.percentComplete ?? 0,
+        dueDateTime: t.dueDateTime || null,
+        createdDateTime: t.createdDateTime || null,
+        planId: t.planId,
+        bucketId: t.bucketId,
+        priority: t.priority ?? 9,
+        planTitle: planTitles[t.planId] || null,
+        checklistItemCount: t.checklistItemCount ?? 0,
+        activeChecklistItemCount: t.activeChecklistItemCount ?? 0,
+      })),
+      error: null,
+    };
+  } catch {
+    return { tasks: [], error: 'fetch_failed' };
+  }
 }
 
 // ─── User Authorization Functions ─────────────────────────────────────────────

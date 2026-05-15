@@ -348,6 +348,8 @@ class MasterAgent:
             return response.content.strip() or None
         except FuturesTimeout:
             print(f"[MasterAgent] Contextual block response timed out for category={category}")
+        except Exception as exc:
+            print(f"[MasterAgent] Contextual block response error (category={category}): {exc}")
     def _synthesize(self, query: str, responses: Dict[str, str]) -> str:
         formatted = "\n\n".join(
             f"[{domain.upper()} Department]\n{resp}"
@@ -385,10 +387,20 @@ class MasterAgent:
             sources = getattr(slave, 'last_sources', [])
             return domain, resp, [s for s in sources if s]
         except Exception as exc:
-            print(f"[MasterAgent] Contextual block response error ({exc})")
-        return None
+            print(f"[MasterAgent] _run_slave error for domain '{domain}': {exc}")
+        return domain, None, []
 
     def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
+        try:
+            return self._process_query_inner(query, user_email=user_email, user_id=user_id)
+        except Exception as exc:
+            print(f"[MasterAgent] Unhandled exception in process_query: {exc}")
+            return (
+                "I encountered an unexpected error processing your request. "
+                "Please try again or contact support if the issue persists."
+            )
+
+    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "") -> str:
         q = query.strip()
         if not q:
             return "Please enter a question."
