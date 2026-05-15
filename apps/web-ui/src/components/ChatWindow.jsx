@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
-import { createConversation, postMessage, listMessages, getConversationFeedback } from '../services/api';
+import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat } from '../services/api';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -16,6 +16,22 @@ const THINKING_PHRASES = [
   'Sifting through records...',
   'Piecing it all together...',
 ];
+
+const EMAIL_INTENT_PATTERNS = [
+  /\b(send|write|compose|draft)\s+(an?\s+)?email\b/i,
+  /\b(feeling|feeling\s+a\s+bit)\s+(unwell|sick|ill|not\s+well|under\s+the\s+weather)\b/i,
+  /\bsick\s+(leave|day|note)\b/i,
+  /\b(want\s+to|need\s+to|like\s+to)\s+(take|apply\s+for)\s+(leave|a\s+day\s+off|time\s+off)\b/i,
+  /\b(install|installation\s+of|set\s+up|setup)\s+\w/i,
+  /\b(need|require|request)\s+(access|permission)\b/i,
+  /\b(request\s+for|requesting)\s+(access|permission|software|install)\b/i,
+  /\bIT\s+(help|support|issue|ticket|problem|request)\b/i,
+  /\b(laptop|computer|machine|PC|desktop)\s+(issue|problem|not\s+working|broken|crashed)\b/i,
+  /\b(help|support)\s+(with|for)\s+(my\s+)?(laptop|computer|PC)\b/i,
+];
+
+const detectEmailIntent = (text) =>
+  EMAIL_INTENT_PATTERNS.some((re) => re.test(text));
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -40,7 +56,8 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   const textareaRef    = useRef(null);
   const fileInputRef   = useRef(null);
   const recognitionRef = useRef(null);
-  const voiceBaseRef = useRef('');
+  const voiceBaseRef   = useRef('');
+  const abortCtrlRef   = useRef(null);
   const [loading, setLoading]           = useState(false);
   const [historyLoading, setHistoryLoading] = useState(!!selectedConversationId);
   const [historyError, setHistoryError]   = useState(false);
@@ -156,6 +173,10 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     }
 
     setLoading(true);
+    const abortCtrl = new AbortController();
+    abortCtrlRef.current = abortCtrl;
+
+    const isEmailRequest = detectEmailIntent(trimmed);
 
     try {
       // Create a conversation on the first message of a new chat session
@@ -166,23 +187,42 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
         setConversationId(convId);
       }
 
-      // Send message via the conversations/messages API
-      const msgResponse = await postMessage(convId, trimmed);
+      // Fire both requests in parallel when an email intent is detected
+      const chatPromise = postMessage(convId, trimmed, abortCtrl.signal);
+      const emailPromise = isEmailRequest ? draftEmailFromChat(trimmed).catch(() => null) : Promise.resolve(null);
 
-      setMessages(prev => [
-        ...prev,
+      const [msgResponse, emailDraft] = await Promise.all([chatPromise, emailPromise]);
+
+      const newMsgs = [
         {
           id: nextId + 1,
-          backendId: msgResponse.id,        // Backend UUID used for escalations / citations
+          backendId: msgResponse.id,
           conversationId: convId,
           role: 'assistant',
           content: msgResponse.content,
           sources: [],
           timestamp: now,
         },
-      ]);
+      ];
+
+      if (emailDraft) {
+        newMsgs.push({
+          id: nextId + 2,
+          role: 'assistant',
+          content: '',
+          emailDraft: {
+            to: emailDraft.to || '',
+            subject: emailDraft.refined_subject || '',
+            body: emailDraft.refined_body || '',
+          },
+          timestamp: now,
+        });
+      }
+
+      setMessages(prev => [...prev, ...newMsgs]);
       onConversationUpdated?.();
     } catch (error) {
+      if (error.name === 'AbortError') return;
       console.error('Error sending message:', error);
       setMessages(prev => [
         ...prev,
@@ -195,11 +235,20 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
         },
       ]);
     } finally {
+      abortCtrlRef.current = null;
       setLoading(false);
     }
   };
 
+  const handleStop = () => {
+    abortCtrlRef.current?.abort();
+  };
+
   const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && loading) {
+      handleStop();
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !loading) {
       e.preventDefault();
       sendMessage();
@@ -330,6 +379,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
                 key={msg.id}
                 message={msg}
                 config={config}
+                user={user}
                 conversationId={conversationId}
                 onOpenEscalation={onOpenEscalation}
               />
@@ -424,19 +474,26 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             </div>
             <div className="chat-input-right">
               <span className="chat-input-hint">Shift+Enter for new line</span>
-              <button
-                className="send-btn"
-                              onClick={() => sendMessage()}
-                              disabled={(!input.trim() && !attachments.length) || loading}
-                aria-label="Send message"
-                title="Send (Enter)"
-              >
-                {loading ? (
-                  <i className="fas fa-spinner fa-spin" />
-                ) : (
+              {loading ? (
+                <button
+                  className="send-btn stop-btn"
+                  onClick={handleStop}
+                  aria-label="Stop response"
+                  title="Stop (Esc)"
+                >
+                  <i className="fas fa-stop" />
+                </button>
+              ) : (
+                <button
+                  className="send-btn"
+                  onClick={() => sendMessage()}
+                  disabled={!input.trim() && !attachments.length}
+                  aria-label="Send message"
+                  title="Send (Enter)"
+                >
                   <i className="fas fa-paper-plane" />
-                )}
-              </button>
+                </button>
+              )}
             </div>
           </div>
         </div>
