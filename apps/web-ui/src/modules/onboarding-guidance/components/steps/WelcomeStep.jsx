@@ -15,7 +15,7 @@ function avatarColor(name = '') {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-const WelcomeStep = ({ user, employeeData, peersData, onNext }) => {
+const WelcomeStep = ({ user, employeeData, peersData, profileError, onNext }) => {
   const firstName = employeeData?.first_name
     || (user?.name ? user.name.split(' ')[0] : 'there');
 
@@ -33,6 +33,23 @@ const WelcomeStep = ({ user, employeeData, peersData, onNext }) => {
 
   return (
     <div className="og-step-content">
+      {profileError && (
+        <div style={{
+          background: 'rgba(245,158,11,0.1)',
+          border: '1px solid rgba(245,158,11,0.3)',
+          borderRadius: 8,
+          padding: '10px 14px',
+          marginBottom: 16,
+          fontSize: 13,
+          color: 'var(--warning, #f59e0b)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <i className="fas fa-exclamation-triangle" />
+          Your profile could not be loaded from the HR system. Some fields may be empty — please fill them in manually.
+        </div>
+      )}
       <div className="og-welcome-chip">
         <i className="fas fa-star" />
         Welcome aboard, {firstName}

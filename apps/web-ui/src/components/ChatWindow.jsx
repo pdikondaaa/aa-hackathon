@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
-import { askBot } from '../services/api';
+import { createConversation, postMessage, listMessages, getConversationFeedback } from '../services/api';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -26,7 +26,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, selectedConversationId, onConversationUpdated }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -35,12 +35,15 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
   const [input, setInput]             = useState('');
   const [isListening, setIsListening] = useState(false);
   const [attachments, setAttachments] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
   const bottomRef      = useRef(null);
   const textareaRef    = useRef(null);
   const fileInputRef   = useRef(null);
   const recognitionRef = useRef(null);
   const voiceBaseRef = useRef('');
   const [loading, setLoading]           = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(!!selectedConversationId);
+  const [historyError, setHistoryError]   = useState(false);
   const [thinkingIndex, setThinkingIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
 
@@ -48,6 +51,48 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
     if (!messages.length) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Runs synchronously before the browser paints — prevents any blank/welcome flash
+  useLayoutEffect(() => {
+    if (!selectedConversationId) return;
+    setHistoryLoading(true);
+    setHistoryError(false);
+    setMessages([]);
+    setConversationId(null);
+  }, [selectedConversationId]);
+
+  // Async data fetch — runs after paint (spinner already visible from useLayoutEffect)
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [msgRes, fbRes] = await Promise.all([
+          listMessages(selectedConversationId),
+          getConversationFeedback(selectedConversationId).catch(() => ({})),
+        ]);
+        if (cancelled) return;
+        const feedbackMap = fbRes || {};
+        const msgs = (msgRes.data || []).map((m, i) => ({
+          id: i + 1,
+          backendId: m.id,
+          conversationId: selectedConversationId,
+          role: m.role,
+          content: m.content,
+          timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          initialFeedback: feedbackMap[m.id] ?? null,
+        }));
+        setMessages(msgs);
+        setConversationId(selectedConversationId);
+      } catch (e) {
+        console.error('Failed to load conversation:', e);
+        if (!cancelled) setHistoryError(true);
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedConversationId]);
 
   useEffect(() => {
     if (!loading) {
@@ -101,7 +146,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
     const userContent = [trimmed, fileList].filter(Boolean).join('\n\n');
     setMessages(prev => [
       ...prev,
-      { id: nextId,     role: 'user',     content: userContent, timestamp: now },
+      { id: nextId, role: 'user', content: userContent, timestamp: now },
     ]);
 
     setInput('');
@@ -113,28 +158,32 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
     setLoading(true);
 
     try {
-      // Call authenticated API
-      const response = await askBot(trimmed);
-      
-      // Add assistant response
+      // Create a conversation on the first message of a new chat session
+      let convId = conversationId;
+      if (!convId) {
+        const conversation = await createConversation(trimmed.slice(0, 80));
+        convId = conversation.id;
+        setConversationId(convId);
+      }
+
+      // Send message via the conversations/messages API
+      const msgResponse = await postMessage(convId, trimmed);
+
       setMessages(prev => [
         ...prev,
         {
           id: nextId + 1,
+          backendId: msgResponse.id,        // Backend UUID used for escalations / citations
+          conversationId: convId,
           role: 'assistant',
-          content: response.answer,
-          sources: response.sources || [],
+          content: msgResponse.content,
+          sources: [],
           timestamp: now,
-          metadata: {
-            user_email: response.user_email,
-            user_id: response.user_id,
-          },
         },
       ]);
+      onConversationUpdated?.();
     } catch (error) {
       console.error('Error sending message:', error);
-      
-      // Add error message
       setMessages(prev => [
         ...prev,
         {
@@ -204,7 +253,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
   // Expose for parent (history sidebar clicks)
   ChatWindow.setSuggestion = handleSuggestion;
 
-  const showWelcome = messages.length === 0 && !compact;
+  const showWelcome = messages.length === 0 && !compact && !historyLoading && !historyError && !conversationId;
 
   return (
     <div className="chat-window">
@@ -256,6 +305,22 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
 
           </div>
 
+        ) : historyLoading ? (
+
+          /* ── Loading history ─────────────────────────────── */
+          <div className="chat-history-loading">
+            <i className="fas fa-spinner fa-spin" />
+            <span>Loading conversation...</span>
+          </div>
+
+        ) : historyError ? (
+
+          /* ── Load error ──────────────────────────────────── */
+          <div className="chat-history-loading">
+            <i className="fas fa-exclamation-circle" style={{ color: 'var(--error)' }} />
+            <span>Failed to load conversation. Please try again.</span>
+          </div>
+
         ) : (
 
           /* ── Message list ────────────────────────────────── */
@@ -265,6 +330,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation 
                 key={msg.id}
                 message={msg}
                 config={config}
+                conversationId={conversationId}
                 onOpenEscalation={onOpenEscalation}
               />
             ))}

@@ -11,6 +11,7 @@ from app.api.controllers.health_controller import router as health_router
 from app.api.controllers.messages_controller import conv_router as messages_conv_router
 from app.api.controllers.messages_controller import msg_router as messages_msg_router
 from app.api.controllers.feedback_controller import msg_router as feedback_msg_router
+from app.api.controllers.feedback_controller import conv_router as feedback_conv_router
 from app.api.controllers.feedback_controller import fb_router as feedback_fb_router
 from app.api.controllers.feedback_controller import admin_router as feedback_admin_router
 from app.api.controllers.escalations_controller import esc_router as escalations_router
@@ -50,6 +51,7 @@ app.include_router(conversations_router)
 app.include_router(messages_conv_router)
 app.include_router(messages_msg_router)
 app.include_router(feedback_msg_router)
+app.include_router(feedback_conv_router)
 app.include_router(feedback_fb_router)
 app.include_router(feedback_admin_router)
 app.include_router(escalations_router)

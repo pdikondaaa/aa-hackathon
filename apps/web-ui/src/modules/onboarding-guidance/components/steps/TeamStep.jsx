@@ -63,7 +63,7 @@ const MemberCard = ({ member }) => {
   );
 };
 
-const TeamStep = ({ employeeData, peersData, onNext }) => {
+const TeamStep = ({ employeeData, peersData, profileError, onNext }) => {
   const department = employeeData?.department || 'Your Department';
 
   const managers = [];
@@ -102,7 +102,7 @@ const TeamStep = ({ employeeData, peersData, onNext }) => {
     location: p.location,
   }));
 
-  const peersLoading = employeeData && peersData === null;
+  const peersLoading = !profileError && employeeData && peersData === null;
 
   return (
     <div className="og-step-content">
@@ -176,7 +176,11 @@ const TeamStep = ({ employeeData, peersData, onNext }) => {
           </div>
         ) : (
           <p style={{ color: 'var(--text-muted)', fontSize: 14, padding: '12px 0' }}>
-            {peersData ? 'No colleagues found with the same reporting manager.' : 'Loading colleagues…'}
+            {profileError
+              ? 'Profile not found in HR system — team data unavailable.'
+              : peersData
+                ? 'No colleagues found with the same reporting manager.'
+                : 'Loading colleagues…'}
           </p>
         )}
       </section>

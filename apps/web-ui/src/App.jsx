@@ -22,6 +22,9 @@ export default function App() {
   const [chatKey,         setChatKey]         = useState(0);
   const [isDark,          setIsDark]          = useState(false);
   const [escalationOpen,  setEscalationOpen]  = useState(false);
+  const [escalationContext, setEscalationContext] = useState({ conversationId: null, messageId: null });
+  const [selectedConversationId, setSelectedConversationId] = useState(null);
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
 
   const [user,        setUser]        = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -113,8 +116,9 @@ export default function App() {
     }
   };
 
-  const handleHistoryClick = (text) => {
-    if (ChatWindow.setSuggestion) ChatWindow.setSuggestion(text);
+  const handleHistoryClick = (conversation) => {
+    setSelectedConversationId(conversation.id);
+    setActiveNav(chatConfig.navigation[0].id);
   };
 
   // Full-screen spinner while MSAL initialises
@@ -149,9 +153,14 @@ export default function App() {
           config={chatConfig}
           activeNav={activeNav}
           onNavChange={setActiveNav}
-          onNewChat={() => setChatKey((k) => k + 1)}
+          onNewChat={() => {
+            setSelectedConversationId(null);
+            setChatKey((k) => k + 1);
+          }}
           onHistoryClick={handleHistoryClick}
           isOpen={sidebarOpen}
+          refreshKey={sidebarRefreshKey}
+          selectedConversationId={selectedConversationId}
         />
 
         {activeNav === 'myNotes' ? (
@@ -164,7 +173,12 @@ export default function App() {
               key={chatKey}
               config={chatConfig}
               user={user}
-              onOpenEscalation={() => setEscalationOpen(true)}
+              selectedConversationId={selectedConversationId}
+              onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
+              onOpenEscalation={({ conversationId, messageId } = {}) => {
+                setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
+                setEscalationOpen(true);
+              }}
             />
           </main>
         )}
@@ -180,6 +194,8 @@ export default function App() {
         isOpen={escalationOpen}
         onClose={() => setEscalationOpen(false)}
         user={user}
+        conversationId={escalationContext.conversationId}
+        messageId={escalationContext.messageId}
       />
     </div>
   );
