@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { parseMarkdown } from '../utils/markdown';
 import { submitFeedback, deleteFeedback } from '../services/api';
+import { isDocumentMessage, downloadDocument, printDocument } from '../utils/documentDownload';
 
 const buildMailto = (to, subject, body) => {
   const params = [`subject=${encodeURIComponent(subject)}`, `body=${encodeURIComponent(body)}`];
@@ -83,8 +84,11 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
   const [feedbackId, setFeedbackId] = useState(message.initialFeedback?.id ?? null);
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [downloaded, setDownloaded]   = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
-  const isUser = message.role === 'user';
+  const isUser     = message.role === 'user';
+  const isDocument = !isUser && isDocumentMessage(message.content);
 
   const handleFeedback = async (type) => {
     if (submitting || !message.backendId) return;
@@ -115,6 +119,24 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      await downloadDocument(message.content);
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2500);
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handlePrint = () => {
+    printDocument(message.content);
   };
 
   return (
@@ -217,6 +239,31 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
               >
                 <i className={`fas ${copied ? 'fa-check' : 'fa-copy'}`} />
               </button>
+
+              {/* Document download & print — only shown for generated documents */}
+              {isDocument && (
+                <>
+                  <span className="doc-actions-divider" aria-hidden="true" />
+                  <button
+                    className={`feedback-btn doc-action-btn${downloaded ? ' active-download' : ''}`}
+                    onClick={handleDownload}
+                    disabled={downloading}
+                    title={downloading ? 'Generating PDF…' : downloaded ? 'Downloaded!' : 'Download PDF'}
+                    aria-label="Download document as PDF"
+                  >
+                    <i className={`fas ${downloading ? 'fa-spinner fa-spin' : downloaded ? 'fa-check' : 'fa-download'}`} />
+                  </button>
+                  <button
+                    className="feedback-btn doc-action-btn"
+                    onClick={handlePrint}
+                    title="Print / Save as PDF"
+                    aria-label="Print document"
+                  >
+                    <i className="fas fa-print" />
+                  </button>
+                </>
+              )}
+
               {feedback && (
                 <span className="feedback-thanks" role="status">
                   {config.labels.feedbackThanks}

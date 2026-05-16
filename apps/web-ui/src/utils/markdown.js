@@ -1,11 +1,14 @@
 // Simple markdown-to-HTML converter for static chat messages.
-// Supports: **bold**, - bullet lists, 1. numbered lists, line breaks.
+// Supports: **bold**, _italic_, # headings, ---, - bullet lists, 1. numbered lists, line breaks.
 // Output is sanitised (no user input ever passes through here — only config data).
 
 const EMOJI_PREFIX = /^[✅⏳❌🏥💰📚🏠🎯🔔📋]/u;
 
 const parseBold = (text) =>
   text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+const parseItalic = (text) =>
+  text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
 
 const parseLinks = (text) =>
   text.replace(
@@ -37,7 +40,24 @@ export const parseMarkdown = (raw) => {
       continue;
     }
 
-    const renderInline = (t) => parseLinks(parseBold(t));
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+      flushList();
+      output.push('<hr class="md-hr"/>');
+      continue;
+    }
+
+    // ATX headings  # ## ###
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
+    if (headingMatch) {
+      flushList();
+      const level = headingMatch[1].length;
+      const text  = parseLinks(parseBold(headingMatch[2]));
+      output.push(`<h${level} class="md-h${level}">${text}</h${level}>`);
+      continue;
+    }
+
+    const renderInline = (t) => parseLinks(parseItalic(parseBold(t)));
 
     // Unordered list item
     if (line.startsWith('- ')) {
