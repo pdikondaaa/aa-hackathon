@@ -2,7 +2,10 @@ import re
 import functools
 import json
 import socket
-from typing import Generator
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from difflib import SequenceMatcher
+from typing import Generator, Dict, List, Optional
 from urllib.parse import urlparse
 
 from langchain.tools import tool
@@ -61,7 +64,8 @@ _GREETING_RESPONSE = (
     "- **Admin** — travel, cab bookings, office facilities\n"
     "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
     "- **PMO** — project status, milestones, resources\n"
-    "- **Employee Directory** — find colleagues, contact details\n\n"
+    "- **Employee Directory** — find colleagues, contact details\n"
+    "- **Documents** — generate letters, certificates, and HR documents\n\n"
     "What can I help you with today?"
 )
 
@@ -126,7 +130,38 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
     ],
+    'document': [
+        'loan proof', 'experience letter', 'employment verification',
+        'offer letter', 'relieving letter', 'address proof', 'bonafide',
+        'internship certificate', 'promotion letter', 'noc',
+        'no objection certificate', 'confirmation letter', 'id card request',
+        'generate letter', 'generate certificate', 'generate document',
+        'create letter', 'create certificate', 'draft letter',
+        'need letter', 'need certificate', 'hr letter', 'hr document',
+        'employment letter', 'company letter', 'salary certificate',
+    ],
 }
+
+# ── Document query pre-classifier (regex, no LLM) ────────────────────────────
+_DOC_PATTERNS = [
+    re.compile(
+        r"\b(?:loan\s+proof|experience\s+letter|employment\s+verification|offer\s+letter|"
+        r"relieving\s+letter|address\s+proof|bonafide|internship\s+certificate|"
+        r"promotion\s+letter|no\s+objection\s+certificate|\bnoc\b|confirmation\s+letter|"
+        r"id\s+card\s+request|salary\s+certificate|employment\s+letter)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:generate|create|draft|prepare|write|need|want|issue)\s+"
+        r"(?:a\s+|an\s+)?(?:\w+\s+){0,3}(?:letter|certificate|document|proof)\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _is_document_query(query: str) -> bool:
+    return any(p.search(query) for p in _DOC_PATTERNS)
+
 
 # ── Employee query pre-classifier (regex, no LLM) ────────────────────────────
 _EMP_PATTERNS = [
@@ -163,12 +198,13 @@ Departments and what they own:
 - finance: ZOHO expenses, TDS declarations, income tax, Form 16, expense reimbursement submission, Kotak salary account
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
+- document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee
+Valid values: hr, it, admin, pmo, finance, org, employee, document
 
 Reply:"""
 
@@ -272,6 +308,9 @@ class MasterAgent:
                         return self._fn(query=q, user_id=user_id or None)
 
                 agent = _EscWrapper(_esc_fn)
+            elif domain == 'document':
+                from app.agents.document_agent import DocumentAgent
+                agent = DocumentAgent()
 
             if agent:
                 self._slaves[domain] = agent
@@ -293,7 +332,7 @@ class MasterAgent:
             if not tokens:
                 return None
             domain = tokens[0]
-            if domain in DOMAIN_KEYWORDS:
+            if domain in DOMAIN_KEYWORDS or domain == 'document':
                 print(f"[MasterAgent] LLM routed → {domain}")
                 return domain
         except FuturesTimeout:
@@ -315,7 +354,16 @@ class MasterAgent:
         print(f"[MasterAgent] Keyword routed → {best} (score={scores[best]})")
         return best
 
-    def _route(self, query: str) -> str:
+    def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
+        # Active document session takes priority — route follow-up field replies correctly
+        try:
+            from app.agents.document_agent import has_active_session
+            if has_active_session(user_email, user_id):
+                print("[MasterAgent] Active document session → document")
+                return 'document'
+        except Exception as exc:
+            print(f"[MasterAgent] Session check error: {exc}")
+
         # Escalation keyword — highest priority, bypass LLM
         if 'escalat' in query.lower():
             print("[MasterAgent] Escalation keyword → escalation")
@@ -325,6 +373,11 @@ class MasterAgent:
         if _is_employee_query(query):
             print("[MasterAgent] Employee pattern → employee")
             return 'employee'
+
+        # Document pattern pre-classifier — deterministic, no LLM needed
+        if _is_document_query(query):
+            print("[MasterAgent] Document pattern → document")
+            return 'document'
 
         # LLM routing — preferred when available
         domain = self._route_llm(query)
@@ -339,7 +392,9 @@ class MasterAgent:
         if not agent:
             return None, []
         try:
-            if domain == 'employee':
+            if domain == 'document':
+                resp = agent.process_query(query, user_email=user_email, user_id=user_id)
+            elif domain == 'employee':
                 resp = agent.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
@@ -413,7 +468,9 @@ class MasterAgent:
         if not slave:
             return domain, None, []
         try:
-            if domain == 'employee':
+            if domain == 'document':
+                resp = slave.process_query(query, user_email=user_email, user_id=user_id)
+            elif domain == 'employee':
                 resp = slave.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = slave.process_query(query, user_id=user_id)
@@ -447,14 +504,16 @@ class MasterAgent:
         if is_blocked:
             return fallback
 
-        try:
-            return _cached_invoke(q)
-        except Exception as exc:
-            print(f"[MasterAgent] Supervisor error: {exc}")
+        domain = self._route(q, user_email=user_email, user_id=user_id)
+        resp, sources = self._run_agent(domain, q, user_email, user_id)
+
+        if not resp:
             return (
                 "I couldn't find relevant information for your query. "
                 "Please reach out to the appropriate department directly."
             )
+
+        return resp
 
     def stream_query(self, query: str) -> Generator[str, None, None]:
         """Yield SSE-formatted chunks. Each chunk is a JSON object: {content: str}."""
@@ -512,9 +571,9 @@ def _sse_done() -> str:
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "") -> str:
-    return _master.process_query(query, user_email)
+def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
+    return _master.process_query(query, user_email=user_email, user_id=user_id)
 
 
-def stream_assistant(query: str, _user_email: str = "") -> Generator[str, None, None]:
-    return _master.stream_query(query)
+def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> Generator[str, None, None]:
+    return _master.stream_query(query, user_email=user_email, user_id=user_id)
