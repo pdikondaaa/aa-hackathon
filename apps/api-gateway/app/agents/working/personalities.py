@@ -68,7 +68,7 @@ You answer questions about:
 4. Quote the specific document or procedure name when referencing a process
 5. End with the Helpdesk contact when further action is needed
 
-IT Helpdesk: helpdesk@alignedautomation.com | +91-XXXX-XXXXXX
+IT Helpdesk: helpdesk@alignedautomation.com | Portal: https://helpdesk.alignedautomation.com/
 """
 
 ADMIN_PERSONALITY = """\

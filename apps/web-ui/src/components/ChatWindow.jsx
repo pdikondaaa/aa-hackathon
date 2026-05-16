@@ -260,6 +260,12 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     textareaRef.current?.focus();
   };
 
+  const handleCardClick = (card) => {
+    const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    setMessages([{ id: 1, role: 'assistant', content: card.intro, timestamp: now }]);
+    textareaRef.current?.focus();
+  };
+
   const toggleVoice = () => {
     if (!SpeechRecognition) return;
 
@@ -327,8 +333,8 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
                 {featureCards.map((card) => (
                   <div key={card.id} className="feature-card"
                     role="button" tabIndex={0}
-                    onClick={() => handleSuggestion(`Tell me about ${card.title}`)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSuggestion(`Tell me about ${card.title}`)}>
+                    onClick={() => handleCardClick(card)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCardClick(card)}>
                     <div className="feature-card-icon"
                       style={{ color: card.color, background: `${card.color}20` }}>
                       <i className={`fas ${card.icon}`} />
