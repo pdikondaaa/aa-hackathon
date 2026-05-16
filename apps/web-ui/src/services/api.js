@@ -41,7 +41,12 @@ class HTTPClient {
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        let detail = response.statusText;
+        try {
+          const errBody = await response.clone().json();
+          if (errBody.detail) detail = errBody.detail;
+        } catch (_) { /* non-JSON error body */ }
+        throw new Error(detail);
       }
 
       if (response.status === 204 || response.headers.get('content-length') === '0') {
@@ -138,6 +143,16 @@ export async function askBot(message) {
   }
 }
 
+// ── Email Agent API ────────────────────────────────────────────────────────
+
+export async function refineEmail({ to, cc, subject, body }) {
+  return httpClient.post('/api/email-agent/refine', { to, cc, subject, body });
+}
+
+export async function draftEmailFromChat(message) {
+  return httpClient.post('/api/email-agent/from-chat', { message });
+}
+
 // ── Conversations API ──────────────────────────────────────────────────────
 
 export async function createConversation(title) {
@@ -154,10 +169,14 @@ export async function getConversation(conversationId) {
   return httpClient.get(`/api/conversations/${conversationId}`);
 }
 
+export async function deleteConversation(conversationId) {
+  return httpClient.delete(`/api/conversations/${conversationId}`);
+}
+
 // ── Messages API ───────────────────────────────────────────────────────────
 
-export async function postMessage(conversationId, content) {
-  return httpClient.post(`/api/conversations/${conversationId}/messages`, { content });
+export async function postMessage(conversationId, content, signal) {
+  return httpClient.post(`/api/conversations/${conversationId}/messages`, { content }, { signal });
 }
 
 export async function listMessages(conversationId, page = 1, limit = 50) {

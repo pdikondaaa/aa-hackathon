@@ -62,6 +62,11 @@ export const chatConfig = {
     version:     'v1.0',
   },
 
+  // ─── External Links ────────────────────────────────────────────────────────
+  links: {
+    itHelpdesk: 'https://helpdesk.alignedautomation.com/',
+  },
+
   // ─── Current User ──────────────────────────────────────────────────────────
   user: {
     name:       'Amol Metkari',
@@ -74,8 +79,9 @@ export const chatConfig = {
     { id: 'aiAssistant', label: 'AI Assistant', icon: 'fa-robot',       active: true  },
     { id: 'documents',   label: 'Documents',    icon: 'fa-folder-open', active: false },
     { id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
-    // { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
-    { id: 'myNotes',     label: 'My Notes',     icon: 'fa-sticky-note', active: false },
+  //{ id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
+   //{ id: 'myNotes',     label: 'My Notes',     icon: 'fa-sticky-note', active: false },
+   // { id: 'emailAgent',  label: 'Email Agent',  icon: 'fa-envelope',    active: false },
   ],
 
   // ─── Sidebar Recent Chats ──────────────────────────────────────────────────
@@ -100,6 +106,7 @@ export const chatConfig = {
       description: 'Check leaves, payroll, benefits and policies instantly.',
       icon:        'fa-user-tie',
       color:       '#1D76BC',
+      intro: "I'm the **HR Assistant** — here's what I can help you with:\n\n- 🏖️ **Leave management** — balances, applications, and policies (annual, casual, sick, maternity/paternity)\n- 💰 **Payroll & salary** — salary structure, payslips, increments, and appraisals\n- 🏥 **Benefits** — GHI insurance, PF/EPF, gratuity, Practo, IL TakeCare\n- 📋 **HR policies** — WFH, POSH, notice period, onboarding, and offboarding\n- 📝 **Referral & certifications** — employee referral program, skill certifications\n\nWhat would you like to know?",
     },
     {
       id: 'it',
@@ -107,6 +114,7 @@ export const chatConfig = {
       description: 'Raise tickets, request access and get tech help fast.',
       icon:        'fa-laptop-code',
       color:       '#27AAE1',
+      intro: "I'm the **IT Support** assistant — here's what I can help you with:\n\n- 🔐 **Access & passwords** — MFA setup, VPN, password resets, account access\n- 💻 **Devices & software** — laptop issues, software installation, hardware requests\n- 🌐 **Network & connectivity** — WiFi, remote access, OneDrive, Outlook, Teams\n- 🛡️ **Security** — antivirus, data backups, security incidents\n- 🖨️ **Office equipment** — printers, Polycom devices, peripherals\n\n🔗 **IT Help Desk Portal:** [helpdesk.alignedautomation.com](https://helpdesk.alignedautomation.com/)\n\nWhat IT issue can I help you resolve?",
     },
     {
       id: 'docs',
@@ -114,6 +122,7 @@ export const chatConfig = {
       description: 'Generate offer letters, NOC, payslips and certificates.',
       icon:        'fa-file-contract',
       color:       '#4ED44E',
+      intro: "I'm the **Document Hub** — I can generate official HR documents for you:\n\n- 📄 **Employment letters** — experience letter, employment verification, confirmation letter\n- 📋 **Certificates** — bonafide certificate, internship certificate, salary certificate\n- 🏠 **Proof documents** — address proof, loan proof\n- 📃 **Official letters** — NOC (No Objection Certificate), promotion letter, relieving letter\n- 🪪 **ID & access** — ID card request\n\nWhich document would you like me to generate?",
     },
     {
       id: 'org',
@@ -121,6 +130,7 @@ export const chatConfig = {
       description: 'Explore org structure, directories and company updates.',
       icon:        'fa-sitemap',
       color:       '#2A3D90',
+      intro: "I'm the **Org Intelligence** assistant — here's what I can help you explore:\n\n- 🏢 **Company info** — mission, vision, values, and culture\n- 👥 **Organization structure** — departments, leadership, and reporting hierarchy\n- 📇 **Employee directory** — find colleagues, contact details, and skill sets\n- 📊 **Company updates** — announcements, new policies, and initiatives\n\nWhat would you like to know about Aligned Automation?",
     },
   ],
 
