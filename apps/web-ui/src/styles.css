@@ -687,7 +687,24 @@ button, a, [role="button"] {
 .feedback-btn:active      { transform: scale(0.88); }
 .feedback-btn.active-up   { color: var(--success); background: rgba(78,212,78,0.12); }
 .feedback-btn.active-down { color: var(--error);   background: rgba(240,82,82,0.12); }
-.feedback-btn.active-copy { color: var(--success); background: rgba(78,212,78,0.12); }
+.feedback-btn.active-copy     { color: var(--success); background: rgba(78,212,78,0.12); }
+.feedback-btn.active-download { color: #2563eb;        background: rgba(37,99,235,0.12); }
+
+.doc-actions-divider {
+  display: inline-block;
+  width: 1px; height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+  vertical-align: middle;
+}
+.doc-action-btn { color: var(--text-muted); }
+.doc-action-btn:hover { color: #2563eb; background: rgba(37,99,235,0.08); }
+
+/* Headings and HR inside assistant message bubbles (document output) */
+.message-content .md-h1 { font-size: 1.1em; font-weight: 700; margin: 10px 0 4px; text-align: center; }
+.message-content .md-h2 { font-size: 1em;   font-weight: 700; margin: 8px 0 4px;  text-align: center; }
+.message-content .md-h3 { font-size: 0.95em; font-weight: 600; margin: 6px 0 2px; }
+.message-content .md-hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 
 .feedback-thanks { font-size: 11px; color: var(--text-muted); font-style: italic; margin-left: 2px; animation: msg-in 0.2s ease; }
 
