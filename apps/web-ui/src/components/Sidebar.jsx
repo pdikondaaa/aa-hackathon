@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { listConversations } from '../services/api';
+import { listConversations, deleteConversation } from '../services/api';
 
-const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, isOpen, refreshKey, selectedConversationId }) => {
+const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId }) => {
   const { navigation, labels, app } = config;
   const [conversations, setConversations] = useState([]);
   const [histLoading, setHistLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +42,21 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, is
 
   const groups = groupByDate(conversations);
 
+  const handleDelete = async (e, conv) => {
+    e.stopPropagation();
+    if (deletingId === conv.id) return;
+    setDeletingId(conv.id);
+    try {
+      await deleteConversation(conv.id);
+      setConversations((prev) => prev.filter((c) => c.id !== conv.id));
+      if (onDeleteConversation) onDeleteConversation(conv.id);
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const renderGroup = (label, items) => {
     if (!items.length) return null;
     return (
@@ -56,7 +72,18 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, is
             onKeyDown={(e) => e.key === 'Enter' && onHistoryClick(conv)}
             title={conv.title}
           >
-            {conv.title || 'Untitled'}
+            <span className="sidebar-history-item-title">{conv.title || 'Untitled'}</span>
+            <button
+              className="sidebar-history-delete-btn"
+              onClick={(e) => handleDelete(e, conv)}
+              title="Delete conversation"
+              aria-label="Delete conversation"
+              tabIndex={-1}
+            >
+              {deletingId === conv.id
+                ? <i className="fas fa-spinner fa-spin" />
+                : <i className="fas fa-times" />}
+            </button>
           </div>
         ))}
       </div>
@@ -115,9 +142,6 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, is
 
       {/* ── Project info footer ─────────────────────────────── */}
       <div className="sidebar-project-card">
-        <div className="sidebar-project-logo">
-          <i className="fas fa-robot" />
-        </div>
         <div className="sidebar-project-info">
           <p className="sidebar-project-name">{app.name}</p>
           <p className="sidebar-project-subtitle">{app.subtitle}</p>

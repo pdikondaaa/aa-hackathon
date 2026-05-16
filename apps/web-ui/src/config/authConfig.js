@@ -35,6 +35,12 @@ export const graphRequest = {
   scopes: ['User.Read'],
 };
 
+// Microsoft Planner — requires Tasks.Read (or Tasks.ReadWrite) delegated permission
+// granted in Azure Portal → API permissions → Microsoft Graph.
+export const plannerRequest = {
+  scopes: ['Tasks.Read'],
+};
+
 export const graphConfig = {
   graphMeEndpoint: 'https://graph.microsoft.com/v1.0/me',
 };

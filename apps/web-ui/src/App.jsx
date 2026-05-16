@@ -14,6 +14,7 @@ import PersonalNotes   from './components/PersonalNotes';
 import LoginPage       from './components/LoginPage';
 import EscalationDrawer from './components/EscalationDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
+import EmailAgentPage from './components/EmailAgentPage';
 
 export default function App() {
   const [activeNav,       setActiveNav]       = useState(chatConfig.navigation[0].id);
@@ -158,6 +159,12 @@ export default function App() {
             setChatKey((k) => k + 1);
           }}
           onHistoryClick={handleHistoryClick}
+          onDeleteConversation={(deletedId) => {
+            if (selectedConversationId === deletedId) {
+              setSelectedConversationId(null);
+              setChatKey((k) => k + 1);
+            }
+          }}
           isOpen={sidebarOpen}
           refreshKey={sidebarRefreshKey}
           selectedConversationId={selectedConversationId}
@@ -167,6 +174,8 @@ export default function App() {
           <PersonalNotes user={user} />
         ) : activeNav === 'onboardingGuidance' ? (
           <OnboardingGuidancePage user={user} config={chatConfig} />
+        ) : activeNav === 'emailAgent' ? (
+          <EmailAgentPage user={user} />
         ) : (
           <main className="main-content">
             <ChatWindow
