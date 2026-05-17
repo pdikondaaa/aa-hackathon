@@ -1,7 +1,8 @@
 import os
 from pathlib import Path
+from typing import List
 from urllib.parse import quote_plus
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 # Resolve repo root at import time (5 levels up from this file)
@@ -41,6 +42,33 @@ class Settings(BaseSettings):
     SQL_USERNAME: str = "postgres"
     SQL_PWD: str = "Admin@1"
     SQL_DB: str = "aura"
+
+    # ─── Web Scraper ──────────────────────────────────────────────────────────
+    # Full URL of the SharePoint site to scrape, e.g.
+    # https://alignedautomation.sharepoint.com/sites/Nexus
+    SHAREPOINT_SITE_URL: str = Field(default="", validation_alias="SHAREPOINT_SITE_URL")
+    # Enable scraping SharePoint site pages (HTML) via Graph API
+    SCRAPE_PAGES_ENABLED: bool = Field(default=False, validation_alias="SCRAPE_PAGES_ENABLED")
+    # Enable scraping SharePoint list contents via Graph API
+    SCRAPE_LISTS_ENABLED: bool = Field(default=False, validation_alias="SCRAPE_LISTS_ENABLED")
+    # Enable Playwright browser fallback when Graph API returns empty page content
+    SCRAPE_PLAYWRIGHT_ENABLED: bool = Field(default=False, validation_alias="SCRAPE_PLAYWRIGHT_ENABLED")
+    # Service account email for Playwright login (only used when SCRAPE_PLAYWRIGHT_ENABLED=true)
+    SHAREPOINT_LOGIN_EMAIL: str = Field(default="", validation_alias="SHAREPOINT_LOGIN_EMAIL")
+    # Service account password / app-password for Playwright login
+    SHAREPOINT_LOGIN_PASSWORD: str = Field(default="", validation_alias="SHAREPOINT_LOGIN_PASSWORD")
+    # Comma-separated list names to scrape. Empty string = all non-hidden lists.
+    SCRAPE_LIST_NAMES: List[str] = Field(default_factory=list, validation_alias="SCRAPE_LIST_NAMES")
+    # Hard cap on the number of site pages scraped per run (0 = no limit)
+    SCRAPE_MAX_PAGES: int = Field(default=500, validation_alias="SCRAPE_MAX_PAGES")
+
+    @field_validator("SCRAPE_LIST_NAMES", mode="before")
+    @classmethod
+    def _parse_list_names(cls, v):
+        """Accept either a JSON list or a comma-separated string from .env."""
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     # ─── Logging ──────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
