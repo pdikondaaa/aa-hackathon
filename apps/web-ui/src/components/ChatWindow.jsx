@@ -26,7 +26,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, selectedConversationId, onConversationUpdated }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -51,6 +51,12 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     if (!messages.length) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!injectedMessage) return;
+    sendMessage(injectedMessage);
+    onInjectedMessageSent?.();
+  }, [injectedMessage]);
 
   // Runs synchronously before the browser paints — prevents any blank/welcome flash
   useLayoutEffect(() => {

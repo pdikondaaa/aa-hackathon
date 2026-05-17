@@ -6,6 +6,7 @@ import {
   fetchUserProfile, buildUser,
   checkUserAuthorization, getUserInfo,
 } from './utils/authService';
+import { getMyProfile } from './services/api';
 import TopBar          from './components/TopBar';
 import Sidebar         from './components/Sidebar';
 import ChatWindow      from './components/ChatWindow';
@@ -25,6 +26,7 @@ export default function App() {
   const [escalationContext, setEscalationContext] = useState({ conversationId: null, messageId: null });
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
+  const [injectedMessage, setInjectedMessage] = useState('');
 
   const [user,        setUser]        = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -87,6 +89,33 @@ export default function App() {
             isAdmin: userInfo.isAdmin,
           };
           setUser(userWithInfo);
+
+          // Enrich with Zoho People data (vb_employees) — async, non-blocking
+          // Zoho fields overwrite Azure AD fields when available
+          getMyProfile()
+            .then((zoho) => {
+              if (!zoho) return;
+              setUser((prev) => ({
+                ...prev,
+                // Prefer Zoho name over Azure AD display name
+                name:          zoho.full_name      || prev.name,
+                // Additional Zoho-sourced fields available everywhere in the app
+                firstName:     zoho.first_name     || '',
+                lastName:      zoho.last_name      || '',
+                designation:   zoho.designation    || '',
+                department:    zoho.department     || '',
+                reportingManager: zoho.reporting_manager || '',
+                workLocation:  zoho.work_location  || zoho.location_name || '',
+                mobile:        zoho.mobile         || '',
+                workPhone:     zoho.work_phone     || '',
+                employeeId:    zoho.employee_id    || '',
+                jobTitle:      zoho.designation    || prev.jobTitle,
+                zohoLoaded:    true,
+              }));
+            })
+            .catch(() => {
+              // Zoho enrichment failed — Azure AD data already set, continue gracefully
+            });
         }
       } catch (err) {
         // No valid cached session — fall through to login page
@@ -119,6 +148,11 @@ export default function App() {
   const handleHistoryClick = (conversation) => {
     setSelectedConversationId(conversation.id);
     setActiveNav(chatConfig.navigation[0].id);
+  };
+
+  const handleSendFromPanel = (message) => {
+    setActiveNav(chatConfig.navigation[0].id);
+    setInjectedMessage(message);
   };
 
   // Full-screen spinner while MSAL initialises
@@ -179,6 +213,8 @@ export default function App() {
                 setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
                 setEscalationOpen(true);
               }}
+              injectedMessage={injectedMessage}
+              onInjectedMessageSent={() => setInjectedMessage('')}
             />
           </main>
         )}
@@ -186,7 +222,9 @@ export default function App() {
         {rightPanelOpen && (
           <RightPanel
             config={chatConfig}
+            user={user}
             onClose={() => setRightPanelOpen(false)}
+            onSendMessage={handleSendFromPanel}
           />
         )}
       </div>

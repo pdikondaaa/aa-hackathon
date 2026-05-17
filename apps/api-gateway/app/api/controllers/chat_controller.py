@@ -25,7 +25,7 @@ class ChatResponse(BaseModel):
 def chat(req: Ask, request: Request, user=Depends(get_current_user)):
     """Chat endpoint secured with Azure AD authentication."""
     try:
-        answer = _chat_service.process_message(req.message)
+        answer = _chat_service.process_message(req.message, user_email=user["email"], user_id=user["user_id"])
         return {"answer": answer, "user_email": user["email"], "user_id": user["user_id"]}
     except Exception as e:
         print(f"ERROR in /api/chat: {e}")

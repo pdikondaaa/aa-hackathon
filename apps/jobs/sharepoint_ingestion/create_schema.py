@@ -22,7 +22,9 @@ import openpyxl
 from config.settings import settings
 from utils.logging_config import get_logger
 
-_EXCEL_PATH = os.path.join(_HERE, "data", "zoho_dummy_data.xlsx")
+_EXCEL_PATH       = os.path.join(_HERE, "data", "zoho_dummy_data.xlsx")
+_ATTENDANCE_PATH  = os.path.join(_HERE, "data", "attendance.xlsx")
+_ZOHO_PEOPLE_PATH = os.path.join(_HERE, "data", "zoho_people_schema.xlsx")
 
 logger = get_logger("create_schema")
 
@@ -464,7 +466,6 @@ def _read_sheet(wb, sheet_name: str):
         snake = _to_snake_case(h) if h is not None else ""
         if not snake:
             continue
-        # Deduplicate: append _2, _3 ... if name already used
         unique = snake
         suffix = 2
         while unique in seen:
@@ -476,17 +477,24 @@ def _read_sheet(wb, sheet_name: str):
     return col_map, data_rows
 
 
-def _create_zoho_tables(conn):
-    """Create Zoho tables and add any missing columns (idempotent)."""
-    wb = openpyxl.load_workbook(_EXCEL_PATH, read_only=True, data_only=True)
+def _create_tables_from_excel(conn, excel_path, *, table_name_override=None, skip_sheets=None):
+    """Create tables from an Excel file (idempotent).
+
+    - table_name_override: use this name instead of the sheet name (for single-sheet files)
+    - skip_sheets: list of sheet names to ignore
+    """
+    skip_sheets = set(skip_sheets or [])
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
     try:
         for sheet_name in wb.sheetnames:
-            table_name = _to_snake_case(sheet_name)
+            if sheet_name in skip_sheets:
+                logger.info(f"Skipping sheet '{sheet_name}'")
+                continue
+            table_name = table_name_override or _to_snake_case(sheet_name)
             col_map, data_rows = _read_sheet(wb, sheet_name)
             if not col_map:
                 continue
 
-            # Sample up to 50 rows for type inference
             col_values = {snake: [] for snake, _ in col_map}
             for row in data_rows[:50]:
                 cells = [cell.value for cell in row]
@@ -512,7 +520,6 @@ def _create_zoho_tables(conn):
                 cur.execute(create_sql)
                 logger.info(f"Table '{table_name}' created or already exists")
 
-                # Add columns that are missing (schema evolution)
                 for snake, _ in col_map:
                     cur.execute(
                         """
@@ -531,26 +538,56 @@ def _create_zoho_tables(conn):
         wb.close()
 
 
+# Keep old name as alias for backward compatibility
+_create_zoho_tables = lambda conn: _create_tables_from_excel(conn, _EXCEL_PATH)
+
+
 def _coerce_value(v, pg_type: str):
-    """Convert empty strings to None for non-TEXT columns to avoid type errors."""
+    """Coerce cell value to a type safe for insertion.
+
+    Returns None when the value can't be represented in the inferred PG type,
+    preventing InvalidTextRepresentation errors on mixed-type columns.
+    """
     if pg_type == "TEXT":
         return v
-    if v == "":
+    if v is None or v == "":
         return None
+    if pg_type == "BIGINT":
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return int(v)
+        return None
+    if pg_type == "DOUBLE PRECISION":
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
+    if pg_type == "TIMESTAMP":
+        return v if isinstance(v, datetime.datetime) else None
+    if pg_type == "BOOLEAN":
+        return v if isinstance(v, bool) else None
     return v
 
 
-def _import_zoho_data(conn):
-    """Insert Excel rows into Zoho tables; skips tables that already have data."""
-    wb = openpyxl.load_workbook(_EXCEL_PATH, read_only=True, data_only=True)
+def _import_data_from_excel(conn, excel_path, *, table_name_override=None, skip_sheets=None):
+    """Insert Excel rows into tables; skips tables that already have data.
+
+    - table_name_override: use this name instead of the sheet name
+    - skip_sheets: list of sheet names to ignore
+    """
+    skip_sheets = set(skip_sheets or [])
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
     try:
         for sheet_name in wb.sheetnames:
-            table_name = _to_snake_case(sheet_name)
+            if sheet_name in skip_sheets:
+                continue
+            table_name = table_name_override or _to_snake_case(sheet_name)
             col_map, data_rows = _read_sheet(wb, sheet_name)
             if not col_map:
                 continue
 
-            # Infer types from first 50 rows so we know which columns need coercion
             col_values = {snake: [] for snake, _ in col_map}
             for row in data_rows[:50]:
                 cells = [cell.value for cell in row]
@@ -592,10 +629,14 @@ def _import_zoho_data(conn):
         wb.close()
 
 
+# Keep old name as alias for backward compatibility
+_import_zoho_data = lambda conn: _import_data_from_excel(conn, _EXCEL_PATH)
+
+
+
+
 def create_schema():
     # ── Step 1: Create the 'aura' database if it doesn't exist ──────────────
-    # CREATE DATABASE cannot run inside a transaction, so we connect to the
-    # 'postgres' maintenance DB first, create 'aura', then reconnect.
     admin_url = re.sub(r'/[^/?#]+(\?.*)?$', r'/postgres\1', settings.database_url)
 
     logger.info("Ensuring database 'aura' exists...")
@@ -630,16 +671,61 @@ def create_schema():
     finally:
         conn.close()
 
-    # ── Step 3: Create Zoho tables and import data (idempotent) ──────────────
-    logger.info("Setting up Zoho data tables...")
+    # ── Step 3: Zoho dummy data tables (zoho_dummy_data.xlsx) ────────────────
+    logger.info("Setting up Zoho dummy data tables...")
     conn = psycopg2.connect(aura_url)
     conn.autocommit = True
     try:
-        _create_zoho_tables(conn)
-        _import_zoho_data(conn)
-        logger.info("Zoho tables ready")
+        _create_tables_from_excel(conn, _EXCEL_PATH)
+        _import_data_from_excel(conn, _EXCEL_PATH)
+        logger.info("Zoho dummy data tables ready")
     except Exception as exc:
-        logger.error(f"Zoho table setup failed: {exc}")
+        logger.error(f"Zoho dummy data table setup failed: {exc}")
+        raise
+    finally:
+        conn.close()
+
+    # ── Step 4: Attendance table (attendance.xlsx) ───────────────────────────
+    logger.info("Setting up attendance table...")
+    conn = psycopg2.connect(aura_url)
+    conn.autocommit = True
+    try:
+        _create_tables_from_excel(
+            conn, _ATTENDANCE_PATH,
+            table_name_override="attendance",
+            skip_sheets=["Info"],
+        )
+        _import_data_from_excel(
+            conn, _ATTENDANCE_PATH,
+            table_name_override="attendance",
+            skip_sheets=["Info"],
+        )
+        logger.info("Attendance table ready")
+    except Exception as exc:
+        logger.error(f"Attendance table setup failed: {exc}")
+        raise
+    finally:
+        conn.close()
+
+    # ── Step 5: Zoho People schema table (zoho_people_schema.xlsx) ───────────
+    logger.info("Setting up zoho_people_schema table...")
+    conn = psycopg2.connect(aura_url)
+    conn.autocommit = True
+    try:
+        _create_tables_from_excel(
+            conn, _ZOHO_PEOPLE_PATH,
+            table_name_override="zoho_people_schema",
+        )
+        # Truncate so data always stays in sync with the Excel file
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE TABLE zoho_people_schema")
+        _import_data_from_excel(
+            conn, _ZOHO_PEOPLE_PATH,
+            table_name_override="zoho_people_schema",
+        )
+        logger.info("zoho_people_schema table ready")
+    except Exception as exc:
+        logger.error(f"zoho_people_schema table setup failed: {exc}")
         raise
     finally:
         conn.close()
