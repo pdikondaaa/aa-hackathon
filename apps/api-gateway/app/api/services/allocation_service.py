@@ -167,7 +167,8 @@ def get_full_allocation(email: str, role: str) -> list[dict]:
                        ad.status_active_inactive, ad.client_master, ad.sow_name,
                        ed.designation, ed.location, ed.employee_type,
                        ed.primary_skills, ed.total_experience_years,
-                       ed.email AS employee_email, ed.reporting_manager
+                       ed.email AS employee_email, ed.reporting_manager,
+                       ed.exp_group
                 FROM allocation_details ad
                 LEFT JOIN employee_details ed ON ad.employee_id = ed.employee_id
                 ORDER BY ad.function NULLS LAST, ad.name NULLS LAST
@@ -259,12 +260,89 @@ def get_analytics(email: str, role: str) -> dict:
             )
             billability_buckets = [dict(r) for r in cur.fetchall()]
 
+            cur.execute(
+                """
+                SELECT ed.location, COUNT(DISTINCT ed.employee_id) AS count
+                FROM employee_details ed
+                WHERE ed.status_active_inactive = 'Active'
+                  AND ed.location IS NOT NULL AND ed.location != ''
+                GROUP BY ed.location
+                ORDER BY count DESC
+                """
+            )
+            headcount_by_location = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT ed.exp_group, COUNT(DISTINCT ed.employee_id) AS count
+                FROM employee_details ed
+                WHERE ed.status_active_inactive = 'Active'
+                  AND ed.exp_group IS NOT NULL AND ed.exp_group != ''
+                GROUP BY ed.exp_group
+                ORDER BY count DESC
+                """
+            )
+            experience_distribution = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT ad.project_name, COUNT(DISTINCT ad.employee_id) AS resource_count
+                FROM allocation_details ad
+                WHERE ad.status_active_inactive = 'Active'
+                  AND ad.project_name IS NOT NULL AND ad.project_name != ''
+                  AND lower(ad.project_name) != 'no allocation'
+                GROUP BY ad.project_name
+                ORDER BY resource_count DESC
+                LIMIT 12
+                """
+            )
+            top_projects = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    CASE
+                        WHEN efforts_pct IS NULL OR efforts_pct = 0 THEN '0%'
+                        WHEN efforts_pct < 50   THEN '1-49%'
+                        WHEN efforts_pct < 100  THEN '50-99%'
+                        WHEN efforts_pct = 100  THEN '100%'
+                        ELSE '>100%'
+                    END AS bucket,
+                    COUNT(DISTINCT employee_id) AS count
+                FROM allocation_details
+                WHERE status_active_inactive = 'Active'
+                GROUP BY bucket
+                ORDER BY count DESC
+                """
+            )
+            effort_buckets = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT function,
+                       COUNT(DISTINCT employee_id) AS total,
+                       COUNT(DISTINCT CASE WHEN billing = 'Billable' THEN employee_id END) AS billable,
+                       COUNT(DISTINCT CASE WHEN lower(project_name) = 'no allocation' THEN employee_id END) AS bench
+                FROM allocation_details
+                WHERE status_active_inactive = 'Active'
+                  AND function IS NOT NULL AND function != ''
+                GROUP BY function
+                ORDER BY total DESC
+                """
+            )
+            function_billability = [dict(r) for r in cur.fetchall()]
+
     return {
-        "billing_breakdown":   billing_breakdown,
-        "available_pool":      available_pool,
-        "status_distribution": status_distribution,
-        "function_headcount":  function_headcount,
-        "billability_buckets": billability_buckets,
+        "billing_breakdown":      billing_breakdown,
+        "available_pool":         available_pool,
+        "status_distribution":    status_distribution,
+        "function_headcount":     function_headcount,
+        "billability_buckets":    billability_buckets,
+        "headcount_by_location":  headcount_by_location,
+        "experience_distribution": experience_distribution,
+        "top_projects":           top_projects,
+        "effort_buckets":         effort_buckets,
+        "function_billability":   function_billability,
     }
 
 

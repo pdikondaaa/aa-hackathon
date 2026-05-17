@@ -180,48 +180,139 @@ function DrillModal({ drill, onClose, onRowClick }) {
 
 // ── Executive view ────────────────────────────────────────────────────────────
 
+const EXEC_COL_LABELS = {
+  name: 'Name', designation: 'Designation', function: 'Function',
+  project_name: 'Project', project_status: 'Status', billing: 'Billing',
+  efforts_pct: 'Effort %', billability_pct: 'Billability %',
+  location: 'Location', exp_group: 'Exp Group', employee_type: 'Emp Type',
+  delivery_manager: 'Delivery Mgr', functional_manager: 'Functional Mgr',
+};
+
+const EXEC_BASE_COLS = ['name', 'designation', 'function', 'project_name', 'billing', 'efforts_pct', 'billability_pct'];
+
+function getEffortBucket(pct) {
+  if (pct === null || pct === undefined || pct === 0) return '0%';
+  if (pct < 50)   return '1-49%';
+  if (pct < 100)  return '50-99%';
+  if (pct === 100) return '100%';
+  return '>100%';
+}
+
+function TruncatedYTick({ x, y, payload, maxChars = 26 }) {
+  const full = (payload.value || '').toString();
+  const words = full.split(' ');
+  let label = '';
+  for (const w of words) {
+    if ((label + w).length > maxChars) { label = label.trimEnd() + '…'; break; }
+    label += w + ' ';
+  }
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <title>{full}</title>
+      <text x={-6} y={0} dy={4} textAnchor="end" fill="var(--text-secondary)" fontSize={11}>
+        {label.trimEnd()}
+      </text>
+    </g>
+  );
+}
+
+function ExecKpi({ value, label, accent, onClick }) {
+  return (
+    <div
+      className={`ab-kpi${accent ? ` ab-kpi--${accent}` : ''}${onClick ? ' ab-kpi--clickable' : ''}`}
+      onClick={onClick}
+    >
+      <div className="ab-kpi-value">{value}</div>
+      <div className="ab-kpi-label">{label}</div>
+    </div>
+  );
+}
+
 function ExecutiveView({ data, onEmployeeClick }) {
   const { analytics, allocation_rows } = data;
-  const [search, setSearch] = useState('');
+  const [search,    setSearch]    = useState('');
   const [drillDown, setDrillDown] = useState(null);
+
+  const rows = allocation_rows || [];
+
+  const kpis = useMemo(() => {
+    const empSet     = new Set(rows.map(r => r.employee_id).filter(Boolean));
+    const projSet    = new Set(rows.filter(r => r.project_name && r.project_name.toLowerCase() !== 'no allocation').map(r => r.project_name));
+    const billable   = new Set(rows.filter(r => (r.billing || '').toLowerCase() === 'billable').map(r => r.employee_id)).size;
+    const bench      = (analytics?.available_pool || []).length;
+    return { headcount: empSet.size, projects: projSet.size, billable, bench };
+  }, [rows, analytics]);
+
+  const drill = useCallback((title, filterFn, columns = EXEC_BASE_COLS) => {
+    setDrillDown({ title, rows: rows.filter(filterFn), columns, colLabels: EXEC_COL_LABELS });
+  }, [rows]);
+
+  const drillProjects = useCallback(() => {
+    const map = {};
+    rows.filter(r => r.project_name && r.project_name.toLowerCase() !== 'no allocation')
+      .forEach(r => {
+        const p = r.project_name;
+        if (!map[p]) map[p] = { project_name: p, project_status: r.project_status, billing: r.billing, delivery_manager: r.delivery_manager, project_lead: r.project_lead, resources: 0 };
+        map[p].resources++;
+      });
+    setDrillDown({
+      title: 'Active Projects',
+      rows: Object.values(map).sort((a, b) => b.resources - a.resources),
+      columns: ['project_name', 'project_status', 'billing', 'resources', 'delivery_manager', 'project_lead'],
+      colLabels: { project_name: 'Project', project_status: 'Status', billing: 'Billing', resources: 'Resources', delivery_manager: 'Delivery Mgr', project_lead: 'Project Lead' },
+    });
+  }, [rows]);
 
   const billingData = useMemo(() =>
     (analytics?.billing_breakdown || []).filter(r => !BILLING_EXCLUDE_EXEC.includes(r.billing)),
     [analytics]
   );
 
-  const filtered = useMemo(() => (allocation_rows || []).filter(r =>
-    !search ||
-    (r.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.project_name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.function || '').toLowerCase().includes(search.toLowerCase())
-  ), [allocation_rows, search]);
+  const filtered = useMemo(() => {
+    if (!search) return rows;
+    const s = search.toLowerCase();
+    return rows.filter(r =>
+      (r.name || '').toLowerCase().includes(s) ||
+      (r.project_name || '').toLowerCase().includes(s) ||
+      (r.function || '').toLowerCase().includes(s)
+    );
+  }, [rows, search]);
 
-  const handleDrill = useCallback((type, value) => {
-    const rows = allocation_rows || [];
-    let filtered, title, columns;
-    const colLabels = {
-      name: 'Name', project_name: 'Project', sub_project: 'Sub-Project',
-      project_status: 'Status', billing: 'Billing', function: 'Function',
-      designation: 'Designation', delivery_manager: 'Delivery Mgr',
-      efforts_pct: 'Effort %', billability_pct: 'Billability %',
-    };
-    if (type === 'billing') {
-      filtered = rows.filter(r => r.billing === value);
-      title = `Billing — ${value}`;
-      columns = ['name', 'project_name', 'sub_project', 'project_status', 'function'];
-    } else if (type === 'function') {
-      filtered = rows.filter(r => r.function === value);
-      title = `Function — ${value}`;
-      columns = ['name', 'designation', 'project_name', 'project_status', 'billing'];
-    }
-    setDrillDown({ title, columns, colLabels, rows: filtered || [] });
-  }, [allocation_rows]);
+  const barH    = (items) => Math.max(220, (items?.length || 0) * 36);
+  const barHGrp = (items) => Math.max(280, (items?.length || 0) * 56);
 
   return (
     <div className="ab-analytics">
+
+      {/* ── KPI cards ─────────────────────────────────────────── */}
+      <div className="ab-kpi-row">
+        <ExecKpi value={kpis.headcount} label="Total Employees"    accent="blue"
+          onClick={() => drill('All Employees', () => true)} />
+        <ExecKpi value={kpis.projects}  label="Active Projects"    accent="purple"
+          onClick={drillProjects} />
+        <ExecKpi value={kpis.billable}  label="Billable Resources" accent="green"
+          onClick={() => drill('Billable Resources', r => (r.billing || '').toLowerCase() === 'billable')} />
+        <ExecKpi value={kpis.bench}     label="On Bench"           accent="amber"
+          onClick={() => drill('On Bench', r => (r.project_name || '').toLowerCase() === 'no allocation')} />
+      </div>
+
       <div className="ab-charts-grid">
-        <ChartCard title="Billable vs Internal Projects" hint="Click bar to explore">
+
+        {/* 1. Headcount by Function */}
+        <ChartCard title="Headcount by Function" wide hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={barH(analytics?.function_headcount)}>
+            <BarChart data={analytics?.function_headcount || []} layout="vertical">
+              <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+              <YAxis dataKey="function" type="category" width={185} tick={<TruncatedYTick />} />
+              <Tooltip />
+              <Bar dataKey="headcount" name="Headcount" fill={CHART_COLORS[0]} radius={[0,4,4,0]} cursor="pointer"
+                onClick={d => drill(`Function — ${d.function}`, r => r.function === d.function)} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* 2. Billing Mix (projects + resources) */}
+        <ChartCard title="Billing Mix" hint="Click bar to explore">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={billingData}>
               <XAxis dataKey="billing" tick={{ fontSize: 11 }} />
@@ -229,25 +320,99 @@ function ExecutiveView({ data, onEmployeeClick }) {
               <Tooltip />
               <Legend />
               <Bar dataKey="project_count" name="Projects" fill={CHART_COLORS[0]} radius={[4,4,0,0]} cursor="pointer"
-                onClick={d => handleDrill('billing', d.billing)} />
+                onClick={d => drill(`Billing — ${d.billing}`, r => r.billing === d.billing)} />
               <Bar dataKey="resource_count" name="Resources" fill={CHART_COLORS[1]} radius={[4,4,0,0]} cursor="pointer"
-                onClick={d => handleDrill('billing', d.billing)} />
+                onClick={d => drill(`Billing — ${d.billing}`, r => r.billing === d.billing)} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Headcount by Function" wide hint="Click bar to explore">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={analytics?.function_headcount || []} layout="vertical">
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis dataKey="function" type="category" width={180} tick={{ fontSize: 11 }} />
+        {/* 3. Top Projects by Headcount */}
+        <ChartCard title="Top Projects by Headcount" wide hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={barH(analytics?.top_projects)}>
+            <BarChart data={analytics?.top_projects || []} layout="vertical">
+              <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+              <YAxis dataKey="project_name" type="category" width={200} tick={<TruncatedYTick maxChars={24} />} />
+              <Tooltip formatter={(v) => [v, 'Resources']} />
+              <Bar dataKey="resource_count" name="Resources" fill={CHART_COLORS[3]} radius={[0,4,4,0]} cursor="pointer"
+                onClick={d => drill(`Project — ${d.project_name}`, r => r.project_name === d.project_name)} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* 4. Billability by Function (grouped — 3 series) */}
+        <ChartCard title="Billability by Function" wide hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={barHGrp(analytics?.function_billability)}>
+            <BarChart data={analytics?.function_billability || []} layout="vertical">
+              <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+              <YAxis dataKey="function" type="category" width={185} tick={<TruncatedYTick />} />
               <Tooltip />
-              <Bar dataKey="headcount" fill={CHART_COLORS[2]} radius={[0,4,4,0]} cursor="pointer"
-                onClick={d => handleDrill('function', d.function)} />
+              <Legend />
+              <Bar dataKey="total"    name="Total"   fill={CHART_COLORS[0]} radius={[0,4,4,0]} cursor="pointer"
+                onClick={d => drill(`Function — ${d.function}`, r => r.function === d.function)} />
+              <Bar dataKey="billable" name="Billable" fill={CHART_COLORS[2]} radius={[0,4,4,0]} cursor="pointer"
+                onClick={d => drill(`Billable — ${d.function}`, r => r.function === d.function && (r.billing||'').toLowerCase() === 'billable')} />
+              <Bar dataKey="bench"    name="Bench"    fill={CHART_COLORS[4]} radius={[0,4,4,0]} cursor="pointer"
+                onClick={d => drill(`Bench — ${d.function}`, r => r.function === d.function && (r.project_name||'').toLowerCase() === 'no allocation')} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
+        {/* 6. Experience Distribution */}
+        <ChartCard title="Experience Distribution" hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={analytics?.experience_distribution || []}>
+              <XAxis dataKey="exp_group" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="count" name="Employees" fill={CHART_COLORS[5]} radius={[4,4,0,0]} cursor="pointer"
+                onClick={d => drill(`Experience — ${d.exp_group}`, r => r.exp_group === d.exp_group,
+                  ['name', 'designation', 'function', 'project_name', 'billing', 'exp_group'])} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* 7. Location Distribution */}
+        <ChartCard title="Location Distribution" hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={barH(analytics?.headcount_by_location)}>
+            <BarChart data={analytics?.headcount_by_location || []} layout="vertical">
+              <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+              <YAxis dataKey="location" type="category" width={120} tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Bar dataKey="count" name="Employees" fill={CHART_COLORS[6]} radius={[0,4,4,0]} cursor="pointer"
+                onClick={d => drill(`Location — ${d.location}`, r => r.location === d.location,
+                  ['name', 'designation', 'function', 'project_name', 'billing', 'location'])} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* 8. Effort Utilization */}
+        <ChartCard title="Effort Utilization" hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={analytics?.effort_buckets || []}>
+              <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="count" name="Resources" fill={CHART_COLORS[1]} radius={[4,4,0,0]} cursor="pointer"
+                onClick={d => drill(`Effort — ${d.bucket}`, r => getEffortBucket(r.efforts_pct) === d.bucket)} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* 9. Billability Distribution */}
+        <ChartCard title="Billability Distribution" hint="Click bar to explore">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={analytics?.billability_buckets || []}>
+              <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="count" name="Resources" fill={CHART_COLORS[7]} radius={[4,4,0,0]} cursor="pointer"
+                onClick={d => drill(`Billability — ${d.bucket}`, r => getBillabilityBucket(r.billability_pct) === d.bucket)} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        {/* 10. Full Allocation Table */}
         <ChartCard title="Full Allocation Table" full>
           <div className="ab-search-row">
             <input
@@ -294,7 +459,7 @@ function ExecutiveView({ data, onEmployeeClick }) {
       <DrillModal
         drill={drillDown}
         onClose={() => setDrillDown(null)}
-        onRowClick={r => { setDrillDown(null); onEmployeeClick(r.employee_id); }}
+        onRowClick={r => r.employee_id ? (setDrillDown(null), onEmployeeClick(r.employee_id)) : null}
       />
     </div>
   );
@@ -362,7 +527,6 @@ function LeadView({ data, onEmployeeClick, role }) {
         >
           <div className="ab-lead-card-value">{myTeam.length}</div>
           <div className="ab-lead-card-label">Team Members</div>
-          <div className="ab-lead-card-sub">Click for details</div>
         </div>
 
         <div
@@ -376,7 +540,6 @@ function LeadView({ data, onEmployeeClick, role }) {
         >
           <div className="ab-lead-card-value">{reportees.length}</div>
           <div className="ab-lead-card-label">Direct Reportees</div>
-          <div className="ab-lead-card-sub">Click for details</div>
         </div>
 
         <div className="ab-lead-card">
@@ -506,7 +669,6 @@ function LeadView({ data, onEmployeeClick, role }) {
                 <div key={i} className="ab-project-card" onClick={() => setProjectModal(proj)}>
                   <div className="ab-project-name">{proj.project_name}</div>
                   <div className="ab-project-count">{proj.resources.length} resource{proj.resources.length !== 1 ? 's' : ''}</div>
-                  <div className="ab-project-hint">Click to view resources</div>
                 </div>
               ))}
             </div>
