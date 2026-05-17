@@ -15,6 +15,7 @@ from app.api.controllers.escalations_controller import esc_router as escalations
 from app.api.controllers.escalations_controller import admin_router as escalations_admin_router
 from app.api.controllers.pii_controller import router as pii_router
 from app.api.onboarding import router as onboarding_router
+from app.api.controllers.allocation_controller import router as allocation_router
 from app.api.controllers.email_controller import router as email_router
 
 
@@ -28,6 +29,7 @@ tags_metadata = [
     {"name": "Email Agent", "description": "AI-powered email refinement and composition."},
     {"name": "Health", "description": "Service and database health checks."},
     {"name": "Debug", "description": "Debug and diagnostic endpoints."},
+    {"name": "Allocation", "description": "PMO Allocation Board — role-aware project and resource data."},
 ]
 
 app = FastAPI(
@@ -59,4 +61,5 @@ app.include_router(pii_router)
 app.include_router(health_router)
 app.include_router(debug_router)
 app.include_router(onboarding_router)
+app.include_router(allocation_router)
 app.include_router(email_router)

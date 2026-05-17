@@ -218,3 +218,18 @@ export function getAllUsers() {
     permissions: rolePermissions[role],
   }));
 }
+
+// ── Allocation Board roles (sourced from backend; these are UI-side labels) ──
+export const ALLOCATION_ROLES = {
+  EXECUTIVE:       'executive',
+  BUSINESS_LEAD:   'business_lead',
+  FUNCTIONAL_LEAD: 'functional_lead',
+  TEAM_LEAD:       'team_lead',
+  EMPLOYEE:        'employee',
+};
+
+export const ANALYTICS_ROLES = [
+  ALLOCATION_ROLES.EXECUTIVE,
+  ALLOCATION_ROLES.BUSINESS_LEAD,
+  ALLOCATION_ROLES.FUNCTIONAL_LEAD,
+];

@@ -201,6 +201,24 @@ export async function getConversationFeedback(conversationId) {
   return httpClient.get(`/api/conversations/${conversationId}/feedback`);
 }
 
+// ── Allocation Board API ───────────────────────────────────────────────────
+
+export async function getAllocationBoard() {
+  return httpClient.get('/api/allocation/board');
+}
+
+export async function getEmployeeDetail(employeeId) {
+  return httpClient.get(`/api/allocation/employee/${employeeId}`);
+}
+
+export async function getAllocationRole() {
+  return httpClient.get('/api/allocation/my-role');
+}
+
+export async function askAllocationAura(question) {
+  return httpClient.post('/api/allocation/ask', { question });
+}
+
 // ── Escalations API ────────────────────────────────────────────────────────
 
 export async function submitEscalation(payload) {

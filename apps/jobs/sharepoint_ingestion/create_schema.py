@@ -412,6 +412,23 @@ CREATE INDEX IF NOT EXISTS idx_pii_logs_false_positive
     WHERE is_false_positive IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pii_logs_action
     ON pii_redaction_logs(action_taken);
+
+
+-- =========================================================
+-- TABLE: allocation_role_map
+-- Maps employee designation → allocation board role.
+-- Seeded by seed_allocation_roles.py; add new designations here as needed.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS allocation_role_map (
+    id          BIGSERIAL PRIMARY KEY,
+    designation VARCHAR(255) NOT NULL UNIQUE,
+    role        VARCHAR(50)  NOT NULL
+                CHECK (role IN ('executive','business_lead','functional_lead','team_lead','employee','admin')),
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_alloc_role_desig ON allocation_role_map(designation);
 """.format(dim=settings.EMBEDDING_DIMENSION)
 
 
