@@ -1,28 +1,42 @@
 import React, { useState, useEffect } from 'react';
-import { listMyEscalations } from '../services/api';
+import { listMyEscalations, getMyAttendance, getTodaysBirthdays } from '../services/api';
 import { fetchCalendarEvents } from '../utils/authService';
 
 const DOMAIN_COLORS = {
-  hr:           '#1D76BC',
-  it:           '#27AAE1',
-  admin:        '#2A3D90',
+  hr: '#1D76BC',
+  it: '#27AAE1',
+  admin: '#2A3D90',
   organization: '#4ED44E',
 };
 
 
-const RightPanel = ({ config, onClose }) => {
-  const { stats, labels } = config;
+const RightPanel = ({ config, onClose, onSendMessage, user }) => {
+    const { stats, labels } = config;
 
-  const [escalations,    setEscalations]    = useState([]);
-  const [escLoading,     setEscLoading]     = useState(true);
-  const [calEvents,      setCalEvents]      = useState([]);
-  const [calLoading,     setCalLoading]     = useState(true);
-  const [calError,       setCalError]       = useState(null);
+  // ── Escalations state ─────────────────────────────────────────────────────
+  const [escalations, setEscalations] = useState([]);
+  const [escLoading, setEscLoading] = useState(true);
+
+  // ── Birthdays state ───────────────────────────────────────────────────────
+  const [birthdays, setBirthdays] = useState([]);
+  const [bdLoading, setBdLoading] = useState(true);
+
+  // ── Attendance state ──────────────────────────────────────────────────────
+  const [attData, setAttData] = useState(null);
+  const [attLoading, setAttLoading] = useState(true);
+  const [attError, setAttError] = useState(false);
+  const [attTab, setAttTab] = useState('this'); // 'this' | 'last'
+
+  // ── Calendar state ────────────────────────────────────────────────────────
+  const [calEvents, setCalEvents] = useState([]);
+  const [calLoading, setCalLoading] = useState(true);
+  const [calError, setCalError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+
+    // Load escalations
     (async () => {
-      setEscLoading(true);
       try {
         const res = await listMyEscalations(1, 3);
         if (!cancelled) setEscalations(res?.data || []);
@@ -32,29 +46,68 @@ const RightPanel = ({ config, onClose }) => {
         if (!cancelled) setEscLoading(false);
       }
     })();
-    return () => { cancelled = true; };
-  }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+    // Load birthdays
     (async () => {
-      setCalLoading(true);
-      const { events, error } = await fetchCalendarEvents(30, 10);
-      if (!cancelled) {
-        setCalEvents(events);
-        setCalError(error);
-        setCalLoading(false);
+      try {
+        const res = await getTodaysBirthdays();
+        if (!cancelled) setBirthdays(res?.birthdays || []);
+      } catch (e) {
+        console.error('Failed to load birthdays:', e);
+      } finally {
+        if (!cancelled) setBdLoading(false);
       }
     })();
+
+    // Load attendance
+    (async () => {
+      try {
+        const data = await getMyAttendance();
+        if (!cancelled && data) {
+          setAttData(data);
+        }
+      } catch (e) {
+        console.error('Failed to load attendance:', e);
+        if (!cancelled) setAttError(true);
+      } finally {
+        if (!cancelled) setAttLoading(false);
+      }
+    })();
+
     return () => { cancelled = true; };
   }, []);
 
-  const deltaClass = (positive) => {
-    if (positive === true)  return 'positive';
-    if (positive === false) return 'negative';
-    return 'neutral';
-  };
+  // ── Attendance section helpers ────────────────────────────────────────────
+  const currentMonth = attData
+    ? (attTab === 'this' ? attData.this_month : attData.last_month)
+    : null;
 
+  const handleAttChipClick = (type) => {
+    if (!currentMonth || !onSendMessage) return;
+    const query = type === 'days'
+      ? `Show ${user?.name || 'my'} attendance details for ${currentMonth.month_label}`
+      : `Show ${user?.name || 'my'} attendance details for ${currentMonth.month_label}`;
+    onSendMessage(query);
+  };
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setCalLoading(true);
+            const { events, error } = await fetchCalendarEvents(30, 10);
+            if (!cancelled) {
+                setCalEvents(events);
+                setCalError(error);
+                setCalLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    const deltaClass = (positive) => {
+        if (positive === true) return 'positive';
+        if (positive === false) return 'negative';
+        return 'neutral';
+    };
   return (
     <aside className="right-panel" aria-label="Overview panel">
 
@@ -66,35 +119,111 @@ const RightPanel = ({ config, onClose }) => {
         </button>
       </div>
 
-      {/* ── My Stats ─────────────────────────────────────── */}
+
+      {/* ── Attendance Details ────────────────────────────── */}
       <section className="right-section">
-        <p className="right-section-label">{labels.myStats}</p>
-        <div className="stats-grid">
-          {stats.map((s) => (
-            <div className="stat-card" key={s.id}>
-              <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
-              <div className="stat-label">{s.label}</div>
-              <span className={`stat-delta ${deltaClass(s.positive)}`}>{s.delta}</span>
+        <p className="right-section-label">ATTENDANCE</p>
+
+        {attLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : attError || !attData ? (
+          <p className="rp-empty-text">Could not load attendance data</p>
+        ) : (
+          <>
+            {/* Month tab switcher */}
+            <div className="att-tabs">
+              <button
+                className={`att-tab ${attTab === 'this' ? 'att-tab--active' : ''}`}
+                onClick={() => setAttTab('this')}
+              >
+                This Month
+              </button>
+              <button
+                className={`att-tab ${attTab === 'last' ? 'att-tab--active' : ''}`}
+                onClick={() => setAttTab('last')}
+              >
+                Last Month
+              </button>
             </div>
-          ))}
-        </div>
+
+            {/* Month summary chips — days and hours are clickable */}
+            <div className="att-summary">
+              <button
+                className="att-summary-chip att-summary-chip--btn"
+                onClick={() => handleAttChipClick('days')}
+                title="Click to see attendance details in chat"
+              >
+                <span className="att-summary-val">{currentMonth.total_days}</span>
+                <span className="att-summary-lbl">days</span>
+              </button>
+              <button
+                className="att-summary-chip att-summary-chip--btn"
+                onClick={() => handleAttChipClick('hours')}
+                title="Click to see working hours in chat"
+              >
+                <span className="att-summary-val">{currentMonth.total_hours_label}</span>
+                <span className="att-summary-lbl">total hrs</span>
+              </button>
+              <div className="att-summary-chip">
+                <span className="att-summary-val">{currentMonth.month_label.split(' ')[0].slice(0, 3)}</span>
+                <span className="att-summary-lbl">{currentMonth.year}</span>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ── Today's Birthdays ──────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">
+          <i className="fas fa-birthday-cake" style={{ marginRight: 6, color: '#f472b6' }} />
+          TODAY'S BIRTHDAYS
+        </p>
+        {bdLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : birthdays.length === 0 ? (
+          <p className="rp-empty-text">No birthdays today 🎂</p>
+        ) : (
+          <ul className="birthday-list">
+            {birthdays.map((person, idx) => (
+              <li key={idx} className="birthday-card">
+                <div className="birthday-avatar">
+                  {person.first_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="birthday-info">
+                  <p className="birthday-name">{person.full_name}</p>
+                  {person.department && (
+                    <span className="birthday-dept">{person.department}</span>
+                  )}
+                </div>
+                <span className="birthday-emoji">🎉</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {/* ── Escalations ───────────────────────────────────── */}
-      <section className="right-section">
+      <section className="right-section" style={{ borderBottom: 'none' }}>
         <p className="right-section-label">{labels.escalations}</p>
         {escLoading ? (
-          <p style={{ opacity: 0.5, fontSize: '13px', padding: '8px 0' }}>
+          <p className="rp-loading-text">
             <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
             Loading…
           </p>
         ) : escalations.length === 0 ? (
-          <p style={{ opacity: 0.4, fontSize: '13px', padding: '8px 0' }}>No escalations found</p>
+          <p className="rp-empty-text">No escalations found</p>
         ) : (
           <ul className="escalation-list">
             {escalations.map((esc) => {
-              const domainColor  = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
-              const shortId      = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
+              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
+              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
               return (
                 <li
                   key={esc.id}

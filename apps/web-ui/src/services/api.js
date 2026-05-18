@@ -201,6 +201,24 @@ export async function getConversationFeedback(conversationId) {
   return httpClient.get(`/api/conversations/${conversationId}/feedback`);
 }
 
+// ── Allocation Board API ───────────────────────────────────────────────────
+
+export async function getAllocationBoard() {
+  return httpClient.get('/api/allocation/board');
+}
+
+export async function getEmployeeDetail(employeeId) {
+  return httpClient.get(`/api/allocation/employee/${employeeId}`);
+}
+
+export async function getAllocationRole() {
+  return httpClient.get('/api/allocation/my-role');
+}
+
+export async function askAllocationAura(question) {
+  return httpClient.post('/api/allocation/ask', { question });
+}
+
 // ── Escalations API ────────────────────────────────────────────────────────
 
 export async function submitEscalation(payload) {
@@ -215,6 +233,24 @@ export async function listMyEscalations(page = 1, limit = 10, status) {
   const params = new URLSearchParams({ page, limit });
   if (status) params.set('status', status);
   return httpClient.get(`/api/escalations?${params}`);
+}
+
+// ── User Profile API (Zoho source of truth) ────────────────────────────────
+
+export async function getMyProfile() {
+  return httpClient.get('/api/users/me');
+}
+
+// ── Attendance API ─────────────────────────────────────────────────────────
+
+export async function getMyAttendance() {
+  return httpClient.get('/api/attendance/me');
+}
+
+// ── Birthdays API ──────────────────────────────────────────────────────────
+
+export async function getTodaysBirthdays() {
+  return httpClient.get('/api/users/birthdays/today');
 }
 
 // ── Documents API ──────────────────────────────────────────────────────────

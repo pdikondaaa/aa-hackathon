@@ -1,8 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { listConversations, deleteConversation } from '../services/api';
 
-const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId }) => {
+const ALLOCATION_BOARD_ROLES = new Set(['team_lead', 'functional_lead', 'business_lead', 'executive', 'admin']);
+
+const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole }) => {
   const { navigation, labels, app } = config;
+
+  const visibleNav = navigation.filter(item => {
+    if (item.id === 'allocationBoard') return ALLOCATION_BOARD_ROLES.has(allocationRole);
+    return true;
+  });
   const [conversations, setConversations] = useState([]);
   const [histLoading, setHistLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
@@ -104,7 +111,7 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
       {/* ── Features ────────────────────────────────────────── */}
       <div className="sidebar-section">
         <p className="sidebar-section-label">{labels.features}</p>
-        {navigation.map((item) => (
+        {visibleNav.map((item) => (
           <div
             key={item.id}
             className={`sidebar-nav-item${activeNav === item.id ? ' active' : ''}`}

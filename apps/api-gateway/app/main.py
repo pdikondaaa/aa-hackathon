@@ -15,7 +15,10 @@ from app.api.controllers.escalations_controller import esc_router as escalations
 from app.api.controllers.escalations_controller import admin_router as escalations_admin_router
 from app.api.controllers.pii_controller import router as pii_router
 from app.api.onboarding import router as onboarding_router
+from app.api.controllers.allocation_controller import router as allocation_router
 from app.api.controllers.email_controller import router as email_router
+from app.api.controllers.attendance_controller import router as attendance_router
+from app.api.controllers.profile_controller import router as profile_router
 from app.api.controllers.documents_controller import router as documents_router
 
 
@@ -27,8 +30,11 @@ tags_metadata = [
     {"name": "Escalations", "description": "Create, track, and manage HR/IT/Admin escalations with dynamic forms."},
     {"name": "PII", "description": "Admin PII rule management, redaction event logs, review, and analytics."},
     {"name": "Email Agent", "description": "AI-powered email refinement and composition."},
+    {"name": "Attendance", "description": "Employee attendance — this month and last month records resolved from Zoho People."},
+    {"name": "Users", "description": "Logged-in user profile sourced from people.vb_employees (Zoho People)."},
     {"name": "Health", "description": "Service and database health checks."},
     {"name": "Debug", "description": "Debug and diagnostic endpoints."},
+    {"name": "Allocation", "description": "PMO Allocation Board — role-aware project and resource data."},
 ]
 
 app = FastAPI(
@@ -60,5 +66,8 @@ app.include_router(pii_router)
 app.include_router(health_router)
 app.include_router(debug_router)
 app.include_router(onboarding_router)
+app.include_router(allocation_router)
 app.include_router(email_router)
+app.include_router(attendance_router)
+app.include_router(profile_router)
 app.include_router(documents_router)

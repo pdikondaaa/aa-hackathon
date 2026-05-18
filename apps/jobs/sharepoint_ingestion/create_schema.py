@@ -11,14 +11,20 @@ Usage:
 import sys
 import os
 import re
+import datetime
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import psycopg2
+import openpyxl
 from config.settings import settings
 from utils.logging_config import get_logger
+
+_EXCEL_PATH       = os.path.join(_HERE, "data", "zoho_dummy_data.xlsx")
+_ATTENDANCE_PATH  = os.path.join(_HERE, "data", "attendance.xlsx")
+_ZOHO_PEOPLE_PATH = os.path.join(_HERE, "data", "zoho_people_schema.xlsx")
 
 logger = get_logger("create_schema")
 
@@ -30,23 +36,6 @@ _SCHEMA_SQL = """
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
-
-
--- ── Drop tables in reverse FK order so re-runs are idempotent ────────────────
-DROP TABLE IF EXISTS pii_redaction_logs    CASCADE;
-DROP TABLE IF EXISTS pii_redaction_rules   CASCADE;
-DROP TABLE IF EXISTS audit_logs            CASCADE;
-DROP TABLE IF EXISTS error_logs            CASCADE;
-DROP TABLE IF EXISTS prompt_logs           CASCADE;
-DROP TABLE IF EXISTS agent_routing_logs    CASCADE;
-DROP TABLE IF EXISTS escalation_records    CASCADE;
-DROP TABLE IF EXISTS document_chunks       CASCADE;
-DROP TABLE IF EXISTS documents             CASCADE;
-DROP TABLE IF EXISTS feedback              CASCADE;
-DROP TABLE IF EXISTS messages              CASCADE;
-DROP TABLE IF EXISTS conversations         CASCADE;
-DROP TABLE IF EXISTS user_sessions         CASCADE;
-DROP TABLE IF EXISTS users                 CASCADE;
 
 
 -- =========================================================
@@ -425,13 +414,246 @@ CREATE INDEX IF NOT EXISTS idx_pii_logs_false_positive
     WHERE is_false_positive IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pii_logs_action
     ON pii_redaction_logs(action_taken);
+
+
+-- =========================================================
+-- TABLE: allocation_role_map
+-- Maps employee designation → allocation board role.
+-- Seeded by seed_allocation_roles.py; add new designations here as needed.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS allocation_role_map (
+    id          BIGSERIAL PRIMARY KEY,
+    designation VARCHAR(255) NOT NULL UNIQUE,
+    role        VARCHAR(50)  NOT NULL
+                CHECK (role IN ('executive','business_lead','functional_lead','team_lead','employee','admin')),
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_alloc_role_desig ON allocation_role_map(designation);
 """.format(dim=settings.EMBEDDING_DIMENSION)
+
+
+def _to_snake_case(name: str) -> str:
+    if not name or not str(name).strip():
+        return ""
+    name = str(name).strip()
+    name = name.replace('%', '_pct')
+    name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    name = re.sub(r'_+', '_', name)
+    return name.strip('_').lower()
+
+
+def _infer_pg_type(values: list) -> str:
+    """
+    Returns a PG type only when ALL non-null, non-empty sampled values agree
+    on the same Python type. Falls back to TEXT for mixed columns.
+    """
+    detected = None
+    for v in values:
+        if v is None or v == "":
+            continue
+        if isinstance(v, bool):
+            t = "BOOLEAN"
+        elif isinstance(v, datetime.datetime):
+            t = "TIMESTAMP"
+        elif isinstance(v, int):
+            t = "BIGINT"
+        elif isinstance(v, float):
+            t = "DOUBLE PRECISION"
+        else:
+            return "TEXT"
+        if detected is None:
+            detected = t
+        elif detected != t:
+            return "TEXT"
+    return detected or "TEXT"
+
+
+def _read_sheet(wb, sheet_name: str):
+    """Return (col_map, data_rows) where col_map is list of (snake_name, col_index)."""
+    ws = wb[sheet_name]
+    rows = list(ws.rows)
+    if not rows:
+        return [], []
+    raw_headers = [cell.value for cell in rows[0]]
+    col_map = []
+    seen = set()
+    for i, h in enumerate(raw_headers):
+        snake = _to_snake_case(h) if h is not None else ""
+        if not snake:
+            continue
+        unique = snake
+        suffix = 2
+        while unique in seen:
+            unique = f"{snake}_{suffix}"
+            suffix += 1
+        seen.add(unique)
+        col_map.append((unique, i))
+    data_rows = rows[1:]
+    return col_map, data_rows
+
+
+def _create_tables_from_excel(conn, excel_path, *, table_name_override=None, skip_sheets=None):
+    """Create tables from an Excel file (idempotent).
+
+    - table_name_override: use this name instead of the sheet name (for single-sheet files)
+    - skip_sheets: list of sheet names to ignore
+    """
+    skip_sheets = set(skip_sheets or [])
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    try:
+        for sheet_name in wb.sheetnames:
+            if sheet_name in skip_sheets:
+                logger.info(f"Skipping sheet '{sheet_name}'")
+                continue
+            table_name = table_name_override or _to_snake_case(sheet_name)
+            col_map, data_rows = _read_sheet(wb, sheet_name)
+            if not col_map:
+                continue
+
+            col_values = {snake: [] for snake, _ in col_map}
+            for row in data_rows[:50]:
+                cells = [cell.value for cell in row]
+                for snake, idx in col_map:
+                    if idx < len(cells):
+                        col_values[snake].append(cells[idx])
+
+            col_types = {snake: _infer_pg_type(col_values[snake]) for snake, _ in col_map}
+
+            col_names_set = {snake for snake, _ in col_map}
+            pk_name = "_row_id" if "id" in col_names_set else "id"
+
+            col_defs = ",\n    ".join(
+                f"{snake} {col_types[snake]}" for snake, _ in col_map
+            )
+            create_sql = (
+                f"CREATE TABLE IF NOT EXISTS {table_name} (\n"
+                f"    {pk_name} BIGSERIAL PRIMARY KEY,\n"
+                f"    {col_defs}\n"
+                f");"
+            )
+            with conn.cursor() as cur:
+                cur.execute(create_sql)
+                logger.info(f"Table '{table_name}' created or already exists")
+
+                for snake, _ in col_map:
+                    cur.execute(
+                        """
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = %s AND column_name = %s
+                        """,
+                        (table_name, snake),
+                    )
+                    if not cur.fetchone():
+                        cur.execute(
+                            f"ALTER TABLE {table_name} "
+                            f"ADD COLUMN IF NOT EXISTS {snake} {col_types[snake]}"
+                        )
+                        logger.info(f"Added column '{snake}' to '{table_name}'")
+    finally:
+        wb.close()
+
+
+# Keep old name as alias for backward compatibility
+_create_zoho_tables = lambda conn: _create_tables_from_excel(conn, _EXCEL_PATH)
+
+
+def _coerce_value(v, pg_type: str):
+    """Coerce cell value to a type safe for insertion.
+
+    Returns None when the value can't be represented in the inferred PG type,
+    preventing InvalidTextRepresentation errors on mixed-type columns.
+    """
+    if pg_type == "TEXT":
+        return v
+    if v is None or v == "":
+        return None
+    if pg_type == "BIGINT":
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return int(v)
+        return None
+    if pg_type == "DOUBLE PRECISION":
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
+    if pg_type == "TIMESTAMP":
+        return v if isinstance(v, datetime.datetime) else None
+    if pg_type == "BOOLEAN":
+        return v if isinstance(v, bool) else None
+    return v
+
+
+def _import_data_from_excel(conn, excel_path, *, table_name_override=None, skip_sheets=None):
+    """Insert Excel rows into tables; skips tables that already have data.
+
+    - table_name_override: use this name instead of the sheet name
+    - skip_sheets: list of sheet names to ignore
+    """
+    skip_sheets = set(skip_sheets or [])
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    try:
+        for sheet_name in wb.sheetnames:
+            if sheet_name in skip_sheets:
+                continue
+            table_name = table_name_override or _to_snake_case(sheet_name)
+            col_map, data_rows = _read_sheet(wb, sheet_name)
+            if not col_map:
+                continue
+
+            col_values = {snake: [] for snake, _ in col_map}
+            for row in data_rows[:50]:
+                cells = [cell.value for cell in row]
+                for snake, idx in col_map:
+                    if idx < len(cells):
+                        col_values[snake].append(cells[idx])
+            col_types = {snake: _infer_pg_type(col_values[snake]) for snake, _ in col_map}
+
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+                if cur.fetchone()[0] > 0:
+                    logger.info(f"Table '{table_name}' already has data — skipping import")
+                    continue
+
+                col_names = [snake for snake, _ in col_map]
+                placeholders = ", ".join(["%s"] * len(col_names))
+                insert_sql = (
+                    f"INSERT INTO {table_name} ({', '.join(col_names)}) "
+                    f"VALUES ({placeholders})"
+                )
+
+                inserted = 0
+                for row in data_rows:
+                    cells = [cell.value for cell in row]
+                    values = [
+                        _coerce_value(
+                            cells[idx] if idx < len(cells) else None,
+                            col_types[snake],
+                        )
+                        for snake, idx in col_map
+                    ]
+                    if all(v is None for v in values):
+                        continue
+                    cur.execute(insert_sql, values)
+                    inserted += 1
+
+                logger.info(f"Imported {inserted} rows into '{table_name}'")
+    finally:
+        wb.close()
+
+
+# Keep old name as alias for backward compatibility
+_import_zoho_data = lambda conn: _import_data_from_excel(conn, _EXCEL_PATH)
+
+
 
 
 def create_schema():
     # ── Step 1: Create the 'aura' database if it doesn't exist ──────────────
-    # CREATE DATABASE cannot run inside a transaction, so we connect to the
-    # 'postgres' maintenance DB first, create 'aura', then reconnect.
     admin_url = re.sub(r'/[^/?#]+(\?.*)?$', r'/postgres\1', settings.database_url)
 
     logger.info("Ensuring database 'aura' exists...")
@@ -462,6 +684,65 @@ def create_schema():
         logger.info("Schema created / verified successfully")
     except Exception as exc:
         logger.error(f"Schema creation failed: {exc}")
+        raise
+    finally:
+        conn.close()
+
+    # ── Step 3: Zoho dummy data tables (zoho_dummy_data.xlsx) ────────────────
+    logger.info("Setting up Zoho dummy data tables...")
+    conn = psycopg2.connect(aura_url)
+    conn.autocommit = True
+    try:
+        _create_tables_from_excel(conn, _EXCEL_PATH)
+        _import_data_from_excel(conn, _EXCEL_PATH)
+        logger.info("Zoho dummy data tables ready")
+    except Exception as exc:
+        logger.error(f"Zoho dummy data table setup failed: {exc}")
+        raise
+    finally:
+        conn.close()
+
+    # ── Step 4: Attendance table (attendance.xlsx) ───────────────────────────
+    logger.info("Setting up attendance table...")
+    conn = psycopg2.connect(aura_url)
+    conn.autocommit = True
+    try:
+        _create_tables_from_excel(
+            conn, _ATTENDANCE_PATH,
+            table_name_override="attendance",
+            skip_sheets=["Info"],
+        )
+        _import_data_from_excel(
+            conn, _ATTENDANCE_PATH,
+            table_name_override="attendance",
+            skip_sheets=["Info"],
+        )
+        logger.info("Attendance table ready")
+    except Exception as exc:
+        logger.error(f"Attendance table setup failed: {exc}")
+        raise
+    finally:
+        conn.close()
+
+    # ── Step 5: Zoho People schema table (zoho_people_schema.xlsx) ───────────
+    logger.info("Setting up zoho_people_schema table...")
+    conn = psycopg2.connect(aura_url)
+    conn.autocommit = True
+    try:
+        _create_tables_from_excel(
+            conn, _ZOHO_PEOPLE_PATH,
+            table_name_override="zoho_people_schema",
+        )
+        # Truncate so data always stays in sync with the Excel file
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE TABLE zoho_people_schema")
+        _import_data_from_excel(
+            conn, _ZOHO_PEOPLE_PATH,
+            table_name_override="zoho_people_schema",
+        )
+        logger.info("zoho_people_schema table ready")
+    except Exception as exc:
+        logger.error(f"zoho_people_schema table setup failed: {exc}")
         raise
     finally:
         conn.close()

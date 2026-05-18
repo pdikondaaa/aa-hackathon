@@ -6,17 +6,20 @@ import {
   fetchUserProfile, buildUser,
   checkUserAuthorization, getUserInfo,
 } from './utils/authService';
-import TopBar             from './components/TopBar';
-import Sidebar            from './components/Sidebar';
-import ChatWindow         from './components/ChatWindow';
-import RightPanel         from './components/RightPanel';
+import { getMyProfile } from './services/api';
+import TopBar          from './components/TopBar';
+import Sidebar         from './components/Sidebar';
+import ChatWindow      from './components/ChatWindow';
+import RightPanel      from './components/RightPanel';
 import PersonalNotes      from './components/PersonalNotes';
-import LoginPage          from './components/LoginPage';
-import EscalationDrawer   from './components/EscalationDrawer';
-import DocumentsPage      from './components/DocumentsPage';
-import EmailAgentPage     from './components/EmailAgentPage';
+import AllocationBoard    from './components/AllocationBoard';
+import LoginPage       from './components/LoginPage';
+import EscalationDrawer from './components/EscalationDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
-import { AnalyticsDashboard }     from './modules/analytics';
+import { getAllocationRole } from './services/api';
+import EmailAgentPage from './components/EmailAgentPage';
+import { AnalyticsDashboard } from './modules/analytics';
+import DocumentsPage from './components/DocumentsPage';
 
 const SIDEBAR_BREAKPOINT = 900;
 
@@ -60,10 +63,13 @@ export default function App() {
   const [escalationOpen,        setEscalationOpen]        = useState(false);
   const [escalationContext,     setEscalationContext]     = useState({ conversationId: null, messageId: null });
   const [selectedConversationId, setSelectedConversationId] = useState(null);
-  const [sidebarRefreshKey,     setSidebarRefreshKey]     = useState(0);
-  const [user,                  setUser]                  = useState(null);
-  const [authLoading,           setAuthLoading]           = useState(true);
-  const [authError,             setAuthError]             = useState(null);
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
+  const [injectedMessage, setInjectedMessage] = useState('');
+
+  const [user,           setUser]           = useState(null);
+  const [authLoading,    setAuthLoading]    = useState(true);
+  const [authError,      setAuthError]      = useState(null);
+  const [allocationRole, setAllocationRole] = useState(null);
 
   // Apply theme CSS variables
   useEffect(() => {
@@ -96,21 +102,70 @@ export default function App() {
 
   // Restore MSAL session on mount
   useEffect(() => {
-    restoreSession(setUser, setAuthError, setAuthLoading);
-  }, []);
+    (async () => {
+      try {
+        await initializeMsal();
+        const account = getCachedAccount();
+        if (account) {
+          const profile = await fetchUserProfile();
+          const userEmail = profile.mail || profile.userPrincipalName || '';
+          
+          // Check if user is authorized
+          if (!checkUserAuthorization(userEmail)) {
+            setAuthError('You don\'t have access for this app. Please contact the Project Aura Team for access.');
+            await logout();
+            setAuthLoading(false);
+            return;
+          }
+          
+          // Store user info with their role and permissions
+          const userInfo = getUserInfo(userEmail);
+          const userWithInfo = {
+            ...buildUser(profile),
+            role: userInfo.role,
+            permissions: userInfo.permissions,
+            availableAgents: userInfo.availableAgents,
+            isAdmin: userInfo.isAdmin,
+          };
+          setUser(userWithInfo);
 
-  // Auto-collapse sidebar when viewport narrows below breakpoint
-  useEffect(() => {
-    let prevWidth = window.innerWidth;
-    const onResize = () => {
-      const w = window.innerWidth;
-      if (w <= SIDEBAR_BREAKPOINT && prevWidth > SIDEBAR_BREAKPOINT) {
-        setSidebarOpen(false);
+          // Enrich with Zoho People data (vb_employees) � async, non-blocking
+          // Zoho fields overwrite Azure AD fields when available
+          getMyProfile()
+            .then((zoho) => {
+              if (!zoho) return;
+              setUser((prev) => ({
+                ...prev,
+                // Prefer Zoho name over Azure AD display name
+                name:          zoho.full_name      || prev.name,
+                // Additional Zoho-sourced fields available everywhere in the app
+                firstName:     zoho.first_name     || '',
+                lastName:      zoho.last_name      || '',
+                designation:   zoho.designation    || '',
+                department:    zoho.department     || '',
+                reportingManager: zoho.reporting_manager || '',
+                workLocation:  zoho.work_location  || zoho.location_name || '',
+                mobile:        zoho.mobile         || '',
+                workPhone:     zoho.work_phone     || '',
+                employeeId:    zoho.employee_id    || '',
+                jobTitle:      zoho.designation    || prev.jobTitle,
+                zohoLoaded:    true,
+              }));
+            })
+            .catch(() => {
+              // Zoho enrichment failed � Azure AD data already set, continue gracefully
+            });
+          getAllocationRole()
+            .then(r => setAllocationRole(r.role))
+            .catch(() => setAllocationRole('employee'));
+        }
+      } catch (err) {
+        // No valid cached session � fall through to login page
+        console.error('Auth error:', err);
+      } finally {
+        setAuthLoading(false);
       }
-      prevWidth = w;
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    })();
   }, []);
 
   const handleLogin = async () => {
@@ -135,6 +190,11 @@ export default function App() {
   const handleHistoryClick = (conversation) => {
     setSelectedConversationId(conversation.id);
     setActiveNav(chatConfig.navigation[0].id);
+  };
+
+  const handleSendFromPanel = (message) => {
+    setActiveNav(chatConfig.navigation[0].id);
+    setInjectedMessage(message);
   };
 
   // Extracted from nested ternary to a plain function
@@ -204,18 +264,48 @@ export default function App() {
           isOpen={sidebarOpen}
           refreshKey={sidebarRefreshKey}
           selectedConversationId={selectedConversationId}
+          allocationRole={allocationRole}
         />
 
-        {renderMainContent()}
+        {activeNav === 'analytics' ? (
+          <AnalyticsDashboard user={user} />
+        ) : activeNav === 'documents' ? (
+          <DocumentsPage user={user} />
+        ) : activeNav === 'myNotes' ? (
+          <PersonalNotes user={user} />
+        ) : activeNav === 'onboardingGuidance' ? (
+          <OnboardingGuidancePage user={user} config={chatConfig} />
+        ) : activeNav === 'allocationBoard' ? (
+          <AllocationBoard />
+        ) : activeNav === 'emailAgent' ? (
+          <EmailAgentPage user={user} />
+        ) : (
+          <main className="main-content">
+            <ChatWindow
+              key={chatKey}
+              config={chatConfig}
+              user={user}
+              selectedConversationId={selectedConversationId}
+              onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
+              onOpenEscalation={({ conversationId, messageId } = {}) => {
+                setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
+                setEscalationOpen(true);
+              }}
+              injectedMessage={injectedMessage}
+              onInjectedMessageSent={() => setInjectedMessage('')}
+            />
+          </main>
+        )}
 
         {rightPanelOpen && (
           <RightPanel
             config={chatConfig}
+            user={user}
             onClose={() => setRightPanelOpen(false)}
+            onSendMessage={handleSendFromPanel}
           />
         )}
       </div>
-
       <EscalationDrawer
         isOpen={escalationOpen}
         onClose={() => setEscalationOpen(false)}
