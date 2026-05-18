@@ -71,6 +71,15 @@ export default function App() {
   const [authError,      setAuthError]      = useState(null);
   const [allocationRole, setAllocationRole] = useState(null);
 
+  // Auto-close sidebar when window shrinks below breakpoint
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth <= SIDEBAR_BREAKPOINT) setSidebarOpen(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Apply theme CSS variables
   useEffect(() => {
     const root = document.documentElement;
@@ -295,6 +304,10 @@ export default function App() {
               onInjectedMessageSent={() => setInjectedMessage('')}
             />
           </main>
+        )}
+
+        {sidebarOpen && (
+          <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
         )}
 
         {rightPanelOpen && (
