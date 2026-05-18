@@ -1,22 +1,11 @@
-import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
-from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 from typing import Dict, List, Optional
 
-from dotenv import load_dotenv
-
 from app.agents.guardrails import check_input
-from app.agents.knowledge.greeting_handler import get_greeting_response
-
-# Load environment variables
-load_dotenv(Path(__file__).resolve().parents[4] / ".env")
-
-_ZOHO_LEAVE_URL = os.getenv(
-    "ZOHO_LEAVE_URL")
 
 # ── Apply-leave fast-path ─────────────────────────────────────────────────────
 _APPLY_LEAVE_RE = re.compile(
@@ -34,13 +23,38 @@ _APPLY_LEAVE_RE = re.compile(
 
 _APPLY_LEAVE_RESPONSE = (
     "Sure! You can apply for leave directly through the <strong>Zoho People</strong> portal.\n\n"
-    f'<a href="{_ZOHO_LEAVE_URL}" '
+    '<a href="https://people.zoho.com/alignedautomationservices/zp#leavetracker/mydata/applyleave" '
     'target="_blank" rel="noopener noreferrer" '
     'style="display:inline-block;margin-top:8px;padding:10px 20px;background:#2563eb;color:#fff;'
     'border-radius:8px;text-decoration:none;font-weight:600;font-size:0.95em;">'
     '📅 Apply Leave on Zoho People</a>'
 )
 
+# ── Greeting / small-talk fast-path ──────────────────────────────────────────
+_GREETING_RE = re.compile(
+    r"""^[\s!.,?]*
+    (?:hi+|hello+|hey+|howdy|greetings|good\s+(?:morning|afternoon|evening|day)|
+       how\s+are\s+you|how'?s\s+it\s+going|what'?s\s+up|sup|
+       thanks?|thank\s+you|thx|ty|
+       bye|goodbye|see\s+you|take\s+care)
+    [\s!.,?]*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_GREETING_RESPONSE = (
+    "<p>Hello! I'm <strong>AURA</strong>, your Aligned Automation assistant.</p>"
+    "<p>I can help you with:</p>"
+    "<ul>"
+    "<li><strong>HR</strong> — leave, benefits, payroll, appraisals, policies</li>"
+    "<li><strong>IT</strong> — technical support, VPN, passwords, software</li>"
+    "<li><strong>Admin</strong> — travel, cab bookings, office facilities</li>"
+    "<li><strong>Finance</strong> — ZOHO expenses, TDS, tax declarations</li>"
+    "<li><strong>PMO</strong> — project status, milestones, resources</li>"
+    "<li><strong>Employee Directory</strong> — find colleagues, contact details</li>"
+    "<li><strong>Attendance</strong> — check-in/out records, working hours</li>"
+    "</ul>"
+    "<p>What can I help you with today?</p>"
+)
 
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
 _ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
@@ -463,9 +477,8 @@ class MasterAgent:
         if not q:
             return "<p>Please enter a question.</p>"
 
-        greeting_resp = get_greeting_response(q)
-        if greeting_resp:
-            return greeting_resp
+        if _GREETING_RE.match(q):
+            return _GREETING_RESPONSE
 
         if _APPLY_LEAVE_RE.search(q):
             return _APPLY_LEAVE_RESPONSE
