@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { listMyEscalations, getMyAttendance, getTodaysBirthdays } from '../services/api';
+import { listMyEscalations, getMyAttendance, getTodaysBirthdays, getTodaysAnniversaries } from '../services/api';
 import { fetchCalendarEvents } from '../utils/authService';
 
 const DOMAIN_COLORS = {
@@ -20,6 +20,10 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
   // ── Birthdays state ───────────────────────────────────────────────────────
   const [birthdays, setBirthdays] = useState([]);
   const [bdLoading, setBdLoading] = useState(true);
+
+  // ── Anniversaries state ───────────────────────────────────────────────────
+  const [anniversaries, setAnniversaries] = useState([]);
+  const [annLoading, setAnnLoading] = useState(true);
 
   // ── Attendance state ──────────────────────────────────────────────────────
   const [attData, setAttData] = useState(null);
@@ -56,6 +60,18 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         console.error('Failed to load birthdays:', e);
       } finally {
         if (!cancelled) setBdLoading(false);
+      }
+    })();
+
+    // Load anniversaries
+    (async () => {
+      try {
+        const res = await getTodaysAnniversaries();
+        if (!cancelled) setAnniversaries(res?.anniversaries || []);
+      } catch (e) {
+        console.error('Failed to load anniversaries:', e);
+      } finally {
+        if (!cancelled) setAnnLoading(false);
       }
     })();
 
@@ -203,6 +219,47 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
                   )}
                 </div>
                 <span className="birthday-emoji">🎉</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ── Work Anniversaries ──────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">
+          <i className="fas fa-trophy" style={{ marginRight: 6, color: '#f59e0b' }} />
+          WORK ANNIVERSARIES
+        </p>
+        {annLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : anniversaries.length === 0 ? (
+          <p className="rp-empty-text">No work anniversaries today 🏆</p>
+        ) : (
+          <ul className="birthday-list">
+            {anniversaries.map((person, idx) => (
+              <li key={idx} className="birthday-card">
+                <div className="birthday-avatar" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                  {person.first_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="birthday-info">
+                  <p className="birthday-name">{person.full_name}</p>
+                  {person.department && (
+                    <span className="birthday-dept">{person.department}</span>
+                  )}
+                </div>
+                {person.years != null && (
+                  <span
+                    className="birthday-emoji"
+                    title={`${person.years} year${person.years !== 1 ? 's' : ''} at the company`}
+                    style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b', whiteSpace: 'nowrap' }}
+                  >
+                    {person.years}y 🏆
+                  </span>
+                )}
               </li>
             ))}
           </ul>

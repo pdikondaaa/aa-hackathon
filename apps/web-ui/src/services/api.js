@@ -262,4 +262,10 @@ export async function listDocuments(page = 1, limit = 50, search, category) {
   return httpClient.get(`/api/documents?${params}`);
 }
 
+// ── Work Anniversaries API ─────────────────────────────────────────────────
+
+export async function getTodaysAnniversaries() {
+  return httpClient.get('/api/users/anniversaries/today');
+}
+
 export default httpClient;

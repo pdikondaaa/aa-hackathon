@@ -255,7 +255,10 @@ class BaseDeepAgent:
             )
 
         if web_context:
-            return f"{web_context}\n\nFor more details, contact {self._FALLBACK_CONTACT}."
+            return (
+                f"<p>{web_context}</p>"
+                f"<p>For more details, contact <strong>{self._FALLBACK_CONTACT}</strong>.</p>"
+            )
 
         return f"I don't have information on that topic. Please contact {self._FALLBACK_CONTACT}."
 
@@ -276,11 +279,12 @@ class BaseDeepAgent:
 
         parts = []
         for doc_name, content in sections:
-            header = f"**{doc_name}**\n" if doc_name else ""
-            parts.append(f"{header}{content}")
+            block = f"<h3>{doc_name}</h3>" if doc_name else ""
+            block += f"<p>{content}</p>"
+            parts.append(block)
 
         result = "\n\n".join(parts) if parts else context
         if web_context:
-            result += f"\n\n**Additional context:**\n{web_context}"
-        result += f"\n\nFor more details, contact {self._FALLBACK_CONTACT}."
+            result += f"\n<h3>Additional Information</h3>\n<p>{web_context}</p>"
+        result += f"\n<p>For more details, contact <strong>{self._FALLBACK_CONTACT}</strong>.</p>"
         return result

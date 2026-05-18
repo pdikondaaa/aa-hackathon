@@ -79,17 +79,18 @@ def _is_greeting(text: str) -> bool:
 
 
 _GREETING_RESPONSE = (
-    "Hello! I'm AURA, your Aligned Automation assistant.\n\n"
-    "I can help you with:\n"
-    "- **HR** — leave, benefits, payroll, appraisals, policies\n"
-    "- **IT** — technical support, VPN, passwords, software\n"
-    "- **Admin** — travel, cab bookings, office facilities\n"
-    "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
-    "- **PMO** — project status, milestones, resources\n"
-    "- **Attendance** — check-in/out records, working hours\n\n"
-    "- **Employee Directory** — find colleagues, contact details\n"
-    "- **Documents** — generate letters, certificates, and HR documents\n\n"
-    "What can I help you with today?"
+    "<p>Hello! I'm <strong>AURA</strong>, your Aligned Automation assistant.</p>"
+    "<p>I can help you with:</p>"
+    "<ul>"
+    "<li><strong>HR</strong> — leave, benefits, payroll, appraisals, policies</li>"
+    "<li><strong>IT</strong> — technical support, VPN, passwords, software</li>"
+    "<li><strong>Admin</strong> — travel, cab bookings, office facilities</li>"
+    "<li><strong>Finance</strong> — ZOHO expenses, TDS, tax declarations</li>"
+    "<li><strong>PMO</strong> — project status, milestones, resources</li>"
+    "<li><strong>Employee Directory</strong> — find colleagues, contact details</li>"
+    "<li><strong>Attendance</strong> — check-in/out records, working hours</li>"
+    "</ul>"
+    "<p>What can I help you with today?</p>"
 )
 
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
@@ -481,7 +482,14 @@ class MasterAgent:
         # Keyword fallback
         return self._route_keywords(query)
 
-    def _run_agent(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
+    def _run_agent(
+        self,
+        domain: str,
+        query: str,
+        user_email: str = "",
+        user_id: str = "",
+        conversation_history: Optional[List[Dict]] = None,
+    ):
         agent = self._get_slave(domain)
         if not agent:
             return None, []
@@ -493,7 +501,7 @@ class MasterAgent:
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
             else:
-                resp = agent.process_query(query)
+                resp = agent.process_query(query, conversation_history=conversation_history or [])
             sources = getattr(agent, 'last_sources', [])
             return resp, [s for s in sources if s]
         except Exception as exc:
@@ -550,8 +558,8 @@ class MasterAgent:
                 return synth_llm.invoke(prompt).content
             except Exception as exc:
                 print(f"[MasterAgent] Synthesis LLM error ({exc}); using section format")
-        parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
-        return "\n\n---\n\n".join(parts)
+        parts = [f"<h3>{domain.upper()}</h3>{resp}" for domain, resp in responses.items()]
+        return "<hr>".join(parts)
 
     def _run_slave(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
         slave = self._get_slave(domain)
@@ -585,7 +593,7 @@ class MasterAgent:
     def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "") -> str:
         q = query.strip()
         if not q:
-            return "Please enter a question."
+            return "<p>Please enter a question.</p>"
 
         if _is_greeting(q):
             return _GREETING_RESPONSE
@@ -604,9 +612,16 @@ class MasterAgent:
 
         if not resp:
             return (
-                "I couldn't find relevant information for your query. "
-                "Please reach out to the appropriate department directly."
+                "<p>I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly.</p>"
             )
+
+        if sources:
+            items = "".join(
+                f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+                for s in dict.fromkeys(sources)
+            )
+            resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
 
         return resp
 
@@ -634,6 +649,19 @@ def _sse(data: dict) -> str:
 
 def _sse_done() -> str:
     return "data: [DONE]\n\n"
+
+
+def _source_label(url: str) -> str:
+    """Return a short human-readable label for a source URL."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path.rstrip("/")
+    name = path.split("/")[-1] if path else url
+    # Strip common extensions for readability
+    for ext in (".pdf", ".docx", ".doc", ".xlsx", ".txt", ".md"):
+        if name.lower().endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return name or url
 
 
 # ── Singleton + public entry points ──────────────────────────────────────────
