@@ -1,0 +1,159 @@
+{
+  "categories": [
+    {
+      "name": "thanks",
+      "keywords": [
+        "thanks",
+        "thank you",
+        "thank u",
+        "thx",
+        "ty",
+        "tysm",
+        "thnx",
+        "many thanks",
+        "appreciate it",
+        "appreciated",
+        "cheers",
+        "thanks a lot",
+        "thankyou",
+        "much appreciated",
+        "awesome thanks"
+      ],
+      "fuzzy_targets": [
+        "thanks",
+        "thank",
+        "thankyou",
+        "thnks",
+        "thnx",
+        "thx",
+        "ty"
+      ],
+      "response": "<p>You're most welcome! Glad I could help.</p>\n<p>If you need anything else, feel free to ask anytime.</p>"
+    },
+    {
+      "name": "farewell",
+      "keywords": [
+        "bye",
+        "byee",
+        "goodbye",
+        "good bye",
+        "see you",
+        "see ya",
+        "take care",
+        "cya",
+        "later",
+        "talk later",
+        "ttyl",
+        "have a good day",
+        "have a great day",
+        "catch you later",
+        "see you soon",
+        "bye bye"
+      ],
+      "fuzzy_targets": [
+        "bye",
+        "goodbye",
+        "cya",
+        "farewell",
+        "byebye",
+        "seeya"
+      ],
+      "response": "<p>Goodbye! Have a wonderful day ahead.</p>\n<p>Feel free to return anytime you need assistance.</p>"
+    },
+    {
+      "name": "how_are_you",
+      "keywords": [
+        "how are you",
+        "hows it going",
+        "how's it going",
+        "how is it going",
+        "how are you doing",
+        "how do you do",
+        "how is everything",
+        "whats up",
+        "what's up",
+        "wassup",
+        "sup",
+        "what is up",
+        "how are things",
+        "everything good",
+        "you good"
+      ],
+      "fuzzy_targets": [
+        "howru",
+        "howsit",
+        "wassup",
+        "sup",
+        "howareyou"
+      ],
+      "response": "<p>I'm doing great, thank you for asking!</p>\n<p>I'm here and ready to assist you with any questions or requests.</p>\n<p>How can I help you today?</p>"
+    },
+    {
+      "name": "hello",
+      "keywords": [
+        "hi",
+        "hii",
+        "hiii",
+        "hello",
+        "hey",
+        "heya",
+        "howdy",
+        "greetings",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "good day",
+        "morning",
+        "afternoon",
+        "evening",
+        "yo",
+        "hola",
+        "ola",
+        "namaste",
+        "hiya",
+        "hey there"
+      ],
+      "fuzzy_targets": [
+        "hello",
+        "helo",
+        "heloo",
+        "hi",
+        "hey",
+        "heya",
+        "howdy",
+        "greetings",
+        "morning",
+        "afternoon",
+        "evening",
+        "namaste"
+      ],
+      "response": "<p>Hello! I'm <strong>AURA</strong>, your Aligned Automation assistant.</p>\n<p>I’m here to help you with a wide range of employee and organizational services, including:</p>\n<ul>\n<li><strong>HR</strong> — leave requests, payroll, policies, benefits, appraisals</li>\n<li><strong>IT Support</strong> — passwords, VPN, system access, technical issues</li>\n<li><strong>Admin</strong> — travel requests, cab bookings, office facilities</li>\n<li><strong>Finance</strong> — ZOHO expenses, reimbursements, TDS, tax declarations</li>\n<li><strong>PMO</strong> — project updates, milestones, allocations, resources</li>\n<li><strong>Employee Directory</strong> — colleague information and contact details</li>\n<li><strong>Attendance</strong> — check-in/out records, working hours, attendance status</li>\n<li><strong>General Assistance</strong> — company-related queries and guidance</li>\n</ul>\n<p>How may I assist you today?</p>"
+    },
+    {
+      "name": "help",
+      "keywords": [
+        "help",
+        "need help",
+        "support",
+        "assist me",
+        "can you help",
+        "i need assistance",
+        "guide me",
+        "help me please"
+      ],
+      "fuzzy_targets": [
+        "help",
+        "support",
+        "assist",
+        "guideme"
+      ],
+      "response": "<p>Of course! I'm here to help.</p>\n<p>You can ask me about HR, IT support, attendance, finance, admin services, employee details, project information, and more.</p>\n<p>Please let me know what you need assistance with.</p>"
+    },
+    {
+      "name": "unknown",
+      "keywords": [],
+      "fuzzy_targets": [],
+      "response": "<p>I’m sorry, I couldn’t fully understand your request.</p>\n<p>Could you please provide more details or rephrase your question?</p>"
+    }
+  ]
+}

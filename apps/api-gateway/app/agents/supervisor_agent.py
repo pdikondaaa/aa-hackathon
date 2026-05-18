@@ -1,11 +1,22 @@
+import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 from typing import Dict, List, Optional
 
+from dotenv import load_dotenv
+
 from app.agents.guardrails import check_input
+from app.agents.knowledge.greeting_handler import get_greeting_response
+
+# Load environment variables
+load_dotenv(Path(__file__).resolve().parents[4] / ".env")
+
+_ZOHO_LEAVE_URL = os.getenv(
+    "ZOHO_LEAVE_URL")
 
 # ── Apply-leave fast-path ─────────────────────────────────────────────────────
 _APPLY_LEAVE_RE = re.compile(
@@ -23,36 +34,13 @@ _APPLY_LEAVE_RE = re.compile(
 
 _APPLY_LEAVE_RESPONSE = (
     "Sure! You can apply for leave directly through the <strong>Zoho People</strong> portal.\n\n"
-    '<a href="https://people.zoho.com/alignedautomationservices/zp#leavetracker/mydata/applyleave" '
+    f'<a href="{_ZOHO_LEAVE_URL}" '
     'target="_blank" rel="noopener noreferrer" '
     'style="display:inline-block;margin-top:8px;padding:10px 20px;background:#2563eb;color:#fff;'
     'border-radius:8px;text-decoration:none;font-weight:600;font-size:0.95em;">'
     '📅 Apply Leave on Zoho People</a>'
 )
 
-# ── Greeting / small-talk fast-path ──────────────────────────────────────────
-_GREETING_RE = re.compile(
-    r"""^[\s!.,?]*
-    (?:hi+|hello+|hey+|howdy|greetings|good\s+(?:morning|afternoon|evening|day)|
-       how\s+are\s+you|how'?s\s+it\s+going|what'?s\s+up|sup|
-       thanks?|thank\s+you|thx|ty|
-       bye|goodbye|see\s+you|take\s+care)
-    [\s!.,?]*$""",
-    re.IGNORECASE | re.VERBOSE,
-)
-
-_GREETING_RESPONSE = (
-    "Hello! I'm AURA, your Aligned Automation assistant.\n\n"
-    "I can help you with:\n"
-    "- **HR** — leave, benefits, payroll, appraisals, policies\n"
-    "- **IT** — technical support, VPN, passwords, software\n"
-    "- **Admin** — travel, cab bookings, office facilities\n"
-    "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
-    "- **PMO** — project status, milestones, resources\n"
-    "- **Employee Directory** — find colleagues, contact details\n"
-    "- **Attendance** — check-in/out records, working hours\n\n"
-    "What can I help you with today?"
-)
 
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
 _ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
@@ -371,7 +359,14 @@ class MasterAgent:
         # Keyword fallback
         return self._route_keywords(query)
 
-    def _run_agent(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
+    def _run_agent(
+        self,
+        domain: str,
+        query: str,
+        user_email: str = "",
+        user_id: str = "",
+        conversation_history: Optional[List[Dict]] = None,
+    ):
         agent = self._get_slave(domain)
         if not agent:
             return None, []
@@ -381,7 +376,7 @@ class MasterAgent:
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
             else:
-                resp = agent.process_query(query)
+                resp = agent.process_query(query, conversation_history=conversation_history or [])
             sources = getattr(agent, 'last_sources', [])
             return resp, [s for s in sources if s]
         except Exception as exc:
@@ -437,8 +432,8 @@ class MasterAgent:
                 return synth_llm.invoke(prompt).content
             except Exception as exc:
                 print(f"[MasterAgent] Synthesis LLM error ({exc}); using section format")
-        parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
-        return "\n\n---\n\n".join(parts)
+        parts = [f"<h3>{domain.upper()}</h3>{resp}" for domain, resp in responses.items()]
+        return "<hr>".join(parts)
 
     def _run_slave(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
         slave = self._get_slave(domain)
@@ -457,13 +452,20 @@ class MasterAgent:
             print(f"[MasterAgent] Slave '{domain}' error ({exc})")
         return domain, None, []
 
-    def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
+    def process_query(
+        self,
+        query: str,
+        user_email: str = "",
+        user_id: str = "",
+        conversation_history: Optional[List[Dict]] = None,
+    ) -> str:
         q = query.strip()
         if not q:
-            return "Please enter a question."
+            return "<p>Please enter a question.</p>"
 
-        if _GREETING_RE.match(q):
-            return _GREETING_RESPONSE
+        greeting_resp = get_greeting_response(q)
+        if greeting_resp:
+            return greeting_resp
 
         if _APPLY_LEAVE_RE.search(q):
             return _APPLY_LEAVE_RESPONSE
@@ -475,12 +477,12 @@ class MasterAgent:
             return self._contextual_block_response(q, category) or fallback
 
         domain = self._route(q)
-        resp, sources = self._run_agent(domain, q, user_email, user_id)
+        resp, sources = self._run_agent(domain, q, user_email, user_id, conversation_history or [])
 
         if not resp:
             return (
-                "I couldn't find relevant information for your query. "
-                "Please reach out to the appropriate department directly."
+                "<p>I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly.</p>"
             )
 
         if sources:
@@ -493,10 +495,11 @@ class MasterAgent:
                     pass
                 return unquote(url.split("/")[-1]) or url
 
-            source_list = "\n".join(
-                f"  • [{_source_label(s)}]({s})" for s in dict.fromkeys(sources)
+            items = "".join(
+                f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+                for s in dict.fromkeys(sources)
             )
-            resp += f"\n\n---\n📄 **Sources**\n{source_list}"
+            resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
 
         return resp
 
@@ -505,5 +508,16 @@ class MasterAgent:
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
-    return _master.process_query(query, user_email=user_email, user_id=user_id)
+def run_assistant(
+    query: str,
+    user_email: str = "",
+    user_id: str = "",
+    conversation_id: str = "",
+    conversation_history: Optional[List[Dict]] = None,
+) -> str:
+    return _master.process_query(
+        query,
+        user_email=user_email,
+        user_id=user_id,
+        conversation_history=conversation_history or [],
+    )

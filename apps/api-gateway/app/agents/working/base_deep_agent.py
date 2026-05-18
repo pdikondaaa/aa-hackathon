@@ -45,10 +45,10 @@ class BaseDeepAgent:
     def mode(self) -> str:
         return self._mode
 
-    def process_query(self, query: str) -> str:
+    def process_query(self, query: str, conversation_history: Optional[List[dict]] = None) -> str:
         self.last_sources = []
         if self._mode == "llm":
-            return self._llm_query(query)
+            return self._llm_query(query, conversation_history or [])
         return self._keyword_query(query)
 
     # ------------------------------------------------------------------
@@ -100,9 +100,9 @@ class BaseDeepAgent:
     # Tier 1 — LLM + pgvector (primary) + local KB (supplementary)
     # ------------------------------------------------------------------
 
-    def _llm_query(self, query: str) -> str:
+    def _llm_query(self, query: str, conversation_history: Optional[List[dict]] = None) -> str:
         try:
-            from langchain_core.messages import SystemMessage, HumanMessage
+            from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
             # pgvector is primary — always query DB embeddings first
             pg_context, pg_sources = self._retrieve_pgvector(query, top_k=8)
@@ -134,10 +134,26 @@ class BaseDeepAgent:
                 + f"\n\n{GENERIC_GUARDRAIL}\n\n{ORG_GUARDRAIL}"
                 + f"\n\n**Context:**\n{full_context}"
             )
-            messages = [
-                SystemMessage(content=system_content),
-                HumanMessage(content=query),
-            ]
+
+            # Build message chain: system + prior turns + current query
+            history_msgs = []
+            for msg in (conversation_history or []):
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if not content:
+                    continue
+                if role == "user":
+                    history_msgs.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    # Strip trailing sources block to keep context concise
+                    clean = content[:content.rfind("<hr>")] if "<hr>" in content else content
+                    history_msgs.append(AIMessage(content=clean))
+
+            messages = (
+                [SystemMessage(content=system_content)]
+                + history_msgs
+                + [HumanMessage(content=query)]
+            )
             return self._llm.invoke(messages).content
         except Exception as exc:
             print(f"[{self.__class__.__name__}] LLM error ({exc}); falling back to keyword tier")
@@ -167,15 +183,18 @@ class BaseDeepAgent:
             return self._format_pg_as_prose(local_text, web_context)
 
         if web_context:
-            return f"{web_context}\n\nFor more details, contact {self._FALLBACK_CONTACT}."
+            return (
+                f"<p>{web_context}</p>"
+                f"<p>For more details, contact <strong>{self._FALLBACK_CONTACT}</strong>.</p>"
+            )
 
         return (
-            f"I couldn't find specific information for your query. "
-            f"Please contact {self._FALLBACK_CONTACT}."
+            f"<p>I couldn't find specific information for your query. "
+            f"Please contact <strong>{self._FALLBACK_CONTACT}</strong>.</p>"
         )
 
     def _format_pg_as_prose(self, context: str, web_context: str = "") -> str:
-        """Group pgvector chunks by document name and return readable paragraphs."""
+        """Group pgvector chunks by document name and return HTML-formatted sections."""
         sections: List[tuple] = []
         current_doc = ""
         current_lines: List[str] = []
@@ -194,15 +213,16 @@ class BaseDeepAgent:
             sections.append((current_doc, " ".join(current_lines)))
 
         if not sections:
-            return context
+            return f"<p>{context}</p>"
 
         parts = []
         for doc_name, content in sections:
-            header = f"**{doc_name}**\n" if doc_name else ""
-            parts.append(f"{header}{content}")
+            block = f"<h3>{doc_name}</h3>" if doc_name else ""
+            block += f"<p>{content}</p>"
+            parts.append(block)
 
-        result = "\n\n".join(parts)
+        result = "\n".join(parts)
         if web_context:
-            result += f"\n\n**Additional Information:**\n{web_context}"
-        result += f"\n\nFor more details, contact {self._FALLBACK_CONTACT}."
+            result += f"\n<h3>Additional Information</h3>\n<p>{web_context}</p>"
+        result += f"\n<p>For more details, contact <strong>{self._FALLBACK_CONTACT}</strong>.</p>"
         return result

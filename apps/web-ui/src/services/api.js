@@ -216,4 +216,10 @@ export async function getTodaysBirthdays() {
   return httpClient.get('/api/users/birthdays/today');
 }
 
+// ── Work Anniversaries API ─────────────────────────────────────────────────
+
+export async function getTodaysAnniversaries() {
+  return httpClient.get('/api/users/anniversaries/today');
+}
+
 export default httpClient;
