@@ -11,7 +11,6 @@ Tables used:
   documents        — one row per SharePoint file, tracks checksum + metadata
   document_chunks  — one row per text chunk, stores chunk text + embedding vector
 """
-import re
 from typing import Optional
 
 import numpy as np
@@ -25,8 +24,7 @@ from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Always connect to the 'aura' database regardless of SQL_DB env override
-_AURA_URL = re.sub(r'/[^/?#]+(\?.*)?$', r'/aura\1', settings.database_url)
+_AURA_URL = settings.database_url
 
 
 class DocumentRepository:

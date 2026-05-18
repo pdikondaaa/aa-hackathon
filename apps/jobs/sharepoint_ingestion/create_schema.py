@@ -11,6 +11,7 @@ Usage:
 import sys
 import os
 import re
+import csv
 import datetime
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -22,7 +23,8 @@ import openpyxl
 from config.settings import settings
 from utils.logging_config import get_logger
 
-_EXCEL_PATH = os.path.join(_HERE, "data", "zoho_dummy_data.xlsx")
+_DATA_DIR = os.path.join(_HERE, "data")
+_ATTENDANCE_PATH = os.path.join(_DATA_DIR, "attendance.xlsx")
 
 logger = get_logger("create_schema")
 
@@ -415,22 +417,247 @@ CREATE INDEX IF NOT EXISTS idx_pii_logs_action
 
 
 -- =========================================================
+-- TABLE: employee_details
+-- =========================================================
+CREATE TABLE IF NOT EXISTS employee_details (
+    id                      BIGSERIAL PRIMARY KEY,
+    employee_id             TEXT,
+    name                    TEXT,
+    date_of_birth           TEXT,
+    joining_date            TIMESTAMP,
+    location                TEXT,
+    employee_type           TEXT,
+    status_active_inactive  TEXT,
+    gender                  TEXT,
+    designation             TEXT,
+    email                   TEXT,
+    reporting_manager       TEXT,
+    functional_manager      TEXT,
+    function                TEXT,
+    past_experience         BIGINT,
+    aa_experience           DOUBLE PRECISION,
+    total_experience_years  DOUBLE PRECISION,
+    exp_group               TEXT,
+    relieving_date          TEXT,
+    active_details          TEXT,
+    lwd                     TEXT,
+    subfunction             TEXT,
+    skill_set_board         TEXT,
+    primary_skills          TEXT,
+    skill_last_updated      TEXT,
+    subitems                TEXT,
+    added_time              TEXT,
+    modified_user           TEXT,
+    modified_time           TEXT,
+    jun_exp                 TEXT,
+    unique_id               TEXT
+);
+
+
+-- =========================================================
+-- TABLE: project_details
+-- =========================================================
+CREATE TABLE IF NOT EXISTS project_details (
+    _row_id                     BIGSERIAL PRIMARY KEY,
+    project_name                TEXT,
+    sub_project                 TEXT,
+    old_project_name            TEXT,
+    project_lead                TEXT,
+    delivery_manager            TEXT,
+    project_status              TEXT,
+    billing                     TEXT,
+    cost_center                 TEXT,
+    client_master               TEXT,
+    project_start_date          TEXT,
+    project_end_date            TEXT,
+    sow_name                    TEXT,
+    sow_start_date              TEXT,
+    sow_end_date                TEXT,
+    remarks                     TEXT,
+    project_type                TEXT,
+    managed_services_staff_org  TEXT,
+    lyb_type                    TEXT,
+    has_paid_leave              TEXT,
+    yearly_hours                TEXT,
+    per_day_hours               TEXT,
+    invoice_approver            TEXT,
+    modified_user               TEXT,
+    modified_time               TIMESTAMP,
+    added_time                  TIMESTAMP,
+    added_user                  TEXT,
+    id                          TEXT
+);
+
+
+-- =========================================================
+-- TABLE: allocation_details
+-- =========================================================
+CREATE TABLE IF NOT EXISTS allocation_details (
+    id                              BIGSERIAL PRIMARY KEY,
+    zoho_record_id                  TEXT,
+    employee_id                     TEXT,
+    name                            TEXT,
+    project_name                    TEXT,
+    alias_id                        TEXT,
+    sub_project                     TEXT,
+    project_lead                    TEXT,
+    delivery_manager                TEXT,
+    completion_status               TEXT,
+    efforts_pct                     BIGINT,
+    billability_pct                 BIGINT,
+    remarks                         TEXT,
+    status_active_inactive          TEXT,
+    function                        TEXT,
+    subfunction                     TEXT,
+    sow_name                        TEXT,
+    reporting_manager               TEXT,
+    functional_manager              TEXT,
+    client_master                   TEXT,
+    project_status                  TEXT,
+    active_details                  TEXT,
+    lwd                             TEXT,
+    billing                         TEXT,
+    project_type                    TEXT,
+    efforts_ft                      BIGINT,
+    billability_ft                  BIGINT,
+    allocation_date                 TIMESTAMP,
+    dell_badge_id                   TEXT,
+    dell_id_status                  TEXT,
+    hsk_key_status                  TEXT,
+    calculated_project_multiselect  DOUBLE PRECISION,
+    added_user                      TEXT,
+    added_time                      TIMESTAMP,
+    modified_time                   TIMESTAMP,
+    modified_user                   TEXT
+);
+
+
+-- =========================================================
 -- TABLE: allocation_role_map
 -- Maps employee designation → allocation board role.
--- Seeded by seed_allocation_roles.py; add new designations here as needed.
 -- =========================================================
 CREATE TABLE IF NOT EXISTS allocation_role_map (
     id          BIGSERIAL PRIMARY KEY,
-    designation VARCHAR(255) NOT NULL UNIQUE,
+    designation VARCHAR(255) NOT NULL,
     role        VARCHAR(50)  NOT NULL
                 CHECK (role IN ('executive','business_lead','functional_lead','team_lead','employee','admin')),
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT allocation_role_map_designation_key UNIQUE (designation)
 );
 
 CREATE INDEX IF NOT EXISTS idx_alloc_role_desig ON allocation_role_map(designation);
 """.format(dim=settings.EMBEDDING_DIMENSION)
 
+
+# PK column to exclude from INSERT (auto-generated by BIGSERIAL)
+_CSV_TABLES = {
+    "employee_details":  "id",
+    "project_details":   "_row_id",
+    "allocation_details": "id",
+    "allocation_role_map": "id",
+}
+
+# Columns that need Python-side type coercion (CSV values are all strings)
+_COLUMN_TYPES: dict[str, dict[str, str]] = {
+    "employee_details": {
+        "past_experience": "int",
+        "aa_experience": "float",
+        "total_experience_years": "float",
+        "joining_date": "timestamp",
+    },
+    "project_details": {
+        "modified_time": "timestamp",
+        "added_time": "timestamp",
+    },
+    "allocation_details": {
+        "efforts_pct": "int",
+        "billability_pct": "int",
+        "efforts_ft": "int",
+        "billability_ft": "int",
+        "calculated_project_multiselect": "float",
+        "allocation_date": "timestamp",
+        "added_time": "timestamp",
+        "modified_time": "timestamp",
+    },
+    "allocation_role_map": {
+        "created_at": "timestamp",
+        "updated_at": "timestamp",
+    },
+}
+
+
+def _coerce_csv_value(value: str, col_type: str):
+    if value == "" or value is None:
+        return None
+    if col_type == "int":
+        try:
+            return int(float(value))
+        except (ValueError, TypeError):
+            return None
+    if col_type == "float":
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    if col_type == "timestamp":
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        return None
+    return value
+
+
+def _import_csv_data(conn):
+    """Insert CSV rows into tables; skips tables that already have data."""
+    for table_name, pk_col in _CSV_TABLES.items():
+        csv_path = os.path.join(_DATA_DIR, f"{table_name}.csv")
+        if not os.path.exists(csv_path):
+            logger.warning(f"CSV not found: {csv_path} — skipping")
+            continue
+
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+            if cur.fetchone()[0] > 0:
+                logger.info(f"Table '{table_name}' already has data — skipping import")
+                continue
+
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        if not rows:
+            logger.info(f"CSV '{csv_path}' is empty — skipping")
+            continue
+
+        col_types = _COLUMN_TYPES.get(table_name, {})
+        col_names = [c for c in rows[0].keys() if c != pk_col]
+        placeholders = ", ".join(["%s"] * len(col_names))
+        insert_sql = (
+            f"INSERT INTO {table_name} ({', '.join(col_names)}) "
+            f"VALUES ({placeholders})"
+        )
+
+        inserted = 0
+        with conn.cursor() as cur:
+            for row in rows:
+                values = [
+                    _coerce_csv_value(row[col], col_types.get(col, "text"))
+                    for col in col_names
+                ]
+                if all(v is None for v in values):
+                    continue
+                cur.execute(insert_sql, values)
+                inserted += 1
+
+        logger.info(f"Imported {inserted} rows into '{table_name}'")
+
+
+# ---------------------------------------------------------------------------
+# Excel helpers (used for attendance.xlsx and any future Excel-based sources)
+# ---------------------------------------------------------------------------
 
 def _to_snake_case(name: str) -> str:
     if not name or not str(name).strip():
@@ -443,10 +670,6 @@ def _to_snake_case(name: str) -> str:
 
 
 def _infer_pg_type(values: list) -> str:
-    """
-    Returns a PG type only when ALL non-null, non-empty sampled values agree
-    on the same Python type. Falls back to TEXT for mixed columns.
-    """
     detected = None
     for v in values:
         if v is None or v == "":
@@ -468,113 +691,104 @@ def _infer_pg_type(values: list) -> str:
     return detected or "TEXT"
 
 
-def _read_sheet(wb, sheet_name: str):
-    """Return (col_map, data_rows) where col_map is list of (snake_name, col_index)."""
+def _read_excel_sheet(wb, sheet_name: str):
+    """Return (col_map, data_rows); col_map is list of (snake_name, col_index)."""
     ws = wb[sheet_name]
     rows = list(ws.rows)
     if not rows:
         return [], []
-    raw_headers = [cell.value for cell in rows[0]]
-    col_map = []
-    seen = set()
-    for i, h in enumerate(raw_headers):
-        snake = _to_snake_case(h) if h is not None else ""
+    col_map, seen = [], set()
+    for i, cell in enumerate(rows[0]):
+        snake = _to_snake_case(cell.value) if cell.value is not None else ""
         if not snake:
             continue
-        # Deduplicate: append _2, _3 ... if name already used
-        unique = snake
-        suffix = 2
+        unique, suffix = snake, 2
         while unique in seen:
             unique = f"{snake}_{suffix}"
             suffix += 1
         seen.add(unique)
         col_map.append((unique, i))
-    data_rows = rows[1:]
-    return col_map, data_rows
+    return col_map, rows[1:]
 
 
-def _create_zoho_tables(conn):
-    """Create Zoho tables and add any missing columns (idempotent)."""
-    wb = openpyxl.load_workbook(_EXCEL_PATH, read_only=True, data_only=True)
+def _create_tables_from_excel(
+    conn,
+    excel_path: str,
+    table_name_override: str | None = None,
+    skip_sheets: list[str] | None = None,
+):
+    """Create table(s) from an Excel workbook (idempotent, adds missing columns)."""
+    skip = set(skip_sheets or [])
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
     try:
         for sheet_name in wb.sheetnames:
-            table_name = _to_snake_case(sheet_name)
-            col_map, data_rows = _read_sheet(wb, sheet_name)
+            if sheet_name in skip:
+                continue
+            table_name = table_name_override or _to_snake_case(sheet_name)
+            col_map, data_rows = _read_excel_sheet(wb, sheet_name)
             if not col_map:
                 continue
 
-            # Sample up to 50 rows for type inference
-            col_values = {snake: [] for snake, _ in col_map}
+            col_values = {s: [] for s, _ in col_map}
             for row in data_rows[:50]:
-                cells = [cell.value for cell in row]
-                for snake, idx in col_map:
+                cells = [c.value for c in row]
+                for s, idx in col_map:
                     if idx < len(cells):
-                        col_values[snake].append(cells[idx])
+                        col_values[s].append(cells[idx])
 
-            col_types = {snake: _infer_pg_type(col_values[snake]) for snake, _ in col_map}
-
-            col_names_set = {snake for snake, _ in col_map}
-            pk_name = "_row_id" if "id" in col_names_set else "id"
-
-            col_defs = ",\n    ".join(
-                f"{snake} {col_types[snake]}" for snake, _ in col_map
-            )
+            col_types = {s: _infer_pg_type(col_values[s]) for s, _ in col_map}
+            pk = "_row_id" if "id" in {s for s, _ in col_map} else "id"
+            col_defs = ",\n    ".join(f"{s} {col_types[s]}" for s, _ in col_map)
             create_sql = (
                 f"CREATE TABLE IF NOT EXISTS {table_name} (\n"
-                f"    {pk_name} BIGSERIAL PRIMARY KEY,\n"
+                f"    {pk} BIGSERIAL PRIMARY KEY,\n"
                 f"    {col_defs}\n"
                 f");"
             )
             with conn.cursor() as cur:
                 cur.execute(create_sql)
                 logger.info(f"Table '{table_name}' created or already exists")
-
-                # Add columns that are missing (schema evolution)
-                for snake, _ in col_map:
+                for s, _ in col_map:
                     cur.execute(
-                        """
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = %s AND column_name = %s
-                        """,
-                        (table_name, snake),
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name = %s AND column_name = %s",
+                        (table_name, s),
                     )
                     if not cur.fetchone():
                         cur.execute(
                             f"ALTER TABLE {table_name} "
-                            f"ADD COLUMN IF NOT EXISTS {snake} {col_types[snake]}"
+                            f"ADD COLUMN IF NOT EXISTS {s} {col_types[s]}"
                         )
-                        logger.info(f"Added column '{snake}' to '{table_name}'")
+                        logger.info(f"Added column '{s}' to '{table_name}'")
     finally:
         wb.close()
 
 
-def _coerce_value(v, pg_type: str):
-    """Convert empty strings to None for non-TEXT columns to avoid type errors."""
-    if pg_type == "TEXT":
-        return v
-    if v == "":
-        return None
-    return v
-
-
-def _import_zoho_data(conn):
-    """Insert Excel rows into Zoho tables; skips tables that already have data."""
-    wb = openpyxl.load_workbook(_EXCEL_PATH, read_only=True, data_only=True)
+def _import_data_from_excel(
+    conn,
+    excel_path: str,
+    table_name_override: str | None = None,
+    skip_sheets: list[str] | None = None,
+):
+    """Insert Excel rows into table(s); skips tables that already have data."""
+    skip = set(skip_sheets or [])
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
     try:
         for sheet_name in wb.sheetnames:
-            table_name = _to_snake_case(sheet_name)
-            col_map, data_rows = _read_sheet(wb, sheet_name)
+            if sheet_name in skip:
+                continue
+            table_name = table_name_override or _to_snake_case(sheet_name)
+            col_map, data_rows = _read_excel_sheet(wb, sheet_name)
             if not col_map:
                 continue
 
-            # Infer types from first 50 rows so we know which columns need coercion
-            col_values = {snake: [] for snake, _ in col_map}
+            col_values = {s: [] for s, _ in col_map}
             for row in data_rows[:50]:
-                cells = [cell.value for cell in row]
-                for snake, idx in col_map:
+                cells = [c.value for c in row]
+                for s, idx in col_map:
                     if idx < len(cells):
-                        col_values[snake].append(cells[idx])
-            col_types = {snake: _infer_pg_type(col_values[snake]) for snake, _ in col_map}
+                        col_values[s].append(cells[idx])
+            col_types = {s: _infer_pg_type(col_values[s]) for s, _ in col_map}
 
             with conn.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM {table_name}")
@@ -582,60 +796,38 @@ def _import_zoho_data(conn):
                     logger.info(f"Table '{table_name}' already has data — skipping import")
                     continue
 
-                col_names = [snake for snake, _ in col_map]
+                col_names = [s for s, _ in col_map]
                 placeholders = ", ".join(["%s"] * len(col_names))
                 insert_sql = (
                     f"INSERT INTO {table_name} ({', '.join(col_names)}) "
                     f"VALUES ({placeholders})"
                 )
-
                 inserted = 0
                 for row in data_rows:
-                    cells = [cell.value for cell in row]
+                    cells = [c.value for c in row]
                     values = [
-                        _coerce_value(
-                            cells[idx] if idx < len(cells) else None,
-                            col_types[snake],
-                        )
-                        for snake, idx in col_map
+                        None if (col_types[s] != "TEXT" and (cells[idx] if idx < len(cells) else None) == "")
+                        else (cells[idx] if idx < len(cells) else None)
+                        for s, idx in col_map
                     ]
                     if all(v is None for v in values):
                         continue
                     cur.execute(insert_sql, values)
                     inserted += 1
-
                 logger.info(f"Imported {inserted} rows into '{table_name}'")
     finally:
         wb.close()
 
 
 def create_schema():
-    # ── Step 1: Create the 'aura' database if it doesn't exist ──────────────
-    # CREATE DATABASE cannot run inside a transaction, so we connect to the
-    # 'postgres' maintenance DB first, create 'aura', then reconnect.
-    admin_url = re.sub(r'/[^/?#]+(\?.*)?$', r'/postgres\1', settings.database_url)
-
-    logger.info("Ensuring database 'aura' exists...")
-    admin_conn = psycopg2.connect(admin_url)
-    admin_conn.autocommit = True
-    try:
-        with admin_conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM pg_database WHERE datname = 'aura'")
-            if not cur.fetchone():
-                cur.execute("CREATE DATABASE aura")
-                logger.info("Database 'aura' created")
-            else:
-                logger.info("Database 'aura' already exists")
-    finally:
-        admin_conn.close()
-
-    # ── Step 2: Connect to 'aura' and apply extensions + full schema ─────────
-    aura_url = re.sub(r'/[^/?#]+(\?.*)?$', r'/aura\1', settings.database_url)
+    db_url = settings.database_url
     logger.info(
-        f"Connecting to {settings.SQL_HOST}:{settings.SQL_PORT}/aura "
+        f"Connecting to {settings.SQL_HOST}:{settings.SQL_PORT}/{settings.SQL_DB} "
         f"as {settings.SQL_USERNAME}"
     )
-    conn = psycopg2.connect(aura_url)
+
+    # ── Step 1: Apply extensions + full schema ────────────────────────────────
+    conn = psycopg2.connect(db_url)
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
@@ -647,16 +839,37 @@ def create_schema():
     finally:
         conn.close()
 
-    # ── Step 3: Create Zoho tables and import data (idempotent) ──────────────
-    logger.info("Setting up Zoho data tables...")
-    conn = psycopg2.connect(aura_url)
+    # ── Step 2: Import CSV seed data (idempotent) ────────────────────────────
+    logger.info("Importing CSV seed data...")
+    conn = psycopg2.connect(db_url)
     conn.autocommit = True
     try:
-        _create_zoho_tables(conn)
-        _import_zoho_data(conn)
-        logger.info("Zoho tables ready")
+        _import_csv_data(conn)
+        logger.info("CSV data import complete")
     except Exception as exc:
-        logger.error(f"Zoho table setup failed: {exc}")
+        logger.error(f"CSV data import failed: {exc}")
+        raise
+    finally:
+        conn.close()
+
+    # ── Step 3: Attendance table (attendance.xlsx) ───────────────────────────
+    logger.info("Setting up attendance table...")
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = True
+    try:
+        _create_tables_from_excel(
+            conn, _ATTENDANCE_PATH,
+            table_name_override="attendance",
+            skip_sheets=["Info"],
+        )
+        _import_data_from_excel(
+            conn, _ATTENDANCE_PATH,
+            table_name_override="attendance",
+            skip_sheets=["Info"],
+        )
+        logger.info("Attendance table ready")
+    except Exception as exc:
+        logger.error(f"Attendance table setup failed: {exc}")
         raise
     finally:
         conn.close()

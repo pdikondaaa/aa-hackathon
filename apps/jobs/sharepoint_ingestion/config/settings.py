@@ -36,12 +36,11 @@ class Settings(BaseSettings):
     LOG_DIR: str = os.path.join(_JOB_ROOT, "logs")
 
     # ─── PostgreSQL ───────────────────────────────────────────────────────────
-    SQL_HOST: str = "localhost"
-    SQL_PORT: str = "5432"
-    SQL_USERNAME: str = "postgres"
-    SQL_PWD: str = "Admin@1"
-    SQL_DB: str = "aura"
-
+    SQL_HOST: str = Field(default="hackathon.alignedautomation.com", validation_alias="SQL_HOST")
+    SQL_PORT: str = Field(default="5432", validation_alias="SQL_PORT")
+    SQL_USERNAME: str = Field(default="squadrons", validation_alias="SQL_USERNAME")
+    SQL_PWD: str = Field(default="TwlU0KL1LZbZLYS$", validation_alias="SQL_PWD")
+    SQL_DB: str = Field(default="squadrons", validation_alias="SQL_DB")
     # ─── Logging ──────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 
@@ -62,7 +61,7 @@ class Settings(BaseSettings):
         return ["https://graph.microsoft.com/.default"]
 
     model_config = {
-        "env_file": str(_REPO_ROOT / ".env"),
+        "env_file": (str(_REPO_ROOT / ".env"), str(Path(_JOB_ROOT) / ".env")),
         "env_file_encoding": "utf-8",
         "extra": "ignore",
         "populate_by_name": True,
