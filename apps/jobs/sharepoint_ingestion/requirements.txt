@@ -29,3 +29,13 @@ torch>=2.0.0
 psycopg2-binary>=2.9.9
 pgvector>=0.3.2
 numpy>=1.26.0
+
+# ── Web scraping — HTML pages + SharePoint lists ───────────────────────────
+beautifulsoup4>=4.12.0    # HTML parsing and cleanup
+lxml>=5.0.0               # Fast HTML parser backend for BeautifulSoup
+# Playwright is optional: only required when SCRAPE_PLAYWRIGHT_ENABLED=true
+# After pip install run: playwright install chromium
+playwright>=1.44.0
+
+# ── Chatbot — OpenAI GPT integration ──────────────────────────────────────
+openai>=1.30.0            # GPT-4o / GPT-4o-mini for RAG chatbot (chatbot.py)

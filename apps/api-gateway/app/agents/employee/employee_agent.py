@@ -23,6 +23,7 @@ from app.agents.employee.config import (
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
@@ -41,11 +42,10 @@ def _connect() -> psycopg2.extensions.connection:
 
 
 def _run(sql: str, params: tuple = ()) -> List[Dict]:
-    """Execute *sql* and return rows as list of dicts."""
     conn = None
     try:
         conn = _connect()
-        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
     except Exception as exc:
@@ -60,7 +60,6 @@ def _run(sql: str, params: tuple = ()) -> List[Dict]:
 
 
 def _ilike_clause(cols: List[str]) -> str:
-    """Return 'col1 ILIKE %s OR col2 ILIKE %s ...' for the given columns."""
     return " OR ".join(f'"{c}" ILIKE %s' for c in cols)
 
 
@@ -98,8 +97,6 @@ _STOP_WORDS = {
     'is', 'has', 'have', 'does', 'did', 'was', 'were',
 }
 
-# Maps field keywords (lowercase) → (display label, column name)
-# Longer phrases are checked first to avoid partial matches.
 _FIELD_MAP = [
     ("mobile number",       ("Mobile Number",      COL_MOBILE)),
     ("contact number",      ("Contact Number",     COL_MOBILE)),
@@ -158,41 +155,37 @@ def _detect_field_query(q: str):
     Returns (field_label, col_name, person_name) or None.
     """
     matched_label = None
-    matched_col   = None
-    matched_kw    = None
+    matched_col = None
+    matched_kw = None
 
     for keyword, (label, col) in _FIELD_MAP:
         if keyword in q:
             matched_label = label
-            matched_col   = col
-            matched_kw    = keyword
+            matched_col = col
+            matched_kw = keyword
             break
 
     if not matched_label:
         return None
 
-    # Strategy 1: possessive — "Amol's mobile"
     m = re.search(r"([a-zA-Z][a-zA-Z\s\-\.]{1,30}?)'s\b", q)
     if m:
         name = m.group(1).strip()
         if len(name) >= 2:
             return matched_label, matched_col, name
 
-    # Strategy 2: "of / for Name" at end — "mobile of Amol Kumar"
     m = re.search(r'\b(?:of|for)\s+([a-zA-Z][a-zA-Z\s\-\.]{1,40}?)(?:\s*$)', q)
     if m:
         name = m.group(1).strip()
         if len(name) >= 2:
             return matched_label, matched_col, name
 
-    # Strategy 3: separator  "mobile - Amol" / "email: Ravi"
     m = re.search(r'[-:]\s*([a-zA-Z][a-zA-Z\s\-\.]{1,40}?)(?:\s*$)', q)
     if m:
         name = m.group(1).strip()
         if len(name) >= 2:
             return matched_label, matched_col, name
 
-    # Strategy 4: strip all field + connector words; remainder is the name
     remove = set(matched_kw.split()) | _FIELD_CONNECTOR_WORDS
     name_words = [w for w in re.findall(r'[a-zA-Z]+', q) if w not in remove and len(w) > 1]
     if name_words:
@@ -204,7 +197,6 @@ def _detect_field_query(q: str):
 def _build_query(query: str) -> Tuple[str, tuple, str]:
     q = query.lower().strip()
 
-    # ---- COUNT ----------------------------------------------------------
     if re.search(r'\b(count|how many|total|number of)\b', q):
         dept_m = re.search(
             r'\b(?:in|from|of)\s+(?:the\s+)?([a-zA-Z &]+?)'
@@ -220,7 +212,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             )
         return f"SELECT COUNT(*) AS count FROM {EMPLOYEE_VIEW}", (), "count"
 
-    # ---- SKILL SET search -----------------------------------------------
     skill_m = re.search(r'\b(?:skill(?:s|set)?|expertise|knows?|expert in|proficient in)\s+([a-zA-Z\s\+\#\.]+)', q)
     if skill_m:
         skill = skill_m.group(1).strip()
@@ -233,7 +224,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "skill_search",
         )
 
-    # ---- PROJECT search -------------------------------------------------
     project_m = re.search(r'\b(?:project|working on|assigned to)\s+([a-zA-Z\s\-]+)', q)
     if project_m:
         project = project_m.group(1).strip()
@@ -246,7 +236,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "project_search",
         )
 
-    # ---- DEPARTMENT listing ---------------------------------------------
     dept_m = re.search(
         r'\b(?:employees?|staff|people|team|members?)\s+'
         r'(?:in|from|of|under|belonging to)\s+(?:the\s+)?'
@@ -267,7 +256,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "department",
         )
 
-    # ---- EXPLICIT NAME / FIND -------------------------------------------
     name_m = re.search(
         r'\b(?:find|search|get|show|who is|info (?:about|on|for)|'
         r'details? (?:of|for|about)|tell me about|contact (?:for|of))\s+'
@@ -285,7 +273,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "name_search",
         )
 
-    # ---- DESIGNATION / ROLE search --------------------------------------
     role_m = re.search(
         r'\b(?:title|role|designation|position)\s*(?:is\s+|of\s+|:?\s*)([a-zA-Z\s]+)', q
     )
@@ -300,7 +287,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "role_search",
         )
 
-    # ---- REPORTING / MANAGER --------------------------------------------
     if re.search(r'\b(manager|reporting to|reports? to|team lead)\b', q):
         mgr_m = re.search(r'(?:manager of|reports? to|reporting to|team of)\s+([a-zA-Z\s]+)', q)
         if mgr_m:
@@ -314,7 +300,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
                 "manager_search",
             )
 
-    # ---- LOCATION search ------------------------------------------------
     location_m = re.search(r'\b(?:employees?|staff|people)\s+(?:in|at|from)\s+([a-zA-Z\s]+)', q)
     if location_m:
         loc = location_m.group(1).strip()
@@ -328,7 +313,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "location_search",
         )
 
-    # ---- SPECIFIC FIELD for a PERSON  ("Tell me mobile - Amol") ----------
     field_result = _detect_field_query(q)
     if field_result:
         field_label, col_name, person_name = field_result
@@ -343,10 +327,8 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             f"field:{field_label}:{col_name}",
         )
 
-    # ---- GENERAL TEXT SEARCH — each keyword searched independently -------
     words = _keywords(q)
     if words:
-        # Build: (col1 ILIKE %word1% OR col2 ILIKE %word1% ...) for each word
         conditions: List[str] = []
         params_list: List[str] = []
         for word in words[:3]:
@@ -362,7 +344,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
             "general_search",
         )
 
-    # ---- FALLBACK: list first 20 ----------------------------------------
     return (
         f'SELECT "{COL_FIRST_NAME}", "{COL_LAST_NAME}", "{COL_EMAIL}", '
         f'"{COL_DESIGNATION}", "{COL_DEPARTMENT}", "{COL_EMPLOYEE_STATUS}" '
@@ -378,12 +359,11 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
 
 def _full_name(emp: Dict) -> str:
     first = str(emp.get(COL_FIRST_NAME) or "").strip()
-    last  = str(emp.get(COL_LAST_NAME)  or "").strip()
+    last = str(emp.get(COL_LAST_NAME) or "").strip()
     return f"{first} {last}".strip() or emp.get("EmployeeId", "Unknown")
 
 
 def _fmt_summary_line(emp: Dict) -> str:
-    """One-line summary for multi-result lists."""
     parts = [f"**{_full_name(emp)}**"]
     for col, label in SUMMARY_FIELDS:
         val = emp.get(col)
@@ -393,13 +373,9 @@ def _fmt_summary_line(emp: Dict) -> str:
 
 
 def _fmt_detail_card(emp: Dict) -> str:
-    """Full detail card for a single employee (hides PII columns)."""
     lines: List[str] = []
-
-    # Name always comes first
     lines.append(f"**Name:** {_full_name(emp)}")
 
-    # Ordered priority fields
     priority = [
         (COL_DESIGNATION,             "Designation"),
         (COL_DEPARTMENT,              "Department"),
@@ -433,7 +409,6 @@ def _fmt_detail_card(emp: Dict) -> str:
             lines.append(f"**{label}:** {val}")
             rendered_keys.add(col)
 
-    # Append any remaining columns not in priority list and not hidden
     for col, val in emp.items():
         if col in rendered_keys or col in HIDDEN_DETAIL_COLUMNS:
             continue
@@ -445,11 +420,10 @@ def _fmt_detail_card(emp: Dict) -> str:
 
 
 def _fmt_field_results(rows: List[Dict], field_label: str, col_name: str) -> str:
-    """Format results for a specific-field query (e.g. 'mobile of Amol')."""
     if len(rows) == 1:
         emp = rows[0]
         name = _full_name(emp)
-        val  = emp.get(col_name)
+        val = emp.get(col_name)
         if val and str(val).strip():
             return f"**{name}** — {field_label}: **{val}**"
         return f"**{name}** — {field_label} is not available in the records."
@@ -457,10 +431,10 @@ def _fmt_field_results(rows: List[Dict], field_label: str, col_name: str) -> str
     lines = [f"Found **{len(rows)}** matching employees:\n"]
     for emp in rows:
         name = _full_name(emp)
-        val  = emp.get(col_name)
-        val_str  = f"**{val}**" if val and str(val).strip() else "N/A"
+        val = emp.get(col_name)
+        val_str = f"**{val}**" if val and str(val).strip() else "N/A"
         desig = emp.get(COL_DESIGNATION, "")
-        dept  = emp.get(COL_DEPARTMENT, "")
+        dept = emp.get(COL_DEPARTMENT, "")
         extra = f" ({desig}, {dept})" if desig or dept else ""
         lines.append(f"- **{name}**{extra} — {field_label}: {val_str}")
     return "\n".join(lines)
@@ -474,7 +448,6 @@ def _format_results(rows: List[Dict], intent: str) -> str:
         count = rows[0].get("count", 0)
         return f"There are **{count}** employees in the system."
 
-    # Field-specific query: intent = "field:<label>:<col_name>"
     if intent.startswith("field:"):
         _, field_label, col_name = intent.split(":", 2)
         return _fmt_field_results(rows, field_label, col_name)
@@ -483,7 +456,7 @@ def _format_results(rows: List[Dict], intent: str) -> str:
         return _fmt_detail_card(rows[0])
 
     header = f"Found **{len(rows)}** employee(s):\n"
-    lines  = [f"- {_fmt_summary_line(e)}" for e in rows]
+    lines = [f"- {_fmt_summary_line(e)}" for e in rows]
     return header + "\n".join(lines)
 
 
@@ -493,14 +466,15 @@ def _format_results(rows: List[Dict], intent: str) -> str:
 
 def employee_agent(query: str, user_email: str = "") -> str:
     """
-    Employee Agent — answers employee queries by querying
-    the Zoho People database (people.vb_employees) directly.
+    Employee Agent — answers employee directory queries by reading
+    the Zoho People database (people.vb_employees).
 
-    When user_email is provided, self-referential queries ("my designation",
-    "who am I", etc.) are resolved against the logged-in user's record.
+    For self-referential queries ("my designation", "who am I", etc.),
+    the logged-in user's record is resolved via their email.
+
+    Attendance queries are handled by the dedicated AttendanceAgent.
     """
     try:
-        # Self-service: resolve "my X" / "who am I" against the caller's record
         if user_email and _SELF_RE.search(query):
             rows = _run(
                 f'SELECT * FROM {EMPLOYEE_VIEW} WHERE "{COL_EMAIL}" ILIKE %s LIMIT 1',
@@ -508,7 +482,6 @@ def employee_agent(query: str, user_email: str = "") -> str:
             )
             if rows:
                 return _fmt_detail_card(rows[0])
-            # fall through to general search if email not found
 
         sql, params, intent = _build_query(query)
         rows = _run(sql, params)
@@ -518,7 +491,6 @@ def employee_agent(query: str, user_email: str = "") -> str:
             if result:
                 return result
 
-        # Widen the search when a targeted query returns nothing
         if not intent.startswith("field:") and intent not in ("count", "list_all"):
             words = _keywords(query)
             if words:

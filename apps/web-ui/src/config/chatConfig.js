@@ -106,7 +106,7 @@ export const chatConfig = {
       description: 'Check leaves, payroll, benefits and policies instantly.',
       icon:        'fa-user-tie',
       color:       '#1D76BC',
-      intro: "I'm the **HR Assistant** — here's what I can help you with:\n\n- 🏖️ **Leave management** — balances, applications, and policies (annual, casual, sick, maternity/paternity)\n- 💰 **Payroll & salary** — salary structure, payslips, increments, and appraisals\n- 🏥 **Benefits** — GHI insurance, PF/EPF, gratuity, Practo, IL TakeCare\n- 📋 **HR policies** — WFH, POSH, notice period, onboarding, and offboarding\n- 📝 **Referral & certifications** — employee referral program, skill certifications\n\nWhat would you like to know?",
+      intro: "I'm the **HR Assistant** — here's what I can help you with:\n\n- 🏖️ **Leave management** — balances, applications, and policies (annual, casual, sick, maternity/paternity)\n- 💰 🏥 **Benefits** — GHI insurance, PF/EPF, gratuity, Practo, IL TakeCare\n- 📋 **HR policies** — WFH, POSH, notice period, onboarding, and offboarding\n- 📝 **Referral & certifications** — employee referral program, skill certifications\n\nWhat would you like to know?",
     },
     {
       id: 'it',
@@ -136,11 +136,12 @@ export const chatConfig = {
 
   // ─── Welcome Suggestion Chips ──────────────────────────────────────────────
   suggestions: [
-    'How many leaves do I have left?',
-    'What is my current payroll status?',
-    'Explain the leave encashment policy',
-    'Show me onboarding checklist',
-    'What benefits am I eligible for?',
+    'Explain the employee referral program?',
+    'Raise an IT ticket for VPN issue',
+    'Explain the insurance policy',
+    'Create an employment verification document',
+    'Help me draft an email',
+    'Escalate an issue to HR',
   ],
 
   // ─── Right Panel — My Stats ────────────────────────────────────────────────

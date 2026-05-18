@@ -235,4 +235,31 @@ export async function listMyEscalations(page = 1, limit = 10, status) {
   return httpClient.get(`/api/escalations?${params}`);
 }
 
+// ── User Profile API (Zoho source of truth) ────────────────────────────────
+
+export async function getMyProfile() {
+  return httpClient.get('/api/users/me');
+}
+
+// ── Attendance API ─────────────────────────────────────────────────────────
+
+export async function getMyAttendance() {
+  return httpClient.get('/api/attendance/me');
+}
+
+// ── Birthdays API ──────────────────────────────────────────────────────────
+
+export async function getTodaysBirthdays() {
+  return httpClient.get('/api/users/birthdays/today');
+}
+
+// ── Documents API ──────────────────────────────────────────────────────────
+
+export async function listDocuments(page = 1, limit = 50, search, category) {
+  const params = new URLSearchParams({ page, limit });
+  if (search) params.set('search', search);
+  if (category) params.set('category', category);
+  return httpClient.get(`/api/documents?${params}`);
+}
+
 export default httpClient;

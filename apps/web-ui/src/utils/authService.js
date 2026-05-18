@@ -1,5 +1,5 @@
 import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
-import { msalConfig, loginRequest, graphRequest, graphConfig, plannerRequest } from '../config/authConfig';
+import { msalConfig, loginRequest, graphRequest, graphConfig, plannerRequest, calendarRequest } from '../config/authConfig';
 import {
   isUserAuthorized,
   getUserRole,
@@ -196,6 +196,68 @@ export async function fetchPlannerTasks() {
     };
   } catch {
     return { tasks: [], error: 'fetch_failed' };
+  }
+}
+
+// ─── Calendar Integration ──────────────────────────────────────────────────────
+
+async function acquireCalendarToken() {
+  try {
+    const account = msalInstance.getActiveAccount();
+    return await msalInstance.acquireTokenSilent({ ...calendarRequest, account });
+  } catch (err) {
+    if (err instanceof InteractionRequiredAuthError) {
+      try {
+        return await msalInstance.acquireTokenPopup({ ...calendarRequest });
+      } catch {
+        return null;
+      }
+    }
+    throw err;
+  }
+}
+
+export async function fetchCalendarEvents(daysAhead = 30, top = 10) {
+  try {
+    const token = await acquireCalendarToken();
+    if (!token) return { events: [], error: 'consent_required' };
+
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + daysAhead);
+
+    const params = new URLSearchParams({
+      startDateTime: now.toISOString(),
+      endDateTime:   end.toISOString(),
+      $top:          String(top),
+      $select:       'subject,start,end,isAllDay,location',
+      $orderby:      'start/dateTime',
+    });
+
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/me/calendarView?${params}`,
+      { headers: { Authorization: `Bearer ${token.accessToken}` } },
+    );
+
+    if (!res.ok) {
+      if (res.status === 403) return { events: [], error: 'no_permission' };
+      return { events: [], error: 'fetch_failed' };
+    }
+
+    const data = await res.json();
+    return {
+      events: (data.value || []).map((e, i) => ({
+        id:       e.id || i,
+        title:    e.subject || '(No title)',
+        start:    e.start?.dateTime || e.start?.date || null,
+        end:      e.end?.dateTime   || e.end?.date   || null,
+        isAllDay: e.isAllDay ?? false,
+        location: e.location?.displayName || null,
+      })),
+      error: null,
+    };
+  } catch {
+    return { events: [], error: 'fetch_failed' };
   }
 }
 

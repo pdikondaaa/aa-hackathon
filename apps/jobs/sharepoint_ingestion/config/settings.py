@@ -1,7 +1,8 @@
 import os
 from pathlib import Path
+from typing import List
 from urllib.parse import quote_plus
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 # Resolve repo root at import time (5 levels up from this file)

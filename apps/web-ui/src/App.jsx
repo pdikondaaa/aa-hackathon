@@ -6,6 +6,7 @@ import {
   fetchUserProfile, buildUser,
   checkUserAuthorization, getUserInfo,
 } from './utils/authService';
+import { getMyProfile } from './services/api';
 import TopBar          from './components/TopBar';
 import Sidebar         from './components/Sidebar';
 import ChatWindow      from './components/ChatWindow';
@@ -17,22 +18,67 @@ import EscalationDrawer from './components/EscalationDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
 import { getAllocationRole } from './services/api';
 import EmailAgentPage from './components/EmailAgentPage';
+import { AnalyticsDashboard } from './modules/analytics';
+import DocumentsPage from './components/DocumentsPage';
+
+const SIDEBAR_BREAKPOINT = 900;
+
+// Extracted to reduce cognitive complexity of the auth useEffect
+async function restoreSession(setUser, setAuthError, setAuthLoading) {
+  try {
+    await initializeMsal();
+    const account = getCachedAccount();
+    if (!account) return;
+
+    const profile   = await fetchUserProfile();
+    const userEmail = profile.mail || profile.userPrincipalName || '';
+
+    if (!checkUserAuthorization(userEmail)) {
+      setAuthError("You don't have access for this app. Please contact the Project Aura Team for access.");
+      await logout();
+      return;
+    }
+
+    const userInfo = getUserInfo(userEmail);
+    setUser({
+      ...buildUser(profile),
+      role:            userInfo.role,
+      permissions:     userInfo.permissions,
+      availableAgents: userInfo.availableAgents,
+      isAdmin:         userInfo.isAdmin,
+    });
+  } catch (err) {
+    console.error('Auth error:', err);
+  } finally {
+    setAuthLoading(false);
+  }
+}
 
 export default function App() {
-  const [activeNav,       setActiveNav]       = useState(chatConfig.navigation[0].id);
-  const [sidebarOpen,     setSidebarOpen]     = useState(true);
-  const [rightPanelOpen,  setRightPanelOpen]  = useState(false);
-  const [chatKey,         setChatKey]         = useState(0);
-  const [isDark,          setIsDark]          = useState(false);
-  const [escalationOpen,  setEscalationOpen]  = useState(false);
-  const [escalationContext, setEscalationContext] = useState({ conversationId: null, messageId: null });
+  const [activeNav,             setActiveNav]             = useState(chatConfig.navigation[0].id);
+  const [sidebarOpen,           setSidebarOpen]           = useState(window.innerWidth > SIDEBAR_BREAKPOINT);
+  const [rightPanelOpen,        setRightPanelOpen]        = useState(false);
+  const [chatKey,               setChatKey]               = useState(0);
+  const [isDark,                setIsDark]                = useState(false);
+  const [escalationOpen,        setEscalationOpen]        = useState(false);
+  const [escalationContext,     setEscalationContext]     = useState({ conversationId: null, messageId: null });
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
+  const [injectedMessage, setInjectedMessage] = useState('');
 
   const [user,           setUser]           = useState(null);
   const [authLoading,    setAuthLoading]    = useState(true);
   const [authError,      setAuthError]      = useState(null);
   const [allocationRole, setAllocationRole] = useState(null);
+
+  // Auto-close sidebar when window shrinks below breakpoint
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth <= SIDEBAR_BREAKPOINT) setSidebarOpen(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Apply theme CSS variables
   useEffect(() => {
@@ -60,10 +106,10 @@ export default function App() {
       '--font':           f.family,
     };
     Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    root.dataset.theme = isDark ? 'dark' : 'light';
   }, [isDark]);
 
-  // Restore session from MSAL cache on mount
+  // Restore MSAL session on mount
   useEffect(() => {
     (async () => {
       try {
@@ -91,12 +137,39 @@ export default function App() {
             isAdmin: userInfo.isAdmin,
           };
           setUser(userWithInfo);
+
+          // Enrich with Zoho People data (vb_employees) � async, non-blocking
+          // Zoho fields overwrite Azure AD fields when available
+          getMyProfile()
+            .then((zoho) => {
+              if (!zoho) return;
+              setUser((prev) => ({
+                ...prev,
+                // Prefer Zoho name over Azure AD display name
+                name:          zoho.full_name      || prev.name,
+                // Additional Zoho-sourced fields available everywhere in the app
+                firstName:     zoho.first_name     || '',
+                lastName:      zoho.last_name      || '',
+                designation:   zoho.designation    || '',
+                department:    zoho.department     || '',
+                reportingManager: zoho.reporting_manager || '',
+                workLocation:  zoho.work_location  || zoho.location_name || '',
+                mobile:        zoho.mobile         || '',
+                workPhone:     zoho.work_phone     || '',
+                employeeId:    zoho.employee_id    || '',
+                jobTitle:      zoho.designation    || prev.jobTitle,
+                zohoLoaded:    true,
+              }));
+            })
+            .catch(() => {
+              // Zoho enrichment failed � Azure AD data already set, continue gracefully
+            });
           getAllocationRole()
             .then(r => setAllocationRole(r.role))
             .catch(() => setAllocationRole('employee'));
         }
       } catch (err) {
-        // No valid cached session — fall through to login page
+        // No valid cached session � fall through to login page
         console.error('Auth error:', err);
       } finally {
         setAuthLoading(false);
@@ -107,20 +180,20 @@ export default function App() {
   const handleLogin = async () => {
     setAuthError(null);
     try {
-      // This will redirect to Azure AD
       await loginWithRedirect();
-      // After redirect back, the useEffect will handle authorization check
     } catch (err) {
       setAuthError(err.message || 'Sign-in failed. Please try again.');
     }
   };
 
   const handleLogout = async () => {
-    try {
-      await logout();
-    } finally {
-      setUser(null);
-    }
+    try { await logout(); } finally { setUser(null); }
+  };
+
+  const handleGoHome = () => {
+    setActiveNav(chatConfig.navigation[0].id);
+    setSelectedConversationId(null);
+    setChatKey((k) => k + 1);
   };
 
   const handleHistoryClick = (conversation) => {
@@ -128,7 +201,35 @@ export default function App() {
     setActiveNav(chatConfig.navigation[0].id);
   };
 
-  // Full-screen spinner while MSAL initialises
+  const handleSendFromPanel = (message) => {
+    setActiveNav(chatConfig.navigation[0].id);
+    setInjectedMessage(message);
+  };
+
+  // Extracted from nested ternary to a plain function
+  const renderMainContent = () => {
+    if (activeNav === 'documents')         return <DocumentsPage user={user} />;
+    if (activeNav === 'analytics')         return <AnalyticsDashboard user={user} />;
+    if (activeNav === 'myNotes')           return <PersonalNotes user={user} />;
+    if (activeNav === 'onboardingGuidance') return <OnboardingGuidancePage user={user} config={chatConfig} />;
+    if (activeNav === 'emailAgent')        return <EmailAgentPage user={user} />;
+    return (
+      <main className="main-content">
+        <ChatWindow
+          key={chatKey}
+          config={chatConfig}
+          user={user}
+          selectedConversationId={selectedConversationId}
+          onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
+          onOpenEscalation={({ conversationId, messageId } = {}) => {
+            setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
+            setEscalationOpen(true);
+          }}
+        />
+      </main>
+    );
+  };
+
   if (authLoading) {
     return (
       <div className="auth-loading">
@@ -153,6 +254,7 @@ export default function App() {
         isDark={isDark}
         onThemeToggle={() => setIsDark((d) => !d)}
         onLogout={handleLogout}
+        onGoHome={handleGoHome}
       />
 
       <div className="app-layout">
@@ -160,10 +262,7 @@ export default function App() {
           config={chatConfig}
           activeNav={activeNav}
           onNavChange={setActiveNav}
-          onNewChat={() => {
-            setSelectedConversationId(null);
-            setChatKey((k) => k + 1);
-          }}
+          onNewChat={handleGoHome}
           onHistoryClick={handleHistoryClick}
           onDeleteConversation={(deletedId) => {
             if (selectedConversationId === deletedId) {
@@ -177,7 +276,11 @@ export default function App() {
           allocationRole={allocationRole}
         />
 
-        {activeNav === 'myNotes' ? (
+        {activeNav === 'analytics' ? (
+          <AnalyticsDashboard user={user} />
+        ) : activeNav === 'documents' ? (
+          <DocumentsPage user={user} />
+        ) : activeNav === 'myNotes' ? (
           <PersonalNotes user={user} />
         ) : activeNav === 'onboardingGuidance' ? (
           <OnboardingGuidancePage user={user} config={chatConfig} />
@@ -197,14 +300,22 @@ export default function App() {
                 setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
                 setEscalationOpen(true);
               }}
+              injectedMessage={injectedMessage}
+              onInjectedMessageSent={() => setInjectedMessage('')}
             />
           </main>
+        )}
+
+        {sidebarOpen && (
+          <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
         )}
 
         {rightPanelOpen && (
           <RightPanel
             config={chatConfig}
+            user={user}
             onClose={() => setRightPanelOpen(false)}
+            onSendMessage={handleSendFromPanel}
           />
         )}
       </div>
