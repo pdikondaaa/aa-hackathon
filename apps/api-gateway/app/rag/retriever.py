@@ -20,14 +20,15 @@ import numpy as np
 from psycopg2 import pool as _pg_pool
 from psycopg2.extras import RealDictCursor
 from pgvector.psycopg2 import register_vector
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 # ── Configuration (reads from environment / .env) ─────────────────────────────
-_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-ai/nomic-embed-text-v1.5")
+_OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434")
+_EMBED_MODEL  = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 _DB_HOST = os.getenv("SQL_HOST", os.getenv("DB_HOST", "localhost"))
 _DB_PORT = os.getenv("SQL_PORT", os.getenv("DB_PORT", "5432"))
 _DB_USER = os.getenv("SQL_USERNAME", os.getenv("DB_USER", "postgres"))
@@ -39,9 +40,9 @@ _conn_pool: Optional[_pg_pool.ThreadedConnectionPool] = None
 
 
 @lru_cache(maxsize=1)
-def _get_embedder() -> HuggingFaceEmbeddings:
+def _get_embedder() -> OllamaEmbeddings:
     """Lazily load and cache the embedding model (loaded once per process)."""
-    return HuggingFaceEmbeddings(model_name=_EMBEDDING_MODEL)
+    return OllamaEmbeddings(base_url=_OLLAMA_URL, model=_EMBED_MODEL)
 
 
 def _get_pool() -> _pg_pool.ThreadedConnectionPool:

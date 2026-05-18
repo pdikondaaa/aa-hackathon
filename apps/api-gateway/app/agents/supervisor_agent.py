@@ -132,6 +132,11 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
         'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
         'sarcastic', 'witty', 'cheer me up', 'fun fact',
+        'bored', 'boring', 'entertain', 'entertainment',
+        'how are you', 'how r u', "what's up", 'wassup', 'whats up',
+        'good morning', 'good afternoon', 'good evening', 'good night',
+        'quiz', 'trivia', 'riddle', 'random', 'cool fact',
+        'chat', 'talk to me', 'aura what', 'you there',
     ],
     'document': [
         'loan proof', 'experience letter', 'employment verification',
@@ -518,8 +523,11 @@ class MasterAgent:
         if not q:
             return "Please enter a question."
 
+        # Greetings go to FunnyAgent for a dynamic, emoji-rich, non-static reply.
+        # If FunnyAgent is offline, fall back to the static menu.
         if _is_greeting(q):
-            return _GREETING_RESPONSE
+            resp, _ = self._run_agent('funny', q, user_email, user_id)
+            return resp or _GREETING_RESPONSE
 
         is_blocked, category, fallback = check_input(q)
         if is_blocked:

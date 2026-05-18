@@ -1,10 +1,10 @@
 """
-Generates dense vector embeddings using a HuggingFace sentence-transformer model.
+Generates dense vector embeddings using Ollama (nomic-embed-text).
 
 The model is loaded once on first use (singleton pattern) to avoid reloading
 the weights on every file processed within a single job run.
 """
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 from config.settings import settings
 from utils.logging_config import get_logger
@@ -13,17 +13,17 @@ logger = get_logger(__name__)
 
 
 class Embedder:
-    """Wraps HuggingFaceEmbeddings with lazy initialization."""
+    """Wraps OllamaEmbeddings with lazy initialization."""
 
     def __init__(self):
         self._model = None
 
-    def _get_model(self) -> HuggingFaceEmbeddings:
+    def _get_model(self) -> OllamaEmbeddings:
         if self._model is None:
-            logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
-            self._model = HuggingFaceEmbeddings(
-                model_name=settings.EMBEDDING_MODEL,
-                model_kwargs={"trust_remote_code": True},
+            logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL} via {settings.OLLAMA_BASE_URL}")
+            self._model = OllamaEmbeddings(
+                base_url=settings.OLLAMA_BASE_URL,
+                model=settings.EMBEDDING_MODEL,
             )
         return self._model
 
