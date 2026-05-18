@@ -10,10 +10,12 @@ import TopBar          from './components/TopBar';
 import Sidebar         from './components/Sidebar';
 import ChatWindow      from './components/ChatWindow';
 import RightPanel      from './components/RightPanel';
-import PersonalNotes   from './components/PersonalNotes';
+import PersonalNotes      from './components/PersonalNotes';
+import AllocationBoard    from './components/AllocationBoard';
 import LoginPage       from './components/LoginPage';
 import EscalationDrawer from './components/EscalationDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
+import { getAllocationRole } from './services/api';
 import EmailAgentPage from './components/EmailAgentPage';
 
 export default function App() {
@@ -27,9 +29,10 @@ export default function App() {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
 
-  const [user,        setUser]        = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authError,   setAuthError]   = useState(null);
+  const [user,           setUser]           = useState(null);
+  const [authLoading,    setAuthLoading]    = useState(true);
+  const [authError,      setAuthError]      = useState(null);
+  const [allocationRole, setAllocationRole] = useState(null);
 
   // Apply theme CSS variables
   useEffect(() => {
@@ -88,6 +91,9 @@ export default function App() {
             isAdmin: userInfo.isAdmin,
           };
           setUser(userWithInfo);
+          getAllocationRole()
+            .then(r => setAllocationRole(r.role))
+            .catch(() => setAllocationRole('employee'));
         }
       } catch (err) {
         // No valid cached session — fall through to login page
@@ -168,12 +174,15 @@ export default function App() {
           isOpen={sidebarOpen}
           refreshKey={sidebarRefreshKey}
           selectedConversationId={selectedConversationId}
+          allocationRole={allocationRole}
         />
 
         {activeNav === 'myNotes' ? (
           <PersonalNotes user={user} />
         ) : activeNav === 'onboardingGuidance' ? (
           <OnboardingGuidancePage user={user} config={chatConfig} />
+        ) : activeNav === 'allocationBoard' ? (
+          <AllocationBoard />
         ) : activeNav === 'emailAgent' ? (
           <EmailAgentPage user={user} />
         ) : (
