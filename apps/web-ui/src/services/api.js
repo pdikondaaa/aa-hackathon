@@ -217,4 +217,13 @@ export async function listMyEscalations(page = 1, limit = 10, status) {
   return httpClient.get(`/api/escalations?${params}`);
 }
 
+// ── Documents API ──────────────────────────────────────────────────────────
+
+export async function listDocuments(page = 1, limit = 50, search, category) {
+  const params = new URLSearchParams({ page, limit });
+  if (search) params.set('search', search);
+  if (category) params.set('category', category);
+  return httpClient.get(`/api/documents?${params}`);
+}
+
 export default httpClient;

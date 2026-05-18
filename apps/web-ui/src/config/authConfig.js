@@ -34,11 +34,17 @@ export const loginRequest = {
 export const graphRequest = {
   scopes: ['User.Read'],
 };
-
+   
 // Microsoft Planner — requires Tasks.Read (or Tasks.ReadWrite) delegated permission
 // granted in Azure Portal → API permissions → Microsoft Graph.
 export const plannerRequest = {
   scopes: ['Tasks.Read'],
+};
+
+// Calendar — Calendars.ReadBasic returns title, start, end, location only (no event body).
+// Add in Azure Portal → API permissions → Microsoft Graph → Delegated → Calendars.ReadBasic
+export const calendarRequest = {
+  scopes: ['Calendars.ReadBasic'],
 };
 
 export const graphConfig = {

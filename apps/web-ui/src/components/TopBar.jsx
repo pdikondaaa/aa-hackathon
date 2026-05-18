@@ -9,6 +9,7 @@ const TopBar = ({
   rightPanelOpen, onRightPanelToggle,
   isDark,         onThemeToggle,
   onLogout,
+  onGoHome,
 }) => {
   const displayUser = user || config.user;
   const logo = isDark ? alignedDarkLogo : alignedLightLogo;
@@ -42,6 +43,7 @@ const TopBar = ({
         <img
           src={logo}
           alt="Aligned Automation"
+           onClick={onGoHome}
           className="topbar-logo-img"
           draggable={false}
         />
@@ -52,7 +54,6 @@ const TopBar = ({
 
       {/* ── Right actions ─────────────────────────────────── */}
       <div className="topbar-actions">
-
         {/* Theme toggle */}
         <button
           className="topbar-icon-btn"

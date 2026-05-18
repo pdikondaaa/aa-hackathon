@@ -16,6 +16,7 @@ from app.api.controllers.escalations_controller import admin_router as escalatio
 from app.api.controllers.pii_controller import router as pii_router
 from app.api.onboarding import router as onboarding_router
 from app.api.controllers.email_controller import router as email_router
+from app.api.controllers.documents_controller import router as documents_router
 
 
 tags_metadata = [
@@ -60,3 +61,4 @@ app.include_router(health_router)
 app.include_router(debug_router)
 app.include_router(onboarding_router)
 app.include_router(email_router)
+app.include_router(documents_router)

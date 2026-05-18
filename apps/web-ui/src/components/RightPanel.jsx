@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { listMyEscalations } from '../services/api';
+import { fetchCalendarEvents } from '../utils/authService';
 
 const DOMAIN_COLORS = {
   hr:           '#1D76BC',
@@ -10,10 +11,13 @@ const DOMAIN_COLORS = {
 
 
 const RightPanel = ({ config, onClose }) => {
-  const { stats, upcoming, labels } = config;
+  const { stats, labels } = config;
 
-  const [escalations, setEscalations] = useState([]);
-  const [escLoading, setEscLoading]   = useState(true);
+  const [escalations,    setEscalations]    = useState([]);
+  const [escLoading,     setEscLoading]     = useState(true);
+  const [calEvents,      setCalEvents]      = useState([]);
+  const [calLoading,     setCalLoading]     = useState(true);
+  const [calError,       setCalError]       = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,6 +30,20 @@ const RightPanel = ({ config, onClose }) => {
         console.error('Failed to load escalations:', e);
       } finally {
         if (!cancelled) setEscLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setCalLoading(true);
+      const { events, error } = await fetchCalendarEvents(30, 10);
+      if (!cancelled) {
+        setCalEvents(events);
+        setCalError(error);
+        setCalLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -100,20 +118,45 @@ const RightPanel = ({ config, onClose }) => {
         )}
       </section>
 
-      {/* ── Upcoming Events ───────────────────────────────── */}
+      {/* ── Upcoming Events (live from Outlook calendar) ── */}
       <section className="right-section" style={{ borderBottom: 'none' }}>
         <p className="right-section-label">{labels.upcoming}</p>
-        <ul className="upcoming-list">
-          {upcoming.map((evt) => (
-            <li key={evt.id} className="upcoming-item">
-              <div className="upcoming-indicator" />
-              <div className="upcoming-text">
-                <h4>{evt.title}</h4>
-                <span>{evt.date}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
+        {calLoading ? (
+          <p style={{ opacity: 0.5, fontSize: '13px', padding: '8px 0' }}>
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : calError === 'consent_required' ? (
+          <p style={{ opacity: 0.5, fontSize: '13px', padding: '8px 0' }}>
+            Sign in again to grant calendar access.
+          </p>
+        ) : calError === 'no_permission' ? (
+          <p style={{ opacity: 0.5, fontSize: '13px', padding: '8px 0' }}>
+            Calendar permission not granted. Contact your admin.
+          </p>
+        ) : calEvents.length === 0 ? (
+          <p style={{ opacity: 0.4, fontSize: '13px', padding: '8px 0' }}>No upcoming events</p>
+        ) : (
+          <ul className="upcoming-list">
+            {calEvents.map((evt) => {
+              const start = evt.start ? new Date(evt.start) : null;
+              const dateStr = start
+                ? evt.isAllDay
+                  ? start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                  : start.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : '';
+              return (
+                <li key={evt.id} className="upcoming-item">
+                  <div className="upcoming-indicator" />
+                  <div className="upcoming-text">
+                    <h4>{evt.title}</h4>
+                    <span>{dateStr}{evt.location ? ` · ${evt.location}` : ''}</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
     </aside>

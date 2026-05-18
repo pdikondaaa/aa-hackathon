@@ -50,19 +50,19 @@ def main():
         sys.exit(1)
 
     # ── Phase 2: Web scraping (site pages + lists) — opt-in via .env ─────────
-    if settings.SCRAPE_PAGES_ENABLED or settings.SCRAPE_LISTS_ENABLED:
-        logger.info("Phase 2: web scraping (pages / lists)")
-        try:
-            from services.web_scraper_service import WebScraperService
-            WebScraperService().run()
-        except Exception as exc:
-            logger.exception(f"Web scraping failed: {exc}")
-            # Non-fatal: file ingestion already succeeded
-    else:
-        logger.info(
-            "Phase 2: web scraping skipped "
-            "(SCRAPE_PAGES_ENABLED and SCRAPE_LISTS_ENABLED are both false)"
-        )
+    # if settings.SCRAPE_PAGES_ENABLED or settings.SCRAPE_LISTS_ENABLED:
+    #     logger.info("Phase 2: web scraping (pages / lists)")
+    #     try:
+    #         from services.web_scraper_service import WebScraperService
+    #         WebScraperService().run()
+    #     except Exception as exc:
+    #         logger.exception(f"Web scraping failed: {exc}")
+    #         # Non-fatal: file ingestion already succeeded
+    # else:
+    #     logger.info(
+    #         "Phase 2: web scraping skipped "
+    #         "(SCRAPE_PAGES_ENABLED and SCRAPE_LISTS_ENABLED are both false)"
+    #     )
 
     logger.info("=" * 60)
     logger.info("AURA SharePoint Ingestion Job  —  finished")

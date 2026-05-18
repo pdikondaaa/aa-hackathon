@@ -100,9 +100,12 @@ def validate_token(token: str) -> Dict[str, Any]:
         if payload.get("iss") not in (ISSUER, ISSUER_V1):
             raise JWTError(f"Invalid issuer: {payload.get('iss')}")
 
-        # Step 5: Validate audience (STRICT)
-        if payload.get("aud") != CLIENT_ID:
-            raise JWTError(f"Invalid audience: {payload.get('aud')}")
+        # Step 5: Validate audience (accept bare GUID or api:// prefixed URI)
+        aud = payload.get("aud")
+        accepted = {CLIENT_ID, f"api://{CLIENT_ID}"}
+        aud_values = aud if isinstance(aud, list) else [aud]
+        if not any(a in accepted for a in aud_values):
+            raise JWTError(f"Invalid audience: got {aud!r}, expected one of {accepted}")
 
         # Step 6: Validate expiration
         exp = payload.get("exp")

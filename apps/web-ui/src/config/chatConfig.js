@@ -79,7 +79,7 @@ export const chatConfig = {
     { id: 'aiAssistant', label: 'AI Assistant', icon: 'fa-robot',       active: true  },
     { id: 'documents',   label: 'Documents',    icon: 'fa-folder-open', active: false },
     { id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
-  //{ id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
+    { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
    //{ id: 'myNotes',     label: 'My Notes',     icon: 'fa-sticky-note', active: false },
    // { id: 'emailAgent',  label: 'Email Agent',  icon: 'fa-envelope',    active: false },
   ],
@@ -137,7 +137,7 @@ export const chatConfig = {
   // ─── Welcome Suggestion Chips ──────────────────────────────────────────────
   suggestions: [
     'Explain the employee referral program?',
-    'What is my current payroll status?',
+    'Raise an IT ticket for VPN issue',
     'Explain the insurance policy',
     'Create an employment verification document',
     'Help me draft an email',
