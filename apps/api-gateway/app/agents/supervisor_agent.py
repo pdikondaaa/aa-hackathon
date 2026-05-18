@@ -1,9 +1,11 @@
 import re
+import json
+import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
-from urllib.parse import urlparse, parse_qs, unquote
-from typing import Dict, List, Optional
+from typing import Generator, Dict, List, Optional
+from urllib.parse import urlparse
 
 from app.agents.guardrails import check_input
 
@@ -30,16 +32,51 @@ _APPLY_LEAVE_RESPONSE = (
     '📅 Apply Leave on Zoho People</a>'
 )
 
+
+
+def _check_ollama(base_url: str, timeout: int = 3) -> bool:
+    """Return True if the Ollama host is reachable, log clearly if not."""
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 11434
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError as exc:
+        print(
+            f"[MasterAgent] Cannot reach Ollama at {base_url} -- {exc}\n"
+            f"  -> Is the server running? Do you need VPN?\n"
+            f"  -> Set OLLAMA_BASE_URL env var to override (e.g. http://localhost:11434)"
+        )
+        return False
+
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
-_GREETING_RE = re.compile(
-    r"""^[\s!.,?]*
-    (?:hi+|hello+|hey+|howdy|greetings|good\s+(?:morning|afternoon|evening|day)|
-       how\s+are\s+you|how'?s\s+it\s+going|what'?s\s+up|sup|
-       thanks?|thank\s+you|thx|ty|
-       bye|goodbye|see\s+you|take\s+care)
-    [\s!.,?]*$""",
-    re.IGNORECASE | re.VERBOSE,
-)
+# Only pure bare greetings (1-2 words) get the static menu.
+# Anything longer ("hello can you help with X", "hi what's my leave balance")
+# falls through to routing so the right agent can answer.
+_PURE_GREETINGS = frozenset({
+    'hi', 'hello', 'hey', 'hii', 'hiii', 'howdy', 'greetings',
+    'sup', 'yo', 'thanks', 'thank', 'thx', 'ty', 'thankyou',
+    'bye', 'goodbye', 'cya',
+})
+_PURE_TWO_WORD = frozenset({
+    'hi there', 'hello there', 'hey there',
+    'good morning', 'good afternoon', 'good evening', 'good night', 'good day',
+    'thank you', 'many thanks', 'see ya',
+})
+
+
+def _is_greeting(text: str) -> bool:
+    clean = re.sub(r"[!.,?'\s]+", ' ', text.lower()).strip()
+    if not clean:
+        return False
+    words = clean.split()
+    if len(words) == 1:
+        return words[0] in _PURE_GREETINGS
+    if len(words) == 2:
+        return f"{words[0]} {words[1]}" in _PURE_TWO_WORD
+    return False
+
 
 _GREETING_RESPONSE = (
     "Hello! I'm AURA, your Aligned Automation assistant.\n\n"
@@ -116,6 +153,11 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'my mobile', 'my email', 'my profile', 'my details',
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
+    ],
+    'funny': [
+        'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
+        'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
+        'sarcastic', 'witty', 'cheer me up', 'fun fact',
     ],
     'document': [
         'loan proof', 'experience letter', 'employment verification',
@@ -216,13 +258,17 @@ Departments and what they own:
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 - document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
+- funny: jokes, small-talk, casual chat, morale-boost, humour — only when there is NO real business intent
+- hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny
+
+If unsure, reply: hr
 
 Reply:"""
 
@@ -338,8 +384,22 @@ class MasterAgent:
 
                 agent = _EscWrapper(_esc_fn)
             elif domain == 'document':
-                from app.agents.document_agent import DocumentAgent
-                agent = DocumentAgent()
+                from app.agents.document_agent import document_agent_fn as _doc_fn
+
+                class _DocWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, user_email: str = "", user_id: str = "", **__) -> str:
+                        return self._fn(q, user_email=user_email, user_id=user_id)
+
+                agent = _DocWrapper(_doc_fn)
+
+            elif domain == 'funny':
+                from app.agents.working.funny_agent import FunnyAgent
+                agent = FunnyAgent()
 
             if agent:
                 self._slaves[domain] = agent
@@ -362,10 +422,10 @@ class MasterAgent:
                 return None
             domain = tokens[0]
             if domain in DOMAIN_KEYWORDS or domain == 'document':
-                print(f"[MasterAgent] LLM routed → {domain}")
+                print(f"[MasterAgent] LLM routed -> {domain}")
                 return domain
         except FuturesTimeout:
-            print("[MasterAgent] LLM routing timed out — falling back to keywords")
+            print("[MasterAgent] LLM routing timed out -- falling back to keywords")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing error ({exc})")
         return None
@@ -378,9 +438,9 @@ class MasterAgent:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
-            print("[MasterAgent] No keyword match — defaulting to hr")
+            print("[MasterAgent] No keyword match -- defaulting to hr")
             return 'hr'
-        print(f"[MasterAgent] Keyword routed → {best} (score={scores[best]})")
+        print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
         return best
 
     def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
@@ -388,14 +448,14 @@ class MasterAgent:
         try:
             from app.agents.document_agent import has_active_session
             if has_active_session(user_email, user_id):
-                print("[MasterAgent] Active document session → document")
+                print("[MasterAgent] Active document session -> document")
                 return 'document'
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
         # Escalation keyword — highest priority, bypass LLM
         if 'escalat' in query.lower():
-            print("[MasterAgent] Escalation keyword → escalation")
+            print("[MasterAgent] Escalation keyword -> escalation")
             return 'escalation'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
@@ -405,12 +465,12 @@ class MasterAgent:
 
         # Employee directory pre-classifier — deterministic
         if _is_employee_query(query):
-            print("[MasterAgent] Employee pattern → employee")
+            print("[MasterAgent] Employee pattern -> employee")
             return 'employee'
 
         # Document pattern pre-classifier — deterministic, no LLM needed
         if _is_document_query(query):
-            print("[MasterAgent] Document pattern → document")
+            print("[MasterAgent] Document pattern -> document")
             return 'document'
 
         # LLM routing — preferred when available
@@ -527,7 +587,7 @@ class MasterAgent:
         if not q:
             return "Please enter a question."
 
-        if _GREETING_RE.match(q):
+        if _is_greeting(q):
             return _GREETING_RESPONSE
 
         if _APPLY_LEAVE_RE.search(q):
@@ -548,27 +608,41 @@ class MasterAgent:
                 "Please reach out to the appropriate department directly."
             )
 
-        if sources:
-            def _source_label(url: str) -> str:
-                try:
-                    qs = parse_qs(urlparse(url).query)
-                    if "file" in qs:
-                        return unquote(qs["file"][0])
-                except Exception:
-                    pass
-                return unquote(url.split("/")[-1]) or url
-
-            source_list = "\n".join(
-                f"  • [{_source_label(s)}]({s})" for s in dict.fromkeys(sources)
-            )
-            resp += f"\n\n---\n📄 **Sources**\n{source_list}"
-
         return resp
 
+    def stream_query(
+        self, query: str, user_email: str = "", user_id: str = "",
+    ) -> Generator[str, None, None]:
+        """Yield SSE-formatted chunks. Each chunk is a JSON object: {content: str}."""
+        try:
+            answer = self._process_query_inner(
+                query, user_email=user_email, user_id=user_id,
+            )
+        except Exception as exc:
+            print(f"[MasterAgent] stream_query error: {exc}")
+            answer = (
+                "I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly."
+            )
+        yield _sse({"content": answer})
+        yield _sse_done()
 
-# ── Singleton + public entry point ───────────────────────────────────────────
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
+def _sse_done() -> str:
+    return "data: [DONE]\n\n"
+
+
+# ── Singleton + public entry points ──────────────────────────────────────────
 _master = MasterAgent()
 
 
 def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
     return _master.process_query(query, user_email=user_email, user_id=user_id)
+
+
+def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> Generator[str, None, None]:
+    return _master.stream_query(query, user_email=user_email, user_id=user_id)

@@ -5,6 +5,11 @@ from typing import Optional
 from app.agents.supervisor_agent import run_assistant
 from app.api.config.db_config import get_db_connection
 
+try:
+    from app.memory import update_after_message as _enrich
+except Exception:
+    _enrich = None
+
 
 class MessagesService:
 
@@ -82,6 +87,18 @@ class MessagesService:
                 )
                 assistant_row = dict(cur.fetchone())
             conn.commit()
+
+        # ── Phase 4: enrich per-user memory (best-effort, never breaks chat) ─
+        if final_status == "done" and _enrich:
+            try:
+                _enrich(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_msg=content,
+                    assistant_msg=answer,
+                )
+            except Exception as exc:
+                print(f"[MessagesService] memory enrichment error: {exc}")
 
         return assistant_row
 
