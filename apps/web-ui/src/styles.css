@@ -1,4 +1,4 @@
-﻿/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    AURA â€” Aligned Automation Brand Stylesheet
    Palette: Aligned Blue #1D76BC Â· Light Blue #27AAE1 Â· Energy Green #4ED44E
             Deep Blue #2A3D90 Â· Dark Blue bg #0F1C3F
@@ -883,14 +883,109 @@ button, a, [role="button"] {
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 
-/* Upcoming */
+/* Birthdays */
+.birthday-list { display: flex; flex-direction: column; gap: 8px; }
+.birthday-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  animation: msg-in 0.25s ease both;
+  transition: border-color var(--transition);
+}
+.birthday-card:hover { border-color: rgba(244, 114, 182, 0.4); }
+.birthday-avatar {
+  width: 30px; height: 30px; flex-shrink: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ec4899, #f472b6);
+  color: #fff; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 8px rgba(244, 114, 182, 0.4);
+}
+.birthday-info { flex: 1; min-width: 0; }
+.birthday-name {
+  font-size: 12px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.birthday-dept {
+  font-size: 10px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block;
+}
+.birthday-emoji { font-size: 14px; flex-shrink: 0; }
+
+
 .upcoming-list { display: flex; flex-direction: column; gap: 10px; }
 .upcoming-item { display: flex; align-items: flex-start; gap: 10px; }
 .upcoming-indicator { width: 3px; min-height: 34px; border-radius: 99px; background: var(--primary); flex-shrink: 0; margin-top: 3px; opacity: 0.5; }
 .upcoming-text h4   { font-size: 12px; font-weight: 500; line-height: 1.4; margin-bottom: 2px; }
 .upcoming-text span { font-size: 11px; color: var(--text-muted); }
 
-/* â”€â”€ Responsive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Attendance section ──────────────────────────────────────────────────── */
+.rp-loading-text { opacity: 0.5; font-size: 13px; padding: 8px 0; }
+.rp-empty-text   { opacity: 0.4; font-size: 13px; padding: 8px 0; }
+
+.att-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-bottom: 12px;
+}
+.att-tab {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--text-muted);
+  transition: background var(--transition), color var(--transition);
+  text-align: center;
+}
+.att-tab--active { background: var(--primary); color: #fff; }
+.att-tab:not(.att-tab--active):hover { color: var(--text); }
+
+.att-summary { display: flex; gap: 6px; margin-bottom: 12px; }
+.att-summary-chip {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  text-align: center;
+}
+.att-summary-val {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1.1;
+}
+.att-summary-lbl {
+  display: block;
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+.att-summary-chip--btn {
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.att-summary-chip--btn:hover {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--bg-elevated));
+}
+.att-summary-chip--btn:hover .att-summary-val { color: var(--primary); }
+.att-summary-chip--btn:hover .att-summary-lbl { color: var(--text-secondary); }
+
 @media (max-width: 1180px) { .right-panel { display: none; } }
 
 @media (max-width: 768px) {

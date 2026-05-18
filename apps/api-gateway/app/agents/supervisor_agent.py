@@ -7,6 +7,29 @@ from typing import Dict, List, Optional
 
 from app.agents.guardrails import check_input
 
+# ── Apply-leave fast-path ─────────────────────────────────────────────────────
+_APPLY_LEAVE_RE = re.compile(
+    r"""
+    \b(?:
+        apply(?:ing)?\s+(?:for\s+)?(?:a\s+)?leave |
+        (?:request|submit|raise)\s+(?:a\s+)?leave(?:\s+request)? |
+        (?:take|need|want)\s+(?:a\s+)?leave |
+        leave\s+application |
+        apply\s+leave
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_APPLY_LEAVE_RESPONSE = (
+    "Sure! You can apply for leave directly through the <strong>Zoho People</strong> portal.\n\n"
+    '<a href="https://people.zoho.com/alignedautomationservices/zp#leavetracker/mydata/applyleave" '
+    'target="_blank" rel="noopener noreferrer" '
+    'style="display:inline-block;margin-top:8px;padding:10px 20px;background:#2563eb;color:#fff;'
+    'border-radius:8px;text-decoration:none;font-weight:600;font-size:0.95em;">'
+    '📅 Apply Leave on Zoho People</a>'
+)
+
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
 _GREETING_RE = re.compile(
     r"""^[\s!.,?]*
@@ -26,12 +49,12 @@ _GREETING_RESPONSE = (
     "- **Admin** — travel, cab bookings, office facilities\n"
     "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
     "- **PMO** — project status, milestones, resources\n"
+    "- **Attendance** — check-in/out records, working hours\n\n"
     "- **Employee Directory** — find colleagues, contact details\n"
     "- **Documents** — generate letters, certificates, and HR documents\n\n"
     "What can I help you with today?"
 )
 
-# ── Domain keyword map (used when LLM routing is unavailable) ─────────────────
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
 _ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
 
@@ -47,14 +70,16 @@ def _is_escalation_query(query: str) -> bool:
             return True
     return False
 
+
 # ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     'hr': [
         'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
         'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
-        'gratuity', 'referral', 'certification', 'attendance', 'wfh',
+        'gratuity', 'referral', 'certification', 'attendance policy', 'wfh policy',
         'hrone', 'practo', 'takeCare', 'appraisal', 'salary', 'notice period',
         'resignation', 'onboarding', 'offboarding', 'increment',
+        'attendance correction', 'attendance regularization',
     ],
     'it': [
         'technical', 'mfa', 'vpn', 'password', 'laptop', 'software',
@@ -102,6 +127,14 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'need letter', 'need certificate', 'hr letter', 'hr document',
         'employment letter', 'company letter', 'salary certificate',
     ],
+    'attendance': [
+        'attendance of', 'attendance for', 'my attendance',
+        'check in', 'check-in', 'check out', 'check-out',
+        'checkin', 'checkout', 'clock in', 'clock-in', 'clock out', 'clock-out',
+        'punch in', 'punch-in', 'punch out', 'punch-out',
+        'working hours', 'hours worked', 'arrival time', 'departure time',
+        'in time', 'out time',
+    ],
 }
 
 # ── Document query pre-classifier (regex, no LLM) ────────────────────────────
@@ -143,17 +176,39 @@ _EMP_PATTERNS = [
     re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
 ]
 
+# ── Attendance pre-classifier (regex, no LLM) ────────────────────────────────
+_ATT_PATTERNS = [
+    re.compile(r"\battendance\s+(?:of|for)\b", re.IGNORECASE),
+    re.compile(r"\bmy\s+attendance\b", re.IGNORECASE),
+    re.compile(r"\w+'s\s+attendance\b", re.IGNORECASE),
+    # "Show Yogesh Chandan attendance details for April 2026"
+    re.compile(r"\b\w+\s+\w+\s+attendance\b", re.IGNORECASE),
+    # "show attendance details"
+    re.compile(r"\battendance\s+details?\b", re.IGNORECASE),
+    # "show attendance" anywhere
+    re.compile(r"\bshow\s+\S+(?:\s+\S+)?\s+attendance\b", re.IGNORECASE),
+    re.compile(r"\bcheck[\s\-]?(?:in|out)(?:\s+time)?\b", re.IGNORECASE),
+    re.compile(r"\bclock[\s\-]?(?:in|out)\b", re.IGNORECASE),
+    re.compile(r"\bpunch[\s\-]?(?:in|out)\b", re.IGNORECASE),
+    re.compile(r"\b(?:working\s+hours?|hours?\s+worked)\b", re.IGNORECASE),
+    re.compile(r"\b(?:arrival|departure)\s+time\b", re.IGNORECASE),
+]
+
 
 def _is_employee_query(query: str) -> bool:
     return any(p.search(query) for p in _EMP_PATTERNS)
 
 
-# ── LLM routing prompt — asks for ONE domain ─────────────────────────────────
+def _is_attendance_query(query: str) -> bool:
+    return any(p.search(query) for p in _ATT_PATTERNS)
+
+
+# ── LLM routing prompt ───────────────────────────────────────────────────────
 _ROUTING_PROMPT = """\
 You are a query router for AURA, an internal company assistant for Aligned Automation.
 
 Departments and what they own:
-- hr: leave, benefits, payroll, appraisals, POSH, maternity/paternity, GHI, PF/EPF, gratuity, referral, WFH, HROne, Practo, IL TakeCare, resignation, notice period
+- hr: leave, benefits, payroll, appraisals, POSH, maternity/paternity, GHI, PF/EPF, gratuity, referral, WFH, HROne, Practo, IL TakeCare, resignation, notice period, attendance policy, attendance correction
 - it: technical support, MFA, VPN, passwords, laptop, software, network, security, OneDrive, Outlook, WiFi, remote access, Polycom, antivirus
 - admin: travel bookings, cab/ORIX/Cabman, parking, workplace guidelines, office supplies, Fountainhead, meeting rooms, facility
 - pmo: project tracking, milestones, onboarding process docs, project overviews (ABI/NCR/Spencer/Dell/Eli Lilly), risk management, PMO best practices
@@ -161,12 +216,13 @@ Departments and what they own:
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 - document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
+- attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance
 
 Reply:"""
 
@@ -188,7 +244,6 @@ Synthesized answer:"""
 class MasterAgent:
     """Single orchestrator — routes to one domain agent and returns its response."""
 
-    # Domains to pre-warm at startup (excludes employee/escalation — no heavy init)
     _PREWARM_DOMAINS = ['hr', 'it', 'admin', 'pmo', 'finance', 'org']
 
     def __init__(self):
@@ -198,7 +253,6 @@ class MasterAgent:
         threading.Thread(target=self._prewarm, daemon=True).start()
 
     def _prewarm(self) -> None:
-        """Load all domain agents in background so first user query isn't slow."""
         for domain in self._PREWARM_DOMAINS:
             try:
                 self._get_slave(domain)
@@ -257,6 +311,19 @@ class MasterAgent:
                         return self._fn(q, user_email=user_email)
 
                 agent = _EmpWrapper(_emp_fn)
+            elif domain == 'attendance':
+                from app.agents.employee.attendance_agent import attendance_agent as _att_fn
+
+                class _AttWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, user_email: str = "") -> str:
+                        return self._fn(q, user_email=user_email)
+
+                agent = _AttWrapper(_att_fn)
             elif domain == 'escalation':
                 from app.agents.escalation_agent import escalation_agent as _esc_fn
 
@@ -331,7 +398,12 @@ class MasterAgent:
             print("[MasterAgent] Escalation keyword → escalation")
             return 'escalation'
 
-        # Employee pattern pre-classifier — deterministic, no LLM needed
+        # Attendance pattern pre-classifier — deterministic, checked before employee
+        if _is_attendance_query(query):
+            print("[MasterAgent] Attendance pattern → attendance")
+            return 'attendance'
+
+        # Employee directory pre-classifier — deterministic
         if _is_employee_query(query):
             print("[MasterAgent] Employee pattern → employee")
             return 'employee'
@@ -356,7 +428,7 @@ class MasterAgent:
         try:
             if domain == 'document':
                 resp = agent.process_query(query, user_email=user_email, user_id=user_id)
-            elif domain == 'employee':
+            elif domain in ('employee', 'attendance'):
                 resp = agent.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
@@ -369,10 +441,6 @@ class MasterAgent:
             return None, []
 
     def _contextual_block_response(self, query: str, category: str) -> Optional[str]:
-        """
-        Generate a query-aware response for distress and out-of-scope blocks.
-        Returns None if LLM is unavailable or times out — caller falls back to static message.
-        """
         if not self._llm:
             return None
         from app.agents.guardrails import DISTRESS_PROMPT, ORG_SCOPE_PROMPT
@@ -432,7 +500,7 @@ class MasterAgent:
         try:
             if domain == 'document':
                 resp = slave.process_query(query, user_email=user_email, user_id=user_id)
-            elif domain == 'employee':
+            elif domain in ('employee', 'attendance'):
                 resp = slave.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = slave.process_query(query, user_id=user_id)
@@ -459,17 +527,16 @@ class MasterAgent:
         if not q:
             return "Please enter a question."
 
-        # Fast-path: greetings and small talk — no DB, no LLM
         if _GREETING_RE.match(q):
             return _GREETING_RESPONSE
 
-        # Guardrail pre-check — before any routing or LLM call
+        if _APPLY_LEAVE_RE.search(q):
+            return _APPLY_LEAVE_RESPONSE
+
         is_blocked, category, fallback = check_input(q)
         if is_blocked:
-            # Adversarial categories always get a static response — never feed to LLM
             if category in ('jailbreak', 'security', 'harmful'):
                 return fallback
-            # Distress and out-of-scope get a contextual LLM response where possible
             return self._contextual_block_response(q, category) or fallback
 
         domain = self._route(q, user_email=user_email, user_id=user_id)
