@@ -137,7 +137,7 @@ export const chatConfig = {
   // ─── Welcome Suggestion Chips ──────────────────────────────────────────────
   suggestions: [
     'Explain the employee referral program?',
-    'What is my current payroll status?',
+    'Raise an IT ticket for VPN issue',
     'Explain the insurance policy',
     'Create an employment verification document',
     'Help me draft an email',

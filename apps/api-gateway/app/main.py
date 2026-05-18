@@ -19,6 +19,7 @@ from app.api.controllers.allocation_controller import router as allocation_route
 from app.api.controllers.email_controller import router as email_router
 from app.api.controllers.attendance_controller import router as attendance_router
 from app.api.controllers.profile_controller import router as profile_router
+from app.api.controllers.documents_controller import router as documents_router
 
 
 tags_metadata = [
@@ -69,3 +70,4 @@ app.include_router(allocation_router)
 app.include_router(email_router)
 app.include_router(attendance_router)
 app.include_router(profile_router)
+app.include_router(documents_router)

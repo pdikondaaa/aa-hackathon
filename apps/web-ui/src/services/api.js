@@ -253,4 +253,13 @@ export async function getTodaysBirthdays() {
   return httpClient.get('/api/users/birthdays/today');
 }
 
+// ── Documents API ──────────────────────────────────────────────────────────
+
+export async function listDocuments(page = 1, limit = 50, search, category) {
+  const params = new URLSearchParams({ page, limit });
+  if (search) params.set('search', search);
+  if (category) params.set('category', category);
+  return httpClient.get(`/api/documents?${params}`);
+}
+
 export default httpClient;
