@@ -18,6 +18,12 @@ from .knowledge_base import KnowledgeBase
 from app.agents.working.tools.tavily_search import tavily_search, is_tavily_available
 from app.agents.guardrails import GENERIC_GUARDRAIL, ORG_GUARDRAIL
 
+try:
+    from app.memory import MemoryClient as _MemoryClient
+    _memory_client = _MemoryClient()
+except Exception:
+    _memory_client = None
+
 _AGENTS_DIR = os.path.join(os.path.dirname(__file__), "..")
 DATA_ROOT = os.path.join(_AGENTS_DIR, "data")
 
@@ -30,17 +36,17 @@ _AGENT_SYSTEM = """{personality}
 {org_guardrail}
 
 ---
-**Company documents — use ONLY these to answer:**
+**Company context (prefer this when it covers the question):**
 {context}
 ---
 
 **Output rules (follow strictly):**
-- Write a direct, helpful answer — no section labels, no reasoning steps, no preamble
-- Use numbered lists for step-by-step processes; bullet points for factual lists
-- Quote exact values (number of days, percentages, deadlines) from the documents
+- Write a direct, helpful answer -- no section labels, no reasoning steps, no preamble.
+- Prefer the company context above; quote exact values (days, percentages, deadlines, portal names) when present.
+- Use numbered lists for step-by-step processes; bullet points for factual lists.
 - Cite the document name inline when useful: e.g. "Per the Leave Policy, annual leave is 18 days."
-- Add the relevant contact at the end only when the user needs to take action
-- If the answer is not in the documents, say: "I don't have that information. Please contact {fallback_contact}."
+- If the company context does not cover the question, you may still help using general professional knowledge -- but flag it clearly ("Generally, ...") so the user knows it's not policy.
+- Only say "I don't have that information. Please contact {fallback_contact}." when the question requires information only a specific team can provide (e.g. exact personal account balances, individual approvals).
 """
 
 _AGENT_HUMAN = """{query}"""
@@ -68,10 +74,10 @@ class BaseDeepAgent:
     def mode(self) -> str:
         return self._mode
 
-    def process_query(self, query: str) -> str:
+    def process_query(self, query: str, user_id: str = "", **_) -> str:
         self.last_sources = []
         if self._mode == "llm":
-            return self._llm_query(query)
+            return self._llm_query(query, user_id=user_id)
         return self._keyword_query(query)
 
     # ------------------------------------------------------------------
@@ -101,25 +107,36 @@ class BaseDeepAgent:
             print(f"[{self.__class__.__name__}] mode=llm | model={self._config.llm.model}")
 
         except Exception as exc:
-            print(f"[{self.__class__.__name__}] LLM setup failed ({exc}) — keyword fallback")
+            print(f"[{self.__class__.__name__}] LLM setup failed ({exc}) -- keyword fallback")
             self._mode = "keyword"
 
     # ------------------------------------------------------------------
     # pgvector retrieval
     # ------------------------------------------------------------------
 
-    _SIMILARITY_THRESHOLD = 0.25
+    # Lowered from 0.25 -- many valid policy chunks score in the 0.10-0.25 band.
+    _SIMILARITY_THRESHOLD = 0.10
+    _DEFAULT_TOP_K = 10
 
-    def _retrieve_pgvector(self, query: str, top_k: int = 6) -> Tuple[str, List[str]]:
+    def _retrieve_pgvector(self, query: str, top_k: int = None) -> Tuple[str, List[str]]:
+        if top_k is None:
+            top_k = self._DEFAULT_TOP_K
         try:
             from app.rag.retriever import retrieve_chunks
             chunks = retrieve_chunks(query, top_k=top_k)
             if not chunks:
+                print(f"[{self.__class__.__name__}] pgvector: 0 chunks for {query[:60]!r}")
                 return "", []
-            # Filter out low-similarity chunks so the LLM only sees relevant content
+
+            scores = [round(c.get("similarity") or 0, 3) for c in chunks]
+            print(f"[{self.__class__.__name__}] pgvector hit={len(chunks)} scores={scores[:5]} threshold={self._SIMILARITY_THRESHOLD}")
+
             relevant = [c for c in chunks if (c.get("similarity") or 0) >= self._SIMILARITY_THRESHOLD]
             if not relevant:
-                relevant = chunks  # fall back to all chunks if none meet threshold
+                # Keep top 3 even below threshold -- weak context beats nothing.
+                relevant = chunks[:3]
+                print(f"[{self.__class__.__name__}] all below threshold; keeping top {len(relevant)}")
+
             context = "\n\n".join(
                 f"[{c.get('document_name', 'Company Document')}]\n{c['chunk_text']}"
                 for c in relevant if c.get("chunk_text")
@@ -138,7 +155,6 @@ class BaseDeepAgent:
             return "", []
 
     def _simplified_query(self, query: str) -> str:
-        """Strip short filler words for a second, broader retrieval attempt."""
         skip = {'what', 'when', 'where', 'how', 'why', 'who', 'is', 'are', 'can',
                 'the', 'a', 'an', 'do', 'does', 'i', 'my', 'me', 'for', 'to', 'of'}
         words = [w for w in query.lower().split() if w not in skip and len(w) > 2]
@@ -146,23 +162,23 @@ class BaseDeepAgent:
         return simplified if simplified and simplified != query.lower() else ""
 
     # ------------------------------------------------------------------
-    # Tier 1 — LCEL chain (intent → answer → self-verify)
+    # Tier 1 -- LCEL chain
     # ------------------------------------------------------------------
 
-    def _llm_query(self, query: str) -> str:
+    def _llm_query(self, query: str, user_id: str = "") -> str:
         try:
-            # Primary: pgvector semantic search
-            pg_context, pg_sources = self._retrieve_pgvector(query, top_k=6)
+            # Primary pgvector search
+            pg_context, pg_sources = self._retrieve_pgvector(query)
 
-            # Retry with simplified query if primary returned nothing
+            # Retry with simplified query when nothing came back
             if not pg_context:
                 simplified = self._simplified_query(query)
                 if simplified:
-                    pg_context, pg_sources = self._retrieve_pgvector(simplified, top_k=4)
+                    pg_context, pg_sources = self._retrieve_pgvector(simplified, top_k=6)
 
             self.last_sources = list(dict.fromkeys(s for s in pg_sources if s))
 
-            # Supplementary: local KB (FAISS if built, else keyword)
+            # Supplementary: local KB
             docs = self._kb.retrieve(query)
             for d in docs:
                 src = d.metadata.get("source", "")
@@ -172,18 +188,34 @@ class BaseDeepAgent:
                 f"[{d.metadata.get('source', '')}]\n{d.page_content}" for d in docs
             )
 
-            # Optional: Tavily web search
+            # Per-user memory context (preferences + conversation history)
+            memory_context = ""
+            if user_id and _memory_client:
+                try:
+                    memory_context = _memory_client.get_context(user_id, query)
+                except Exception:
+                    pass
+
+            # Optional web search
             web_context = tavily_search(query) if is_tavily_available() else ""
 
-            context_parts = [p for p in [pg_context, local_context] if p]
+            context_parts = [p for p in [memory_context, pg_context, local_context] if p]
             if web_context:
                 context_parts.append(f"[Web]\n{web_context}")
-            full_context = "\n\n".join(context_parts)
 
-            print(f"[{self.__class__.__name__}] context_len={len(full_context)} sources={len(self.last_sources)}")
+            if not context_parts:
+                # No context at all -- let the LLM try with its own knowledge.
+                full_context = (
+                    "(No matching company documents found. Answer using your role knowledge "
+                    "and flag clearly when guidance is general rather than policy-specific.)"
+                )
+            else:
+                full_context = "\n\n".join(context_parts)
 
-            if not full_context:
-                return f"I don't have information on that topic. Please contact {self._FALLBACK_CONTACT}."
+            print(
+                f"[{self.__class__.__name__}] context_len={len(full_context)} "
+                f"sources={len(self.last_sources)} memory={'on' if memory_context else 'off'}"
+            )
 
             result = self._chain.invoke({
                 "personality": self._PERSONALITY,

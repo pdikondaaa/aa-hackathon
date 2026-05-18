@@ -1,5 +1,4 @@
 import re
-import functools
 import json
 import socket
 import threading
@@ -8,12 +7,7 @@ from difflib import SequenceMatcher
 from typing import Generator, Dict, List, Optional
 from urllib.parse import urlparse
 
-from langchain.tools import tool
-from langchain_ollama import ChatOllama
-from langgraph.prebuilt import create_react_agent
-
 from app.agents.guardrails import check_input
-from app.agents.working.config import LLMConfig
 
 
 def _check_ollama(base_url: str, timeout: int = 3) -> bool:
@@ -26,33 +20,37 @@ def _check_ollama(base_url: str, timeout: int = 3) -> bool:
             return True
     except OSError as exc:
         print(
-            f"[MasterAgent] Cannot reach Ollama at {base_url} — {exc}\n"
-            f"  → Is the server running? Do you need VPN?\n"
-            f"  → Set OLLAMA_BASE_URL env var to override (e.g. http://localhost:11434)"
+            f"[MasterAgent] Cannot reach Ollama at {base_url} -- {exc}\n"
+            f"  -> Is the server running? Do you need VPN?\n"
+            f"  -> Set OLLAMA_BASE_URL env var to override (e.g. http://localhost:11434)"
         )
         return False
 
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
-_GREETING_FIRST_WORDS = frozenset({
-    'hi', 'hello', 'hey', 'howdy', 'greetings',
-    'thanks', 'thank', 'thx', 'ty',
-    'bye', 'goodbye', 'sup',
+# Only pure bare greetings (1-2 words) get the static menu.
+# Anything longer ("hello can you help with X", "hi what's my leave balance")
+# falls through to routing so the right agent can answer.
+_PURE_GREETINGS = frozenset({
+    'hi', 'hello', 'hey', 'hii', 'hiii', 'howdy', 'greetings',
+    'sup', 'yo', 'thanks', 'thank', 'thx', 'ty', 'thankyou',
+    'bye', 'goodbye', 'cya',
+})
+_PURE_TWO_WORD = frozenset({
+    'hi there', 'hello there', 'hey there',
+    'good morning', 'good afternoon', 'good evening', 'good night', 'good day',
+    'thank you', 'many thanks', 'see ya',
 })
 
 
 def _is_greeting(text: str) -> bool:
-    """True for short social messages that need no agent or DB call."""
     clean = re.sub(r"[!.,?'\s]+", ' ', text.lower()).strip()
-    words = clean.split()
-    if not words or len(words) > 6:
+    if not clean:
         return False
-    first = words[0]
-    if first in _GREETING_FIRST_WORDS:
-        return True
-    if first == 'good' and len(words) > 1 and words[1] in ('morning', 'afternoon', 'evening', 'day', 'night'):
-        return True
-    if first in ('how', 'hows') and len(words) > 1 and words[1] in ('are', 'is', 'you', 'it', 'going'):
-        return True
+    words = clean.split()
+    if len(words) == 1:
+        return words[0] in _PURE_GREETINGS
+    if len(words) == 2:
+        return f"{words[0]} {words[1]}" in _PURE_TWO_WORD
     return False
 
 
@@ -130,6 +128,11 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
     ],
+    'funny': [
+        'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
+        'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
+        'sarcastic', 'witty', 'cheer me up', 'fun fact',
+    ],
     'document': [
         'loan proof', 'experience letter', 'employment verification',
         'offer letter', 'relieving letter', 'address proof', 'bonafide',
@@ -199,12 +202,16 @@ Departments and what they own:
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 - document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
+- funny: jokes, small-talk, casual chat, morale-boost, humour — only when there is NO real business intent
+- hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document
+Valid values: hr, it, admin, pmo, finance, org, employee, document, funny
+
+If unsure, reply: hr
 
 Reply:"""
 
@@ -309,8 +316,22 @@ class MasterAgent:
 
                 agent = _EscWrapper(_esc_fn)
             elif domain == 'document':
-                from app.agents.document_agent import DocumentAgent
-                agent = DocumentAgent()
+                from app.agents.document_agent import document_agent_fn as _doc_fn
+
+                class _DocWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, user_email: str = "", user_id: str = "", **__) -> str:
+                        return self._fn(q, user_email=user_email, user_id=user_id)
+
+                agent = _DocWrapper(_doc_fn)
+
+            elif domain == 'funny':
+                from app.agents.working.funny_agent import FunnyAgent
+                agent = FunnyAgent()
 
             if agent:
                 self._slaves[domain] = agent
@@ -333,10 +354,10 @@ class MasterAgent:
                 return None
             domain = tokens[0]
             if domain in DOMAIN_KEYWORDS or domain == 'document':
-                print(f"[MasterAgent] LLM routed → {domain}")
+                print(f"[MasterAgent] LLM routed -> {domain}")
                 return domain
         except FuturesTimeout:
-            print("[MasterAgent] LLM routing timed out — falling back to keywords")
+            print("[MasterAgent] LLM routing timed out -- falling back to keywords")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing error ({exc})")
         return None
@@ -349,9 +370,9 @@ class MasterAgent:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
-            print("[MasterAgent] No keyword match — defaulting to hr")
+            print("[MasterAgent] No keyword match -- defaulting to hr")
             return 'hr'
-        print(f"[MasterAgent] Keyword routed → {best} (score={scores[best]})")
+        print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
         return best
 
     def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
@@ -359,24 +380,24 @@ class MasterAgent:
         try:
             from app.agents.document_agent import has_active_session
             if has_active_session(user_email, user_id):
-                print("[MasterAgent] Active document session → document")
+                print("[MasterAgent] Active document session -> document")
                 return 'document'
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
         # Escalation keyword — highest priority, bypass LLM
         if 'escalat' in query.lower():
-            print("[MasterAgent] Escalation keyword → escalation")
+            print("[MasterAgent] Escalation keyword -> escalation")
             return 'escalation'
 
         # Employee pattern pre-classifier — deterministic, no LLM needed
         if _is_employee_query(query):
-            print("[MasterAgent] Employee pattern → employee")
+            print("[MasterAgent] Employee pattern -> employee")
             return 'employee'
 
         # Document pattern pre-classifier — deterministic, no LLM needed
         if _is_document_query(query):
-            print("[MasterAgent] Document pattern → document")
+            print("[MasterAgent] Document pattern -> document")
             return 'document'
 
         # LLM routing — preferred when available
@@ -515,47 +536,21 @@ class MasterAgent:
 
         return resp
 
-    def stream_query(self, query: str) -> Generator[str, None, None]:
+    def stream_query(
+        self, query: str, user_email: str = "", user_id: str = "",
+    ) -> Generator[str, None, None]:
         """Yield SSE-formatted chunks. Each chunk is a JSON object: {content: str}."""
-        q = query.strip()
-        if not q:
-            yield _sse({"content": "Please enter a question."})
-            yield _sse_done()
-            return
-
-        if _is_greeting(q):
-            yield _sse({"content": _GREETING_RESPONSE})
-            yield _sse_done()
-            return
-
-        is_blocked, category, fallback = check_input(q)
-        if is_blocked:
-            yield _sse({"content": fallback})
-            yield _sse_done()
-            return
-
-        streamed = False
-        if _ollama_available:
-            try:
-                for chunk, metadata in _supervisor.stream(
-                    {"messages": [("user", q)]},
-                    config=_INVOKE_CONFIG,
-                    stream_mode="messages",
-                ):
-                    # Only stream token chunks from the agent node (not tool output)
-                    if (
-                        hasattr(chunk, "content")
-                        and chunk.content
-                        and metadata.get("langgraph_node") == "agent"
-                    ):
-                        yield _sse({"content": chunk.content})
-                        streamed = True
-            except Exception as exc:
-                print(f"[MasterAgent] Stream error ({exc}) — direct routing fallback")
-
-        if not streamed:
-            yield _sse({"content": _route_direct(q)})
-
+        try:
+            answer = self._process_query_inner(
+                query, user_email=user_email, user_id=user_id,
+            )
+        except Exception as exc:
+            print(f"[MasterAgent] stream_query error: {exc}")
+            answer = (
+                "I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly."
+            )
+        yield _sse({"content": answer})
         yield _sse_done()
 
 
