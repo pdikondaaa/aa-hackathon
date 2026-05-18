@@ -266,25 +266,164 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         ) : calEvents.length === 0 ? (
           <p style={{ opacity: 0.4, fontSize: '13px', padding: '8px 0' }}>No upcoming events</p>
         ) : (
-          <ul className="upcoming-list">
-            {calEvents.map((evt) => {
-              const start = evt.start ? new Date(evt.start) : null;
-              const dateStr = start
-                ? evt.isAllDay
-                  ? start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-                  : start.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                : '';
-              return (
-                <li key={evt.id} className="upcoming-item">
-                  <div className="upcoming-indicator" />
-                  <div className="upcoming-text">
-                    <h4>{evt.title}</h4>
-                    <span>{dateStr}{evt.location ? ` · ${evt.location}` : ''}</span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          (() => {
+            const getDisplayTimeZone = () => {
+              const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+              const region = (user?.workLocation || browserZone || '').toLowerCase();
+              if (region.includes('india') || region.includes('kolkata') || region.includes('calcutta')) return 'Asia/Kolkata';
+              if (region.includes('new york') || region.includes('america') || region.includes('us') || region.includes('eastern')) return 'America/New_York';
+              return browserZone;
+            };
+
+            const displayTimeZone = getDisplayTimeZone();
+
+            const parseCalendarDate = (dateStr, zone) => {
+              if (!dateStr) return null;
+              if (dateStr.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(dateStr)) {
+                return new Date(dateStr);
+              }
+              if (zone && typeof zone === 'string' && zone.toLowerCase().includes('utc')) {
+                return new Date(`${dateStr}Z`);
+              }
+              return new Date(dateStr);
+            };
+
+            const toDateInTimeZone = (date, timeZone) => {
+              if (!date) return null;
+              const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone,
+                year: 'numeric',
+                month: 'numeric',
+                day: 'numeric',
+              }).formatToParts(date);
+              const year = Number(parts.find(p => p.type === 'year')?.value || 0);
+              const month = Number(parts.find(p => p.type === 'month')?.value || 1);
+              const day = Number(parts.find(p => p.type === 'day')?.value || 1);
+              return new Date(year, month - 1, day);
+            };
+
+            const formatTime = (date) => {
+              if (!date) return null;
+              return new Intl.DateTimeFormat('en-US', {
+                timeZone: displayTimeZone,
+                hour: '2-digit',
+                minute: '2-digit',
+              }).format(date);
+            };
+
+            const formatTimeZoneName = (date) => {
+              const tzName = new Intl.DateTimeFormat('en-US', {
+                timeZone: displayTimeZone,
+                timeZoneName: 'short',
+              })
+                .formatToParts(date)
+                .find(p => p.type === 'timeZoneName')?.value || '';
+
+              const zoneKey = displayTimeZone.toLowerCase();
+              if (zoneKey.includes('kolkata') || zoneKey.includes('calcutta') || zoneKey.includes('india')) return 'IST';
+              if (zoneKey.includes('new_york') || zoneKey.includes('america') || zoneKey.includes('eastern')) {
+                if (tzName.includes('-04')) return 'EDT';
+                return 'EST';
+              }
+              if (/^gmt/i.test(tzName)) return '';
+              return tzName;
+            };
+
+            const now = new Date();
+            const todayStart = toDateInTimeZone(now, displayTimeZone);
+            const tomorrowStart = new Date(todayStart);
+            tomorrowStart.setDate(todayStart.getDate() + 1);
+
+            const dayOfWeek = todayStart.getDay(); // 0=Sun … 6=Sat
+            const daysToSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
+
+            // This Sunday — last day shown
+            const thisSundayStart = new Date(todayStart);
+            thisSundayStart.setDate(todayStart.getDate() + daysToSunday);
+
+            // Monday after this Sunday — exclusive cut-off
+            const weekEnd = new Date(thisSundayStart);
+            weekEnd.setDate(thisSundayStart.getDate() + 1);
+
+            const toLocalDay = (evt) => {
+              if (!evt.start) return null;
+              if (evt.isAllDay) {
+                const [y, m, d] = evt.start.split('T')[0].split('-').map(Number);
+                return new Date(y, m - 1, d);
+              }
+              const eventDate = parseCalendarDate(evt.start, evt.startZone);
+              return toDateInTimeZone(eventDate, displayTimeZone);
+            };
+
+            const getBucket = (evt) => {
+              const dDay = toLocalDay(evt);
+              if (!dDay) return null;
+              if (dDay < todayStart) return null;  // past
+              if (dDay >= weekEnd) return null;    // next week — skip
+              if (dDay.getTime() === todayStart.getTime()) return 'Today';
+              if (dDay.getTime() === tomorrowStart.getTime()) return 'Tomorrow';
+              return dDay.toLocaleDateString(undefined, { weekday: 'long' });
+            };
+
+            // Build ordered buckets: Today → Tomorrow → day names through Sunday
+            const BUCKET_ORDER = ['Today', 'Tomorrow'];
+            for (let i = 2; i <= daysToSunday; i++) {
+              const d = new Date(todayStart);
+              d.setDate(todayStart.getDate() + i);
+              const name = d.toLocaleDateString(undefined, { weekday: 'long' });
+              if (!BUCKET_ORDER.includes(name)) BUCKET_ORDER.push(name);
+            }
+
+            const groups = {};
+            calEvents.forEach((evt) => {
+              const bucket = getBucket(evt);
+              if (bucket === null) return;
+              if (!groups[bucket]) groups[bucket] = [];
+              groups[bucket].push(evt);
+            });
+
+            const visibleBuckets = BUCKET_ORDER.filter(b => groups[b]?.length);
+            if (visibleBuckets.length === 0) {
+              return <p style={{ opacity: 0.4, fontSize: '13px', padding: '8px 0' }}>No events this week</p>;
+            }
+            return visibleBuckets.map((bucket) => (
+              <div key={bucket} style={{ marginBottom: 10 }}>
+                <p style={{
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  opacity: 0.45,
+                  margin: '6px 0 4px',
+                }}>
+                  {bucket}
+                </p>
+                <ul className="upcoming-list" style={{ margin: 0 }}>
+                  {groups[bucket].map((evt) => {
+                    const eventDate = evt.start && !evt.isAllDay
+                      ? parseCalendarDate(evt.start, evt.startZone)
+                      : null;
+                    const start = eventDate ? toDateInTimeZone(eventDate, displayTimeZone) : null;
+                    const timeStr = eventDate
+                      ? `${formatTime(eventDate)} ${formatTimeZoneName(eventDate)}`
+                      : null;
+                    return (
+                      <li key={evt.id} className="upcoming-item">
+                        <div className="upcoming-indicator" />
+                        <div className="upcoming-text">
+                          <h4>{evt.title}</h4>
+                          <span>
+                            {timeStr || 'All day'}
+                            {evt.location ? ` · ${evt.location}` : ''}
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ));
+          })()
         )}
       </section>
 
