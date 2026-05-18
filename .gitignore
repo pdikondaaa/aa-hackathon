@@ -38,9 +38,9 @@ coverage.xml
 
 # Virtual environments
 venv/
-ENV/
-env/
-.venv
+# ENV/
+# env/
+ .venv
 
 
 # IDE
@@ -69,7 +69,7 @@ apps/jobs/sharepoint_ingestion/storage/
 
 
 # Environment variables
-*.env
+# *.env
 *.env.local
 *.env.*.local
 *.env.example
@@ -114,5 +114,5 @@ dmypy.json
 /.vs
 
 
-.env
-*.env
+# .env
+# *.env
