@@ -11,8 +11,6 @@ from __future__ import annotations
 import random
 from typing import List
 
-from langchain_ollama import ChatOllama
-
 from .config import LLMConfig
 from .personalities import FUNNY_PERSONALITY
 
@@ -51,14 +49,14 @@ class FunnyAgent:
 
     def _setup_llm(self) -> None:
         try:
-            cfg = LLMConfig()
-            self._llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0.95,
-                top_p=0.95,
-                num_predict=200,
-            )
+            from .config import build_chat_llm
+            llm, url, model = build_chat_llm(LLMConfig(), temperature=0.95, num_predict=200)
+            if llm is None:
+                print("[FunnyAgent] All Ollama endpoints unreachable — offline fallbacks active")
+                self._llm = None
+                return
+            self._llm = llm
+            print(f"[FunnyAgent] ready | endpoint={url} | model={model}")
         except Exception as exc:
             print(f"[FunnyAgent] LLM setup failed: {exc}")
             self._llm = None

@@ -86,25 +86,24 @@ class BaseDeepAgent:
 
     def _setup_llm(self):
         try:
-            from langchain_ollama import ChatOllama
             from langchain_core.prompts import ChatPromptTemplate
             from langchain_core.output_parsers import StrOutputParser
+            from .config import build_chat_llm
 
-            self._llm = ChatOllama(
-                base_url=self._config.llm.base_url,
-                model=self._config.llm.model,
-                temperature=self._config.llm.temperature,
-                num_predict=self._config.llm.max_tokens,
-            )
+            llm, url, model = build_chat_llm(self._config.llm)
+            if llm is None:
+                print(f"[{self.__class__.__name__}] All Ollama endpoints unreachable — keyword fallback")
+                self._mode = "keyword"
+                return
 
             prompt = ChatPromptTemplate.from_messages([
                 ("system", _AGENT_SYSTEM),
                 ("human", _AGENT_HUMAN),
             ])
-
+            self._llm = llm
             self._chain = prompt | self._llm | StrOutputParser()
             self._mode = "llm"
-            print(f"[{self.__class__.__name__}] mode=llm | model={self._config.llm.model}")
+            print(f"[{self.__class__.__name__}] mode=llm | endpoint={url} | model={model}")
 
         except Exception as exc:
             print(f"[{self.__class__.__name__}] LLM setup failed ({exc}) -- keyword fallback")

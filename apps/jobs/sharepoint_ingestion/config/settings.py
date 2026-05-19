@@ -22,8 +22,11 @@ class Settings(BaseSettings):
     SHAREPOINT_SITE_PATH: str = Field(default="sites/Nexus/DigitalKnowledgeManagement", validation_alias="SHAREPOINT_SITE_PATH")
     DOCUMENT_LIBRARY_NAME: str = Field(default="Documents", validation_alias="SHAREPOINT_DOCUMENT_LIBRARY")
 
+    # ─── Ollama ───────────────────────────────────────────────────────────────
+    OLLAMA_BASE_URL: str = "http://ml01.alignedautomation.com:11434"
+
     # ─── Embeddings ───────────────────────────────────────────────────────────
-    EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
+    EMBEDDING_MODEL: str = "nomic-embed-text"
     EMBEDDING_DIMENSION: int = 768
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
