@@ -57,7 +57,7 @@ class FunnyAgent:
                 model=cfg.model,
                 temperature=0.95,
                 top_p=0.95,
-                num_predict=200,
+                num_predict=1024,
             )
         except Exception as exc:
             print(f"[FunnyAgent] LLM setup failed: {exc}")

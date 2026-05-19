@@ -112,71 +112,186 @@ def _is_escalation_query(query: str) -> bool:
 # ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     'hr': [
-        'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
-        'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
-        'gratuity', 'referral', 'certification', 'attendance policy', 'wfh policy',
-        'hrone', 'practo', 'takeCare', 'appraisal', 'salary', 'notice period',
-        'resignation', 'onboarding', 'offboarding', 'increment',
-        'attendance correction', 'attendance regularization',
+        # Leave types
+        'leave', 'sick leave', 'casual leave', 'annual leave', 'earned leave',
+        'privilege leave', 'comp off', 'comp-off', 'compensatory leave',
+        'leave balance', 'leave encashment', 'leave without pay', 'lwp',
+        'half day leave', 'paternity leave', 'maternity leave', 'bereavement',
+        # Policies & WFH
+        'policy', 'policies', 'wfh', 'work from home', 'hybrid', 'remote work',
+        'attendance policy', 'wfh policy', 'hr policy', 'code of conduct',
+        'holiday list', 'public holiday', 'national holiday', 'festival holiday',
+        # Compensation & payroll
+        'payroll', 'salary', 'increment', 'hike', 'appraisal', 'performance review',
+        'kra', 'kpi', 'goal setting', 'rating', 'promotion',
+        # Benefits & insurance
+        'benefit', 'insurance', 'ghi', 'mediclaim', 'health insurance',
+        'pf', 'epf', 'gratuity', 'esop', 'group health',
+        # Tools & programs
+        'hrone', 'practo', 'takecare', 'il takecare', 'referral', 'certification',
+        # Lifecycle
+        'resignation', 'notice period', 'exit', 'full and final', 'fnf', 'f&f',
+        'onboarding', 'offboarding', 'probation', 'confirmation', 'background check',
+        'bgv', 'joining formalities', 'induction', 'separation',
+        # Misc HR
+        'posh', 'harassment', 'grievance', 'attendance correction',
+        'attendance regularization', 'regularise', 'hr team', 'hr manager',
     ],
     'it': [
-        'technical', 'mfa', 'vpn', 'password', 'laptop', 'software',
-        'network', 'security', 'onedrive', 'outlook', 'wifi',
-        'remote access', 'polycom', 'hardware', 'printer', 'access',
-        'helpdesk', 'antivirus', 'backup', 'teams', 'install',
+        # Access & auth
+        'technical', 'mfa', '2fa', 'two factor', 'authenticator', 'sso',
+        'single sign on', 'vpn', 'password', 'reset password', 'credentials',
+        'login', 'sign in', 'log in', 'account', 'active directory', 'domain',
+        # Devices & hardware
+        'laptop', 'desktop', 'pc', 'computer', 'workstation', 'monitor',
+        'keyboard', 'mouse', 'headset', 'webcam', 'charger', 'cable', 'usb',
+        'printer', 'scanner', 'polycom', 'hardware', 'device', 'mobile phone',
+        'iphone', 'android', 'tablet', 'sim card',
+        # Software & tools
+        'software', 'install', 'onedrive', 'outlook', 'teams', 'ms teams',
+        'microsoft', 'office 365', 'zoom', 'slack', 'jira', 'confluence',
+        'github', 'azure', 'antivirus', 'backup', 'mdm', 'remote access',
+        # Network & infra
+        'network', 'wifi', 'internet', 'connectivity', 'slow internet',
+        'security', 'helpdesk', 'it support', 'it request', 'it ticket',
+        'it issue', 'technical issue', 'error', 'server', 'cloud', 'storage',
+        'sync', 'email setup',
     ],
     'admin': [
-        'travel', 'cab', 'orix', 'cabman', 'parking', 'workplace', 'office supplies',
-        'fountainhead', 'booking', 'transport', 'hotel', 'flight', 'visa letter',
-        'meeting room', 'facility', 'vendor', 'invoice',
+        # Travel & transport
+        'travel', 'cab', 'orix', 'cabman', 'taxi', 'uber', 'ola',
+        'airport pickup', 'transport', 'hotel', 'flight', 'train ticket',
+        'relocation', 'local travel', 'travel booking',
+        # Office facilities
+        'parking', 'parking slot', 'workplace', 'office supplies', 'stationery',
+        'fountainhead', 'meeting room', 'conference room', 'facility',
+        'pantry', 'cafeteria', 'water', 'housekeeping', 'maintenance',
+        'air conditioning', 'ac', 'cleaning', 'seating', 'workstation allotment',
+        # Logistics & admin
+        'courier', 'delivery', 'access card', 'id badge', 'visitor',
+        'guest', 'reception', 'locker', 'booking', 'vendor', 'invoice',
+        'visa letter', 'office', 'admin team',
     ],
     'pmo': [
-        'project', 'milestone', 'abi', 'ncr', 'spencer', 'dell',
-        'eli lilly', 'pmo', 'timeline', 'delivery', 'resource allocation',
-        'risk', 'blocker', 'change request', 'go-live', 'status report',
+        # Projects & clients
+        'project', 'abi', 'ncr', 'spencer', 'dell', 'eli lilly', 'pmo',
+        'client', 'engagement', 'contract', 'sow', 'statement of work',
+        'proposal', 'requirement', 'brd', 'frd',
+        # Planning & tracking
+        'milestone', 'timeline', 'deadline', 'delivery', 'deliverable',
+        'go-live', 'release', 'deployment', 'production', 'status report',
+        'project plan', 'gantt', 'wbs', 'work breakdown',
+        # Agile & execution
+        'sprint', 'agile', 'scrum', 'kanban', 'backlog', 'velocity',
+        'burndown', 'estimation', 'effort', 'scope',
+        # Risk & resources
+        'risk', 'blocker', 'change request', 'resource allocation',
+        'stakeholder', 'uat', 'testing', 'qa',
     ],
     'finance': [
-        'zoho', 'expense', 'tds', 'tax', 'declaration', 'form 16',
-        'reimbursement', 'kotak', 'income tax', 'investment proof', 'budget',
+        # Expense & reimbursement
+        'zoho', 'expense', 'reimbursement', 'expense claim', 'travel claim',
+        'fuel reimbursement', 'mobile reimbursement', 'internet reimbursement',
+        'medical bills', 'petty cash', 'advance', 'salary advance',
+        # Tax & declarations
+        'tds', 'tax', 'income tax', 'declaration', 'investment proof',
+        'form 16', 'tds certificate', 'hra declaration', 'lta', 'hra',
+        'financial year', 'march end', 'quarter', 'pan', 'pan card',
+        # Payslip & compensation
+        'payslip', 'pay slip', 'salary slip', 'ctc', 'compensation',
+        'bonus', 'incentive', 'allowance', 'variable pay',
+        # Banking & accounts
+        'kotak', 'bank account', 'bank details', 'account number', 'ifsc',
+        'salary account', 'budget', 'gst', 'audit', 'invoice payment',
+        'vendor payment',
     ],
     'org': [
-        'company', 'mission', 'structure', 'organization', 'organisation',
-        'about', 'values', 'vision', 'culture', 'leadership', 'diversity',
+        # Company identity
+        'company', 'mission', 'vision', 'values', 'culture', 'diversity',
+        'about', 'about us', 'overview', 'history', 'background', 'founded',
+        'incorporation', 'anniversary',
+        # Structure & leadership
+        'structure', 'organization', 'organisation', 'organogram',
+        'leadership', 'management team', 'executive', 'board', 'founders',
+        'co-founder', 'ceo', 'cto', 'coo', 'cfo', 'vice president', 'director',
+        # Locations & reach
+        'head office', 'hq', 'headquarters', 'branch', 'office location',
+        'address', 'contact number', 'subsidiary', 'parent company',
+        # Business
+        'service', 'product', 'portfolio', 'client list', 'partner',
+        'business', 'what does', 'what is aligned', 'aligned automation',
     ],
     'employee': [
+        # Personal info
         'blood group', 'date of joining', 'joining date',
-        'mobile number', 'work phone', 'phone number',
+        'mobile number', 'work phone', 'phone number', 'emp id', 'employee id',
+        'staff id', 'badge', 'seat number', 'floor', 'work location',
+        # Directory queries
         'employee count', 'total employees', 'how many employees',
         'employees in', 'employees from', 'staff in', 'staff from',
-        'team members', 'people in', 'reporting manager', 'reports to',
-        'reporting to', 'manager of', 'skill set', 'employee directory',
-        'staff directory', 'my designation', 'my manager', 'my department',
-        'my mobile', 'my email', 'my profile', 'my details',
+        'team members', 'people in', 'colleague', 'coworker', 'co-worker',
+        'employee directory', 'staff directory', 'org chart',
+        # Hierarchy
+        'reporting manager', 'reports to', 'reporting to', 'manager of',
+        'team under', 'who reports', 'hierarchy',
+        # Skills & profile
+        'skill set', 'skills of', 'technology stack', 'band', 'grade',
+        'level', 'tenure', 'experience of',
+        # Self-service
+        'my designation', 'my manager', 'my department', 'my mobile',
+        'my email', 'my profile', 'my details', 'my location', 'my team',
+        'my band', 'my grade', 'my level', 'my contact',
+        # Lookup
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
+        'contact of', 'contact for', 'get in touch', 'reach',
+        'where does', 'where is',
     ],
     'funny': [
         'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
         'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
         'sarcastic', 'witty', 'cheer me up', 'fun fact',
+        'bored', 'boring', 'stressed out', 'entertain me', 'entertainment',
+        'riddle', 'quiz', 'trivia', 'something fun', 'amuse me',
     ],
     'document': [
+        # Standard HR letters
         'loan proof', 'experience letter', 'employment verification',
         'offer letter', 'relieving letter', 'address proof', 'bonafide',
         'internship certificate', 'promotion letter', 'noc',
         'no objection certificate', 'confirmation letter', 'id card request',
+        'salary certificate', 'employment letter', 'company letter',
+        'appointment letter', 'joining letter', 'acceptance letter',
+        'transfer letter', 'separation letter', 'service certificate',
+        'character certificate', 'reference letter', 'recommendation letter',
+        'visa support letter', 'bank verification', 'bank letter',
+        'account opening letter', 'mortgage letter', 'loan letter',
+        'employment contract', 'work permit', 'official letter',
+        'company certificate', 'hr letter', 'hr document',
+        # Action phrases
         'generate letter', 'generate certificate', 'generate document',
         'create letter', 'create certificate', 'draft letter',
-        'need letter', 'need certificate', 'hr letter', 'hr document',
-        'employment letter', 'company letter', 'salary certificate',
+        'need letter', 'need certificate', 'issue letter', 'issue certificate',
+        'request letter', 'request certificate', 'letter needed', 'write letter',
     ],
     'attendance': [
+        # Attendance records
         'attendance of', 'attendance for', 'my attendance',
+        'attendance details', 'attendance report', 'monthly attendance',
+        'daily attendance', 'attendance summary', 'attendance status',
+        'attendance record', 'show attendance',
+        # Check-in / check-out
         'check in', 'check-in', 'check out', 'check-out',
         'checkin', 'checkout', 'clock in', 'clock-in', 'clock out', 'clock-out',
         'punch in', 'punch-in', 'punch out', 'punch-out',
+        'first check', 'last check', 'swipe', 'biometric',
+        # Time & hours
         'working hours', 'hours worked', 'arrival time', 'departure time',
-        'in time', 'out time',
+        'in time', 'out time', 'office hours', 'work timing',
+        'shift', 'shift timing', 'overtime', 'weekly hours',
+        # Exceptions
+        'late arrival', 'late coming', 'early departure', 'absent', 'present',
+        'who was present', 'who was absent',
     ],
 }
 
@@ -439,8 +554,8 @@ class MasterAgent:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
-            print("[MasterAgent] No keyword match -- defaulting to hr")
-            return 'hr'
+            print("[MasterAgent] No keyword match -- defaulting to funny")
+            return 'funny'
         print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
         return best
 
@@ -616,12 +731,12 @@ class MasterAgent:
                 "Please reach out to the appropriate department directly.</p>"
             )
 
-        if sources:
-            items = "".join(
-                f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
-                for s in dict.fromkeys(sources)
-            )
-            resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
+        # if sources:
+        #     items = "".join(
+        #         f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+        #         for s in dict.fromkeys(sources)
+        #     )
+        #     resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
 
         return resp
 
