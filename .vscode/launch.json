@@ -18,11 +18,11 @@
       "jinja": true,
       "cwd": "${workspaceFolder}/apps/api-gateway",
       "env": {
-        "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/aura_db",
+        "DATABASE_URL": "postgresql://squadrons:TwlU0KL1LZbZLYS$@hackathon.alignedautomation.com:5432/squadrons",
         "SQL_ECHO": "false",
-        "CORS_ORIGINS": "http://localhost:5173,http://localhost:3000,*",
+        "CORS_ORIGINS": "http://localhost:5173,http://localhost:5174,http://localhost:3000,*",
         "AZURE_TENANT_ID": "3dcd35b5-f9c5-48ca-8653-821568ad3397",
-        "AZURE_CLIENT_ID": "c957762b-296f-4410-a53d-83d0c7743bf0"
+        "AZURE_CLIENT_ID": "f03e6b79-ed73-455c-b86a-f15a5d4b360c"
       },
       "console": "integratedTerminal",
       "justMyCode": true,

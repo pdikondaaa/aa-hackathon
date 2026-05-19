@@ -247,12 +247,14 @@ export async function fetchCalendarEvents(daysAhead = 30, top = 10) {
     const data = await res.json();
     return {
       events: (data.value || []).map((e, i) => ({
-        id:       e.id || i,
-        title:    e.subject || '(No title)',
-        start:    e.start?.dateTime || e.start?.date || null,
-        end:      e.end?.dateTime   || e.end?.date   || null,
-        isAllDay: e.isAllDay ?? false,
-        location: e.location?.displayName || null,
+        id:           e.id || i,
+        title:        e.subject || '(No title)',
+        start:        e.start?.dateTime || e.start?.date || null,
+        startZone:    e.start?.timeZone || null,
+        end:          e.end?.dateTime   || e.end?.date   || null,
+        endZone:      e.end?.timeZone   || null,
+        isAllDay:     e.isAllDay ?? false,
+        location:     e.location?.displayName || null,
       })),
       error: null,
     };
