@@ -1,4 +1,8 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+let API_URL = import.meta.env.VITE_API_URL || '';
+if (import.meta.env.DEV) {
+  // In local Vite dev, use the proxy mapped at /api to avoid HTTPS->HTTP mixed content.
+  API_URL = '';
+}
 
 export async function fetchEmployeeProfile(email) {
   const res = await fetch(

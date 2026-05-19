@@ -468,10 +468,15 @@ def _format_attendance_results(rows: List[Dict], intent: str) -> str:
             else:
                 name = row.get('username', '')
                 dept = row.get('deptname', '') if intent in ('attendance_date', 'attendance_recent') else ''
+                dept_html = (
+                    f"<br><span style='color:#94a3b8;font-size:0.8em'>{dept}</span>"
+                    if dept else ''
+                )
+
                 tbody_rows.append(
                     f"<tr>"
                     f"<td class='num' style='color:#94a3b8;'>{idx}</td>"
-                    f"<td><strong>{name}</strong>{('<br><span style=\"color:#94a3b8;font-size:0.8em\">' + dept + '</span>') if dept else ''}</td>"
+                    f"<td><strong>{name}</strong>{dept_html}</td>"
                     f"<td>{date_str}</td>"
                     f"<td><span class='day-lbl'>{day_name}</span></td>"
                     f"<td><span class='time-val'>{check_in}</span></td>"
