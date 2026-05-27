@@ -15,10 +15,12 @@ import PersonalNotes      from './components/PersonalNotes';
 import AllocationBoard    from './components/AllocationBoard';
 import LoginPage       from './components/LoginPage';
 import EscalationDrawer from './components/EscalationDrawer';
+import FormsDrawer from './components/FormsDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
 import { getAllocationRole } from './services/api';
 import EmailAgentPage from './components/EmailAgentPage';
 import { AnalyticsDashboard } from './modules/analytics';
+import { COODashboard }       from './modules/coo-analytics';
 import DocumentsPage from './components/DocumentsPage';
 
 const SIDEBAR_BREAKPOINT = 900;
@@ -65,6 +67,8 @@ export default function App() {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [injectedMessage, setInjectedMessage] = useState('');
+  const [formsDrawerOpen,       setFormsDrawerOpen]       = useState(false);
+  const [formsDrawerQuery,      setFormsDrawerQuery]      = useState('');
 
   const [user,           setUser]           = useState(null);
   const [authLoading,    setAuthLoading]    = useState(true);
@@ -225,6 +229,10 @@ export default function App() {
             setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
             setEscalationOpen(true);
           }}
+          onOpenFormsDrawer={(query) => {
+            setFormsDrawerQuery(query || '');
+            setFormsDrawerOpen(true);
+          }}
         />
       </main>
     );
@@ -286,6 +294,8 @@ export default function App() {
           <OnboardingGuidancePage user={user} config={chatConfig} />
         ) : activeNav === 'allocationBoard' ? (
           <AllocationBoard />
+        ) : activeNav === 'cooAnalytics' ? (
+          <COODashboard />
         ) : activeNav === 'emailAgent' ? (
           <EmailAgentPage user={user} />
         ) : (
@@ -299,6 +309,10 @@ export default function App() {
               onOpenEscalation={({ conversationId, messageId } = {}) => {
                 setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
                 setEscalationOpen(true);
+              }}
+              onOpenFormsDrawer={(query) => {
+                setFormsDrawerQuery(query || '');
+                setFormsDrawerOpen(true);
               }}
               injectedMessage={injectedMessage}
               onInjectedMessageSent={() => setInjectedMessage('')}
@@ -325,6 +339,12 @@ export default function App() {
         user={user}
         conversationId={escalationContext.conversationId}
         messageId={escalationContext.messageId}
+      />
+      <FormsDrawer
+        isOpen={formsDrawerOpen}
+        onClose={() => setFormsDrawerOpen(false)}
+        user={user}
+        initialQuery={formsDrawerQuery}
       />
     </div>
   );

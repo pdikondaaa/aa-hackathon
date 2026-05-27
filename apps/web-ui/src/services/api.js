@@ -266,4 +266,55 @@ export async function listDocuments(page = 1, limit = 50, search, category) {
   return httpClient.get(`/api/documents?${params}`);
 }
 
+// ── Microsoft Forms API ──────────────────────────────────────────────────
+
+/**
+ * Acquires a Microsoft Graph access token with the Forms.ReadWrite scope.
+ * Uses MSAL's acquireTokenSilent, falling back to an interactive popup if needed.
+ * The token is then sent to the backend alongside the form payload so the
+ * backend can call the Graph API on behalf of the user.
+ */
+export async function acquireFormsToken() {
+  const FORMS_SCOPE = [
+    import.meta.env.VITE_MS_FORMS_SCOPE ||
+    'https://graph.microsoft.com/Forms.ReadWrite',
+  ];
+  try {
+    const account = msalInstance.getActiveAccount();
+    if (!account) throw new Error('No active account. Please sign in again.');
+    const res = await msalInstance.acquireTokenSilent({ scopes: FORMS_SCOPE, account });
+    return res.accessToken;
+  } catch (silentErr) {
+    // Fall back to popup if silent fails (e.g. first-time consent)
+    try {
+      const account = msalInstance.getActiveAccount();
+      const res = await msalInstance.acquireTokenPopup({
+        scopes: FORMS_SCOPE,
+        account,
+        prompt: 'consent',
+      });
+      return res.accessToken;
+    } catch (popupErr) {
+      throw new Error(
+        'Unable to obtain Microsoft Forms permission. ' +
+        'Please ask your Azure AD admin to grant the Forms.ReadWrite permission.'
+      );
+    }
+  }
+}
+
+/**
+ * Creates a Microsoft Form on behalf of the logged-in user.
+ * @param {{ title: string, description: string|null, questions: Array, graph_access_token: string }} payload
+ */
+export async function createMicrosoftForm(payload) {
+  return httpClient.post('/api/ms-forms/create', payload);
+}
+
+// ── Work Anniversaries API ─────────────────────────────────────────────────
+
+export async function getTodaysAnniversaries() {
+  return httpClient.get('/api/users/anniversaries/today');
+}
+
 export default httpClient;

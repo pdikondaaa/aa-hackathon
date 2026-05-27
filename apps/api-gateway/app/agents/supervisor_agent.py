@@ -1,9 +1,11 @@
 import re
+import json
+import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
-from urllib.parse import urlparse, parse_qs, unquote
-from typing import Dict, List, Optional
+from typing import Generator, Dict, List, Optional
+from urllib.parse import urlparse
 
 from app.agents.guardrails import check_input
 
@@ -30,6 +32,28 @@ _APPLY_LEAVE_RESPONSE = (
     '📅 Apply Leave on Zoho People</a>'
 )
 
+# ── Microsoft Forms fast-path ─────────────────────────────────────────────────
+_MS_FORMS_RE = re.compile(
+    r"""
+    \b(?:
+        create\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        make\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        build\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        (?:create|make|build|generate|draft|design|prepare)\s+(?:a\s+|an\s+)?survey\b |
+        (?:create|make|build|generate|draft|design|prepare)\s+(?:a\s+|an\s+)?questionnaire\b |
+        (?:create|make|build|generate|need|want)\s+(?:a\s+|an\s+)?
+            (?:hr|employee|onboarding|exit|feedback|training|satisfaction|performance|assessment|evaluation)\s+
+            (?:survey|form|questionnaire|poll)\b |
+        (?:feedback|exit|onboarding|training|satisfaction|performance|assessment)\s+
+            (?:survey|form|questionnaire|poll)\b |
+        microsoft\s+forms?\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_MS_FORMS_SENTINEL = "__MS_FORMS_INTENT__"
+
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
 _GREETING_RE = re.compile(
     r"""^[\s!.,?]*
@@ -41,18 +65,64 @@ _GREETING_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+
+def _check_ollama(base_url: str, timeout: int = 3) -> bool:
+    """Return True if the Ollama host is reachable, log clearly if not."""
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 11434
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError as exc:
+        print(
+            f"[MasterAgent] Cannot reach Ollama at {base_url} -- {exc}\n"
+            f"  -> Is the server running? Do you need VPN?\n"
+            f"  -> Set OLLAMA_BASE_URL env var to override (e.g. http://localhost:11434)"
+        )
+        return False
+
+# ── Greeting / small-talk fast-path ──────────────────────────────────────────
+# Only pure bare greetings (1-2 words) get the static menu.
+# Anything longer ("hello can you help with X", "hi what's my leave balance")
+# falls through to routing so the right agent can answer.
+_PURE_GREETINGS = frozenset({
+    'hi', 'hello', 'hey', 'hii', 'hiii', 'howdy', 'greetings',
+    'sup', 'yo', 'thanks', 'thank', 'thx', 'ty', 'thankyou',
+    'bye', 'goodbye', 'cya',
+})
+_PURE_TWO_WORD = frozenset({
+    'hi there', 'hello there', 'hey there',
+    'good morning', 'good afternoon', 'good evening', 'good night', 'good day',
+    'thank you', 'many thanks', 'see ya',
+})
+
+
+def _is_greeting(text: str) -> bool:
+    clean = re.sub(r"[!.,?'\s]+", ' ', text.lower()).strip()
+    if not clean:
+        return False
+    words = clean.split()
+    if len(words) == 1:
+        return words[0] in _PURE_GREETINGS
+    if len(words) == 2:
+        return f"{words[0]} {words[1]}" in _PURE_TWO_WORD
+    return False
+
+
 _GREETING_RESPONSE = (
-    "Hello! I'm AURA, your Aligned Automation assistant.\n\n"
-    "I can help you with:\n"
-    "- **HR** — leave, benefits, payroll, appraisals, policies\n"
-    "- **IT** — technical support, VPN, passwords, software\n"
-    "- **Admin** — travel, cab bookings, office facilities\n"
-    "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
-    "- **PMO** — project status, milestones, resources\n"
-    "- **Attendance** — check-in/out records, working hours\n\n"
-    "- **Employee Directory** — find colleagues, contact details\n"
-    "- **Documents** — generate letters, certificates, and HR documents\n\n"
-    "What can I help you with today?"
+    "<p>Hello! I'm <strong>AURA</strong>, your Aligned Automation assistant.</p>"
+    "<p>I can help you with:</p>"
+    "<ul>"
+    "<li><strong>HR</strong> — leave, benefits, payroll, appraisals, policies</li>"
+    "<li><strong>IT</strong> — technical support, VPN, passwords, software</li>"
+    "<li><strong>Admin</strong> — travel, cab bookings, office facilities</li>"
+    "<li><strong>Finance</strong> — ZOHO expenses, TDS, tax declarations</li>"
+    "<li><strong>PMO</strong> — project status, milestones, resources</li>"
+    "<li><strong>Employee Directory</strong> — find colleagues, contact details</li>"
+    "<li><strong>Attendance</strong> — check-in/out records, working hours</li>"
+    "</ul>"
+    "<p>What can I help you with today?</p>"
 )
 
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
@@ -73,6 +143,12 @@ def _is_escalation_query(query: str) -> bool:
 
 # ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+    'forms': [
+        'create form', 'make form', 'build form', 'survey form',
+        'microsoft form', 'microsoft forms', 'create survey', 'make survey',
+        'feedback form', 'exit survey', 'onboarding form', 'questionnaire',
+        'employee survey', 'training feedback', 'performance survey',
+    ],
     'hr': [
         'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
         'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
@@ -116,6 +192,11 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'my mobile', 'my email', 'my profile', 'my details',
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
+    ],
+    'funny': [
+        'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
+        'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
+        'sarcastic', 'witty', 'cheer me up', 'fun fact',
     ],
     'document': [
         'loan proof', 'experience letter', 'employment verification',
@@ -203,6 +284,10 @@ def _is_attendance_query(query: str) -> bool:
     return any(p.search(query) for p in _ATT_PATTERNS)
 
 
+def _is_forms_query(query: str) -> bool:
+    return bool(_MS_FORMS_RE.search(query))
+
+
 # ── LLM routing prompt ───────────────────────────────────────────────────────
 _ROUTING_PROMPT = """\
 You are a query router for AURA, an internal company assistant for Aligned Automation.
@@ -216,13 +301,18 @@ Departments and what they own:
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 - document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
+- funny: jokes, small-talk, casual chat, morale-boost, humour — only when there is NO real business intent
+- hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
+- forms: create Microsoft Forms / surveys / questionnaires — HR survey, exit survey, onboarding form, feedback form, training questionnaire
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms
+
+If unsure, reply: hr
 
 Reply:"""
 
@@ -340,7 +430,19 @@ class MasterAgent:
             elif domain == 'document':
                 from app.agents.document_agent import DocumentAgent
                 agent = DocumentAgent()
+            elif domain == 'forms':
+                # Forms intent is handled entirely on the frontend (drawer panel).
+                # The supervisor returns a sentinel so the frontend knows to open the drawer.
+                class _FormsPlaceholder:
+                    last_sources: List[str] = []
 
+                    def process_query(self, q: str = "", **__) -> str:
+                        return _MS_FORMS_SENTINEL
+
+                agent = _FormsPlaceholder()
+            elif domain == 'funny':
+                from app.agents.working.funny_agent import FunnyAgent
+                agent = FunnyAgent()
             if agent:
                 self._slaves[domain] = agent
                 print(f"[MasterAgent] Agent loaded: {domain}")
@@ -362,10 +464,10 @@ class MasterAgent:
                 return None
             domain = tokens[0]
             if domain in DOMAIN_KEYWORDS or domain == 'document':
-                print(f"[MasterAgent] LLM routed → {domain}")
+                print(f"[MasterAgent] LLM routed -> {domain}")
                 return domain
         except FuturesTimeout:
-            print("[MasterAgent] LLM routing timed out — falling back to keywords")
+            print("[MasterAgent] LLM routing timed out -- falling back to keywords")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing error ({exc})")
         return None
@@ -378,9 +480,9 @@ class MasterAgent:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
-            print("[MasterAgent] No keyword match — defaulting to hr")
+            print("[MasterAgent] No keyword match -- defaulting to hr")
             return 'hr'
-        print(f"[MasterAgent] Keyword routed → {best} (score={scores[best]})")
+        print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
         return best
 
     def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
@@ -388,15 +490,20 @@ class MasterAgent:
         try:
             from app.agents.document_agent import has_active_session
             if has_active_session(user_email, user_id):
-                print("[MasterAgent] Active document session → document")
+                print("[MasterAgent] Active document session -> document")
                 return 'document'
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
         # Escalation keyword — highest priority, bypass LLM
         if 'escalat' in query.lower():
-            print("[MasterAgent] Escalation keyword → escalation")
+            print("[MasterAgent] Escalation keyword -> escalation")
             return 'escalation'
+
+        # Microsoft Forms intent — fast-path before LLM
+        if _is_forms_query(query):
+            print("[MasterAgent] Forms pattern → forms")
+            return 'forms'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
         if _is_attendance_query(query):
@@ -405,12 +512,12 @@ class MasterAgent:
 
         # Employee directory pre-classifier — deterministic
         if _is_employee_query(query):
-            print("[MasterAgent] Employee pattern → employee")
+            print("[MasterAgent] Employee pattern -> employee")
             return 'employee'
 
         # Document pattern pre-classifier — deterministic, no LLM needed
         if _is_document_query(query):
-            print("[MasterAgent] Document pattern → document")
+            print("[MasterAgent] Document pattern -> document")
             return 'document'
 
         # LLM routing — preferred when available
@@ -421,7 +528,14 @@ class MasterAgent:
         # Keyword fallback
         return self._route_keywords(query)
 
-    def _run_agent(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
+    def _run_agent(
+        self,
+        domain: str,
+        query: str,
+        user_email: str = "",
+        user_id: str = "",
+        conversation_history: Optional[List[Dict]] = None,
+    ):
         agent = self._get_slave(domain)
         if not agent:
             return None, []
@@ -433,7 +547,7 @@ class MasterAgent:
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
             else:
-                resp = agent.process_query(query)
+                resp = agent.process_query(query, conversation_history=conversation_history or [])
             sources = getattr(agent, 'last_sources', [])
             return resp, [s for s in sources if s]
         except Exception as exc:
@@ -490,8 +604,8 @@ class MasterAgent:
                 return synth_llm.invoke(prompt).content
             except Exception as exc:
                 print(f"[MasterAgent] Synthesis LLM error ({exc}); using section format")
-        parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
-        return "\n\n---\n\n".join(parts)
+        parts = [f"<h3>{domain.upper()}</h3>{resp}" for domain, resp in responses.items()]
+        return "<hr>".join(parts)
 
     def _run_slave(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
         slave = self._get_slave(domain)
@@ -525,13 +639,18 @@ class MasterAgent:
     def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "") -> str:
         q = query.strip()
         if not q:
-            return "Please enter a question."
+            return "<p>Please enter a question.</p>"
 
-        if _GREETING_RE.match(q):
+        if _is_greeting(q):
             return _GREETING_RESPONSE
 
         if _APPLY_LEAVE_RE.search(q):
             return _APPLY_LEAVE_RESPONSE
+
+        # Microsoft Forms intent — return sentinel so frontend opens the Forms Drawer
+        if _is_forms_query(q):
+            print("[MasterAgent] Forms intent detected → returning sentinel")
+            return _MS_FORMS_SENTINEL
 
         is_blocked, category, fallback = check_input(q)
         if is_blocked:
@@ -544,31 +663,65 @@ class MasterAgent:
 
         if not resp:
             return (
-                "I couldn't find relevant information for your query. "
-                "Please reach out to the appropriate department directly."
+                "<p>I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly.</p>"
             )
 
         if sources:
-            def _source_label(url: str) -> str:
-                try:
-                    qs = parse_qs(urlparse(url).query)
-                    if "file" in qs:
-                        return unquote(qs["file"][0])
-                except Exception:
-                    pass
-                return unquote(url.split("/")[-1]) or url
-
-            source_list = "\n".join(
-                f"  • [{_source_label(s)}]({s})" for s in dict.fromkeys(sources)
+            items = "".join(
+                f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+                for s in dict.fromkeys(sources)
             )
-            resp += f"\n\n---\n📄 **Sources**\n{source_list}"
+            resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
 
         return resp
 
+    def stream_query(
+        self, query: str, user_email: str = "", user_id: str = "",
+    ) -> Generator[str, None, None]:
+        """Yield SSE-formatted chunks. Each chunk is a JSON object: {content: str}."""
+        try:
+            answer = self._process_query_inner(
+                query, user_email=user_email, user_id=user_id,
+            )
+        except Exception as exc:
+            print(f"[MasterAgent] stream_query error: {exc}")
+            answer = (
+                "I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly."
+            )
+        yield _sse({"content": answer})
+        yield _sse_done()
 
-# ── Singleton + public entry point ───────────────────────────────────────────
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
+def _sse_done() -> str:
+    return "data: [DONE]\n\n"
+
+
+def _source_label(url: str) -> str:
+    """Return a short human-readable label for a source URL."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path.rstrip("/")
+    name = path.split("/")[-1] if path else url
+    # Strip common extensions for readability
+    for ext in (".pdf", ".docx", ".doc", ".xlsx", ".txt", ".md"):
+        if name.lower().endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return name or url
+
+
+# ── Singleton + public entry points ──────────────────────────────────────────
 _master = MasterAgent()
 
 
 def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
     return _master.process_query(query, user_email=user_email, user_id=user_id)
+
+
+def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> Generator[str, None, None]:
+    return _master.stream_query(query, user_email=user_email, user_id=user_id)
