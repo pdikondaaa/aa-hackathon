@@ -23,6 +23,8 @@ from app.api.controllers.email_controller import router as email_router
 from app.api.controllers.attendance_controller import router as attendance_router
 from app.api.controllers.profile_controller import router as profile_router
 from app.api.controllers.documents_controller import router as documents_router
+from app.api.controllers.coo_analytics_controller import router as coo_analytics_router
+from app.api.controllers.forms_controller import router as forms_router
 
 
 tags_metadata = [
@@ -38,6 +40,7 @@ tags_metadata = [
     {"name": "Health", "description": "Service and database health checks."},
     {"name": "Debug", "description": "Debug and diagnostic endpoints."},
     {"name": "Allocation", "description": "PMO Allocation Board — role-aware project and resource data."},
+    {"name": "Microsoft Forms", "description": "Create Microsoft Forms / surveys on behalf of the authenticated user via Graph API."},
 ]
 
 app = FastAPI(
@@ -74,3 +77,5 @@ app.include_router(email_router)
 app.include_router(attendance_router)
 app.include_router(profile_router)
 app.include_router(documents_router)
+app.include_router(coo_analytics_router)
+app.include_router(forms_router)

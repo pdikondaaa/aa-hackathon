@@ -32,6 +32,38 @@ _APPLY_LEAVE_RESPONSE = (
     '📅 Apply Leave on Zoho People</a>'
 )
 
+# ── Microsoft Forms fast-path ─────────────────────────────────────────────────
+_MS_FORMS_RE = re.compile(
+    r"""
+    \b(?:
+        create\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        make\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        build\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        (?:create|make|build|generate|draft|design|prepare)\s+(?:a\s+|an\s+)?survey\b |
+        (?:create|make|build|generate|draft|design|prepare)\s+(?:a\s+|an\s+)?questionnaire\b |
+        (?:create|make|build|generate|need|want)\s+(?:a\s+|an\s+)?
+            (?:hr|employee|onboarding|exit|feedback|training|satisfaction|performance|assessment|evaluation)\s+
+            (?:survey|form|questionnaire|poll)\b |
+        (?:feedback|exit|onboarding|training|satisfaction|performance|assessment)\s+
+            (?:survey|form|questionnaire|poll)\b |
+        microsoft\s+forms?\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_MS_FORMS_SENTINEL = "__MS_FORMS_INTENT__"
+
+# ── Greeting / small-talk fast-path ──────────────────────────────────────────
+_GREETING_RE = re.compile(
+    r"""^[\s!.,?]*
+    (?:hi+|hello+|hey+|howdy|greetings|good\s+(?:morning|afternoon|evening|day)|
+       how\s+are\s+you|how'?s\s+it\s+going|what'?s\s+up|sup|
+       thanks?|thank\s+you|thx|ty|
+       bye|goodbye|see\s+you|take\s+care)
+    [\s!.,?]*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
 
 
 def _check_ollama(base_url: str, timeout: int = 3) -> bool:
@@ -111,6 +143,12 @@ def _is_escalation_query(query: str) -> bool:
 
 # ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+    'forms': [
+        'create form', 'make form', 'build form', 'survey form',
+        'microsoft form', 'microsoft forms', 'create survey', 'make survey',
+        'feedback form', 'exit survey', 'onboarding form', 'questionnaire',
+        'employee survey', 'training feedback', 'performance survey',
+    ],
     'hr': [
         'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
         'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
@@ -246,6 +284,10 @@ def _is_attendance_query(query: str) -> bool:
     return any(p.search(query) for p in _ATT_PATTERNS)
 
 
+def _is_forms_query(query: str) -> bool:
+    return bool(_MS_FORMS_RE.search(query))
+
+
 # ── LLM routing prompt ───────────────────────────────────────────────────────
 _ROUTING_PROMPT = """\
 You are a query router for AURA, an internal company assistant for Aligned Automation.
@@ -262,12 +304,13 @@ Departments and what they own:
 - funny: jokes, small-talk, casual chat, morale-boost, humour — only when there is NO real business intent
 - hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
+- forms: create Microsoft Forms / surveys / questionnaires — HR survey, exit survey, onboarding form, feedback form, training questionnaire
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms
 
 If unsure, reply: hr
 
@@ -385,23 +428,21 @@ class MasterAgent:
 
                 agent = _EscWrapper(_esc_fn)
             elif domain == 'document':
-                from app.agents.document_agent import document_agent_fn as _doc_fn
-
-                class _DocWrapper:
+                from app.agents.document_agent import DocumentAgent
+                agent = DocumentAgent()
+            elif domain == 'forms':
+                # Forms intent is handled entirely on the frontend (drawer panel).
+                # The supervisor returns a sentinel so the frontend knows to open the drawer.
+                class _FormsPlaceholder:
                     last_sources: List[str] = []
 
-                    def __init__(self, fn) -> None:
-                        self._fn = fn
+                    def process_query(self, q: str = "", **__) -> str:
+                        return _MS_FORMS_SENTINEL
 
-                    def process_query(self, q: str, user_email: str = "", user_id: str = "", **__) -> str:
-                        return self._fn(q, user_email=user_email, user_id=user_id)
-
-                agent = _DocWrapper(_doc_fn)
-
+                agent = _FormsPlaceholder()
             elif domain == 'funny':
                 from app.agents.working.funny_agent import FunnyAgent
                 agent = FunnyAgent()
-
             if agent:
                 self._slaves[domain] = agent
                 print(f"[MasterAgent] Agent loaded: {domain}")
@@ -458,6 +499,11 @@ class MasterAgent:
         if 'escalat' in query.lower():
             print("[MasterAgent] Escalation keyword -> escalation")
             return 'escalation'
+
+        # Microsoft Forms intent — fast-path before LLM
+        if _is_forms_query(query):
+            print("[MasterAgent] Forms pattern → forms")
+            return 'forms'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
         if _is_attendance_query(query):
@@ -600,6 +646,11 @@ class MasterAgent:
 
         if _APPLY_LEAVE_RE.search(q):
             return _APPLY_LEAVE_RESPONSE
+
+        # Microsoft Forms intent — return sentinel so frontend opens the Forms Drawer
+        if _is_forms_query(q):
+            print("[MasterAgent] Forms intent detected → returning sentinel")
+            return _MS_FORMS_SENTINEL
 
         is_blocked, category, fallback = check_input(q)
         if is_blocked:

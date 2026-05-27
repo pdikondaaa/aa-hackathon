@@ -33,6 +33,19 @@ const EMAIL_INTENT_PATTERNS = [
 const detectEmailIntent = (text) =>
   EMAIL_INTENT_PATTERNS.some((re) => re.test(text));
 
+// ── Microsoft Forms intent detection ──────────────────────────────────────────
+const FORMS_INTENT_PATTERNS = [
+  /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?(microsoft\s+)?form(s)?\b/i,
+  /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?survey\b/i,
+  /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?questionnaire\b/i,
+  /\b(hr|employee|onboarding|exit|feedback|training|satisfaction|performance|assessment)\s+(survey|form|questionnaire|poll)\b/i,
+  /\b(need|want|require)\s+(an?\s+)?(hr|employee|feedback|exit|training|onboarding)\s+(form|survey|questionnaire)\b/i,
+  /\bmicrosoft\s+forms?\b/i,
+];
+
+const detectFormsIntent = (text) =>
+  FORMS_INTENT_PATTERNS.some((re) => re.test(text));
+
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 const getGreeting = (firstName) => {
@@ -42,7 +55,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, onOpenFormsDrawer, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -183,6 +196,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     abortCtrlRef.current = abortCtrl;
 
     const isEmailRequest = detectEmailIntent(trimmed);
+    const isFormsRequest = detectFormsIntent(trimmed);
 
     try {
       // Create a conversation on the first message of a new chat session
@@ -194,8 +208,15 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
       }
 
       // Fire both requests in parallel when an email intent is detected
-      const chatPromise = postMessage(convId, trimmed, abortCtrl.signal);
+      const chatPromise  = postMessage(convId, trimmed, abortCtrl.signal);
       const emailPromise = isEmailRequest ? draftEmailFromChat(trimmed).catch(() => null) : Promise.resolve(null);
+
+      // Open the Forms Drawer immediately if forms intent is detected
+      // (the chat also gets the sentinel response from the backend which
+      //  we intercept below and replace with a friendly message)
+      if (isFormsRequest) {
+        onOpenFormsDrawer?.(trimmed);
+      }
 
       const [msgResponse, emailDraft] = await Promise.all([chatPromise, emailPromise]);
 
@@ -205,7 +226,10 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
           backendId: msgResponse.id,
           conversationId: convId,
           role: 'assistant',
-          content: msgResponse.content,
+          // Replace sentinel with a friendly nudge; real output is in the drawer
+          content: msgResponse.content === '__MS_FORMS_INTENT__'
+            ? '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!'
+            : msgResponse.content,
           sources: [],
           timestamp: now,
         },
