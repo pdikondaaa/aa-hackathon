@@ -4,11 +4,11 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 
 export default defineConfig({
   envDir: path.resolve(__dirname, '..', '..'),
-  plugins: [basicSsl()],
+  plugins: [],
   server: {
     host: '0.0.0.0',
     port: 5173,
-    https: true,
+    https: false,
     allowedHosts: true,
     proxy: {
       '/api': {
