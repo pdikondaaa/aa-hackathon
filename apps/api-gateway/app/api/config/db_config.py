@@ -10,11 +10,11 @@ ROOT_ENV = Path(__file__).resolve().parents[5] / ".env"
 load_dotenv(ROOT_ENV)
 
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST", os.getenv("SQL_HOST", "localhost")),
-    "port": int(os.getenv("DB_PORT", os.getenv("SQL_PORT", 5433))),
-    "dbname": os.getenv("DB_NAME", os.getenv("SQL_DB", "aura")),
-    "user": os.getenv("DB_USER", os.getenv("SQL_USERNAME", "postgres")),
-    "password": os.getenv("DB_PASSWORD", os.getenv("SQL_PWD", "admin123")),
+    "host": os.getenv("DB_HOST", os.getenv("SQL_HOST", "hackathon.alignedautomation.com")),
+    "port": int(os.getenv("DB_PORT", os.getenv("SQL_PORT", 5432))),
+    "dbname": os.getenv("DB_NAME", os.getenv("SQL_DB", "squadrons")),
+    "user": os.getenv("DB_USER", os.getenv("SQL_USERNAME", "squadrons")),
+    "password": os.getenv("DB_PASSWORD", os.getenv("SQL_PWD", "TwlU0KL1LZbZLYS$")),
 }
 
 

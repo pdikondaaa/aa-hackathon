@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { INDUCTION_MODULES } from '../../constants/onboardingData';
 
-const OFFICE_TOUR_URL = import.meta.env.VITE_OFFICE_TOUR_VIDEO_URL || '';
-const CULTURE_URL     = import.meta.env.VITE_CULTURE_VIDEO_URL     || '';
+// Default to public/ files if environment variables are not provided
+const OFFICE_TOUR_URL = import.meta.env.VITE_OFFICE_TOUR_VIDEO_URL || '/Pune_Office_Tour_Aligned_Automation.mp4';
+const CULTURE_URL     = import.meta.env.VITE_CULTURE_VIDEO_URL     || '/Pune_Culture_Video_Aligned_Automation.mp4.mp4';
 
 const TABS = [
   { id: 'induction',   label: 'Induction Videos', icon: 'fa-play-circle' },

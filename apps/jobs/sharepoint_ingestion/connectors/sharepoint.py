@@ -41,6 +41,7 @@ class SharePointConnector:
     # ──────────────────────────────────────────────────────────────────────
 
     def _acquire_token(self) -> str:
+        
 
         app = msal.ConfidentialClientApplication(
             client_id=settings.CLIENT_ID,
