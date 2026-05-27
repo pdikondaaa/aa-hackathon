@@ -5,6 +5,11 @@ from typing import Optional
 from app.agents.supervisor_agent import run_assistant
 from app.api.config.db_config import get_db_connection
 
+try:
+    from app.memory import update_after_message as _enrich
+except Exception:
+    _enrich = None
+
 
 class MessagesService:
 
@@ -60,9 +65,31 @@ class MessagesService:
                 )
             conn.commit()
 
+        # ── Fetch conversation history for context ─────────────────────────
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role, content FROM messages
+                    WHERE conversation_id = %s
+                      AND id NOT IN (%s, %s)
+                      AND status NOT IN ('pending', 'error', 'superseded')
+                    ORDER BY created_at ASC
+                    LIMIT 10
+                    """,
+                    (conversation_id, user_msg_id, assistant_msg_id),
+                )
+                conversation_history = [
+                    {"role": r["role"], "content": r["content"]}
+                    for r in cur.fetchall()
+                ]
+
         # ── Phase 2: call the agent (outside the DB transaction) ───────────
         try:
-            answer = run_assistant(content, user_id=user_id)
+            answer = run_assistant(
+                content,
+                user_id=user_id,
+            )
             final_status = "done"
         except Exception as exc:
             print(f"Agent error for message {assistant_msg_id}: {exc}")
@@ -82,6 +109,18 @@ class MessagesService:
                 )
                 assistant_row = dict(cur.fetchone())
             conn.commit()
+
+        # ── Phase 4: enrich per-user memory (best-effort, never breaks chat) ─
+        if final_status == "done" and _enrich:
+            try:
+                _enrich(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_msg=content,
+                    assistant_msg=answer,
+                )
+            except Exception as exc:
+                print(f"[MessagesService] memory enrichment error: {exc}")
 
         return assistant_row
 

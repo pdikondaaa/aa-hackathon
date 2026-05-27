@@ -364,18 +364,16 @@ def _full_name(emp: Dict) -> str:
 
 
 def _fmt_summary_line(emp: Dict) -> str:
-    parts = [f"**{_full_name(emp)}**"]
+    parts = []
     for col, label in SUMMARY_FIELDS:
         val = emp.get(col)
         if val and str(val).strip():
-            parts.append(f"{label}: {val}")
-    return " | ".join(parts)
+            parts.append(f"<span>{label}: <strong>{val}</strong></span>")
+    meta = " &nbsp;|&nbsp; ".join(parts)
+    return f"<strong>{_full_name(emp)}</strong>" + (f" — {meta}" if meta else "")
 
 
 def _fmt_detail_card(emp: Dict) -> str:
-    lines: List[str] = []
-    lines.append(f"**Name:** {_full_name(emp)}")
-
     priority = [
         (COL_DESIGNATION,             "Designation"),
         (COL_DEPARTMENT,              "Department"),
@@ -402,11 +400,12 @@ def _fmt_detail_card(emp: Dict) -> str:
         (COL_NATIONALITY,             "Nationality"),
     ]
 
+    items: List[str] = [f"<li><strong>Name:</strong> {_full_name(emp)}</li>"]
     rendered_keys = {COL_FIRST_NAME, COL_LAST_NAME}
     for col, label in priority:
         val = emp.get(col)
         if val and str(val).strip() and col not in HIDDEN_DETAIL_COLUMNS:
-            lines.append(f"**{label}:** {val}")
+            items.append(f"<li><strong>{label}:</strong> {val}</li>")
             rendered_keys.add(col)
 
     for col, val in emp.items():
@@ -414,9 +413,9 @@ def _fmt_detail_card(emp: Dict) -> str:
             continue
         if val and str(val).strip():
             label = col.replace("_", " ").title()
-            lines.append(f"**{label}:** {val}")
+            items.append(f"<li><strong>{label}:</strong> {val}</li>")
 
-    return "\n".join(lines)
+    return f"<h3>Employee Profile</h3><ul>{''.join(items)}</ul>"
 
 
 def _fmt_field_results(rows: List[Dict], field_label: str, col_name: str) -> str:
@@ -425,19 +424,22 @@ def _fmt_field_results(rows: List[Dict], field_label: str, col_name: str) -> str
         name = _full_name(emp)
         val = emp.get(col_name)
         if val and str(val).strip():
-            return f"**{name}** — {field_label}: **{val}**"
-        return f"**{name}** — {field_label} is not available in the records."
+            return f"<p><strong>{name}</strong> — {field_label}: <strong>{val}</strong></p>"
+        return f"<p><strong>{name}</strong> — {field_label} is not available in the records.</p>"
 
-    lines = [f"Found **{len(rows)}** matching employees:\n"]
+    items = []
     for emp in rows:
         name = _full_name(emp)
         val = emp.get(col_name)
-        val_str = f"**{val}**" if val and str(val).strip() else "N/A"
+        val_str = f"<strong>{val}</strong>" if val and str(val).strip() else "N/A"
         desig = emp.get(COL_DESIGNATION, "")
         dept = emp.get(COL_DEPARTMENT, "")
-        extra = f" ({desig}, {dept})" if desig or dept else ""
-        lines.append(f"- **{name}**{extra} — {field_label}: {val_str}")
-    return "\n".join(lines)
+        extra = f" <em>({desig}, {dept})</em>" if desig or dept else ""
+        items.append(f"<li><strong>{name}</strong>{extra} — {field_label}: {val_str}</li>")
+    return (
+        f"<h3>Found {len(rows)} matching employees</h3>"
+        f"<ul>{''.join(items)}</ul>"
+    )
 
 
 def _format_results(rows: List[Dict], intent: str) -> str:
@@ -446,7 +448,7 @@ def _format_results(rows: List[Dict], intent: str) -> str:
 
     if intent == "count":
         count = rows[0].get("count", 0)
-        return f"There are **{count}** employees in the system."
+        return f"<p>There are <strong>{count}</strong> employees in the system.</p>"
 
     if intent.startswith("field:"):
         _, field_label, col_name = intent.split(":", 2)
@@ -455,9 +457,11 @@ def _format_results(rows: List[Dict], intent: str) -> str:
     if len(rows) == 1:
         return _fmt_detail_card(rows[0])
 
-    header = f"Found **{len(rows)}** employee(s):\n"
-    lines = [f"- {_fmt_summary_line(e)}" for e in rows]
-    return header + "\n".join(lines)
+    items = [f"<li>{_fmt_summary_line(e)}</li>" for e in rows]
+    return (
+        f"<h3>Found {len(rows)} employee(s)</h3>"
+        f"<ul>{''.join(items)}</ul>"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -509,14 +513,14 @@ def employee_agent(query: str, user_email: str = "") -> str:
                     return _format_results(broad_rows, "general_search")
 
         return (
-            f"No employee records found for: \"{query}\". "
-            "Try searching by full name, department, designation, or skill. "
-            "Contact HR at hr@alignedautomation.com for further assistance."
+            f"<p>No employee records found for: <strong>\"{query}\"</strong>. "
+            "Try searching by full name, department, designation, or skill.</p>"
+            "<p>Contact HR at <strong>hr@alignedautomation.com</strong> for further assistance.</p>"
         )
 
     except Exception as exc:
         logger.exception("Employee agent error: %s", exc)
         return (
-            "Employee data is temporarily unavailable. "
-            "Please contact HR at hr@alignedautomation.com for assistance."
+            "<p>Employee data is temporarily unavailable. "
+            "Please contact HR at <strong>hr@alignedautomation.com</strong> for assistance.</p>"
         )

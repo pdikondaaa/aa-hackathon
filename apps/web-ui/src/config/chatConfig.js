@@ -79,8 +79,9 @@ export const chatConfig = {
     { id: 'aiAssistant', label: 'AI Assistant', icon: 'fa-robot',       active: true  },
     { id: 'documents',   label: 'Documents',    icon: 'fa-folder-open', active: false },
     { id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
-    { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
+    // { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
     { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap',      active: false },
+    { id: 'cooAnalytics',   label: 'COO Analytics',   icon: 'fa-gauge-high',   active: false },
     //{ id: 'myNotes',         label: 'My Notes',         icon: 'fa-sticky-note',  active: false },
   ],
 
