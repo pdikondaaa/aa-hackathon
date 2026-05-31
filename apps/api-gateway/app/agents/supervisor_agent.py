@@ -3,7 +3,6 @@ import json
 import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from difflib import SequenceMatcher
 from typing import Generator, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -93,164 +92,18 @@ _GREETING_RESPONSE = (
     "<p>What can I help you with today?</p>"
 )
 
-# ── Escalation fuzzy matcher ─────────────────────────────────────────────────
-_ESC_TARGETS = ["escalat", "escalate", "escalation", "escalated", "escalating"]
-
-
-def _is_escalation_query(query: str) -> bool:
-    q = query.lower()
-    if "escalat" in q:
-        return True
-    for word in re.split(r"[\s.,!?;:]+", q):
-        if len(word) < 5:
-            continue
-        if any(SequenceMatcher(None, word, t).ratio() >= 0.75 for t in _ESC_TARGETS):
-            return True
-    return False
-
-
-# ── Domain keyword fallback map ───────────────────────────────────────────────
-DOMAIN_KEYWORDS: Dict[str, List[str]] = {
-    'hr': [
-        'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
-        'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
-        'gratuity', 'referral', 'certification', 'attendance policy', 'wfh policy',
-        'hrone', 'practo', 'takeCare', 'appraisal', 'salary', 'notice period',
-        'resignation', 'onboarding', 'offboarding', 'increment',
-        'attendance correction', 'attendance regularization',
-    ],
-    'it': [
-        'technical', 'mfa', 'vpn', 'password', 'laptop', 'software',
-        'network', 'security', 'onedrive', 'outlook', 'wifi',
-        'remote access', 'polycom', 'hardware', 'printer', 'access',
-        'helpdesk', 'antivirus', 'backup', 'teams', 'install',
-    ],
-    'admin': [
-        'travel', 'cab', 'orix', 'cabman', 'parking', 'workplace', 'office supplies',
-        'fountainhead', 'booking', 'transport', 'hotel', 'flight', 'visa letter',
-        'meeting room', 'facility', 'vendor', 'invoice',
-    ],
-    'pmo': [
-        'project', 'milestone', 'abi', 'ncr', 'spencer', 'dell',
-        'eli lilly', 'pmo', 'timeline', 'delivery', 'resource allocation',
-        'risk', 'blocker', 'change request', 'go-live', 'status report',
-    ],
-    'finance': [
-        'zoho', 'expense', 'tds', 'tax', 'declaration', 'form 16',
-        'reimbursement', 'kotak', 'income tax', 'investment proof', 'budget',
-    ],
-    'org': [
-        'company', 'mission', 'structure', 'organization', 'organisation',
-        'about', 'values', 'vision', 'culture', 'leadership', 'diversity',
-    ],
-    'employee': [
-        'blood group', 'date of joining', 'joining date',
-        'mobile number', 'work phone', 'phone number',
-        'employee count', 'total employees', 'how many employees',
-        'employees in', 'employees from', 'staff in', 'staff from',
-        'team members', 'people in', 'reporting manager', 'reports to',
-        'reporting to', 'manager of', 'skill set', 'employee directory',
-        'staff directory', 'my designation', 'my manager', 'my department',
-        'my mobile', 'my email', 'my profile', 'my details',
-        'who is', 'profile of', 'details of', 'info about',
-        'find employee', 'look up', 'lookup', 'search employee',
-    ],
-    'funny': [
-        'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
-        'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
-        'sarcastic', 'witty', 'cheer me up', 'fun fact',
-    ],
-    'document': [
-        'loan proof', 'experience letter', 'employment verification',
-        'offer letter', 'relieving letter', 'address proof', 'bonafide',
-        'internship certificate', 'promotion letter', 'noc',
-        'no objection certificate', 'confirmation letter', 'id card request',
-        'generate letter', 'generate certificate', 'generate document',
-        'create letter', 'create certificate', 'draft letter',
-        'need letter', 'need certificate', 'hr letter', 'hr document',
-        'employment letter', 'company letter', 'salary certificate',
-    ],
-    'attendance': [
-        'attendance of', 'attendance for', 'my attendance',
-        'check in', 'check-in', 'check out', 'check-out',
-        'checkin', 'checkout', 'clock in', 'clock-in', 'clock out', 'clock-out',
-        'punch in', 'punch-in', 'punch out', 'punch-out',
-        'working hours', 'hours worked', 'arrival time', 'departure time',
-        'in time', 'out time',
-    ],
-}
-
-# ── Document query pre-classifier (regex, no LLM) ────────────────────────────
-_DOC_PATTERNS = [
-    re.compile(
-        r"\b(?:loan\s+proof|experience\s+letter|employment\s+verification|offer\s+letter|"
-        r"relieving\s+letter|address\s+proof|bonafide|internship\s+certificate|"
-        r"promotion\s+letter|no\s+objection\s+certificate|\bnoc\b|confirmation\s+letter|"
-        r"id\s+card\s+request|salary\s+certificate|employment\s+letter)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:generate|create|draft|prepare|write|need|want|issue)\s+"
-        r"(?:a\s+|an\s+)?(?:\w+\s+){0,3}(?:letter|certificate|document|proof)\b",
-        re.IGNORECASE,
-    ),
-]
-
-
-def _is_document_query(query: str) -> bool:
-    return any(p.search(query) for p in _DOC_PATTERNS)
-
-
-# ── Employee query pre-classifier (regex, no LLM) ────────────────────────────
-_EMP_PATTERNS = [
-    re.compile(r"\w+'s\s+(?:mobile|phone|email|designation|department|work.?phone)", re.IGNORECASE),
-    re.compile(r"\w+'s\s+(?:manager|role|grade|level|skill|project|blood.?group|joining)", re.IGNORECASE),
-    re.compile(r"\b(?:mobile|work\s+phone|phone\s+number|email|designation)\s+(?:of|for)\s+[a-z]", re.IGNORECASE),
-    re.compile(r"\b(?:blood\s+group|joining\s+date|date\s+of\s+joining|manager)\s+(?:of|for)\s+[a-z]", re.IGNORECASE),
-    re.compile(r"\b(?:how\s+many|count|number\s+of|total)\s+employees?\b", re.IGNORECASE),
-    re.compile(r"\bemployees?\s+(?:in|from|under|of)\b", re.IGNORECASE),
-    re.compile(r"\b(?:staff|people|team)\s+(?:in|from|at|under)\b", re.IGNORECASE),
-    re.compile(r"\b(?:manager\s+of|reports?\s+to|reporting\s+to|team\s+under)\s+[a-z]", re.IGNORECASE),
-    re.compile(r"\bmy\s+(?:mobile|phone|email|designation|department|manager|role|grade)\b", re.IGNORECASE),
-    re.compile(r"\bmy\s+(?:level|skill|project|blood|joining|detail|info|profile|team|location|experience|contact)\b", re.IGNORECASE),
-    re.compile(r"\b(?:who\s+am\s+i|about\s+me)\b", re.IGNORECASE),
-    re.compile(r"\bwho\s+is\s+\w", re.IGNORECASE),
-    re.compile(r"\b(?:profile|details?|information|info)\s+(?:of|about|for)\s+\w", re.IGNORECASE),
-    re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
-]
-
-# ── Attendance pre-classifier (regex, no LLM) ────────────────────────────────
-_ATT_PATTERNS = [
-    re.compile(r"\battendance\s+(?:of|for)\b", re.IGNORECASE),
-    re.compile(r"\bmy\s+attendance\b", re.IGNORECASE),
-    re.compile(r"\w+'s\s+attendance\b", re.IGNORECASE),
-    # "Show Yogesh Chandan attendance details for April 2026"
-    re.compile(r"\b\w+\s+\w+\s+attendance\b", re.IGNORECASE),
-    # "show attendance details"
-    re.compile(r"\battendance\s+details?\b", re.IGNORECASE),
-    # "show attendance" anywhere
-    re.compile(r"\bshow\s+\S+(?:\s+\S+)?\s+attendance\b", re.IGNORECASE),
-    re.compile(r"\bcheck[\s\-]?(?:in|out)(?:\s+time)?\b", re.IGNORECASE),
-    re.compile(r"\bclock[\s\-]?(?:in|out)\b", re.IGNORECASE),
-    re.compile(r"\bpunch[\s\-]?(?:in|out)\b", re.IGNORECASE),
-    re.compile(r"\b(?:working\s+hours?|hours?\s+worked)\b", re.IGNORECASE),
-    re.compile(r"\b(?:arrival|departure)\s+time\b", re.IGNORECASE),
-]
-
-
-def _is_employee_query(query: str) -> bool:
-    return any(p.search(query) for p in _EMP_PATTERNS)
-
-
-def _is_attendance_query(query: str) -> bool:
-    return any(p.search(query) for p in _ATT_PATTERNS)
-
-
-# ── LLM routing prompt ───────────────────────────────────────────────────────
+# ── Combined intent + routing LLM prompt ─────────────────────────────────────
 _ROUTING_PROMPT = """\
 You are a query router for AURA, an internal company assistant for Aligned Automation.
 
-Departments and what they own:
+Step 1 — classify the intent:
+- knowledge: the user wants information, policy details, how-to guidance, or process help
+- action: the user wants to perform an action (apply leave, generate a document, escalate)
+- data_lookup: the user wants specific data (employee details, attendance records, allocation)
+- casual: jokes, small-talk, banter, humour, chit-chat with NO business intent at all
+- unclear: you cannot determine the intent
+
+Step 2 — pick the ONE department that should handle this query:
 - hr: leave, benefits, payroll, appraisals, POSH, maternity/paternity, GHI, PF/EPF, gratuity, referral, WFH, HROne, Practo, IL TakeCare, resignation, notice period, attendance policy, attendance correction
 - it: technical support, MFA, VPN, passwords, laptop, software, network, security, OneDrive, Outlook, WiFi, remote access, Polycom, antivirus
 - admin: travel bookings, cab/ORIX/Cabman, parking, workplace guidelines, office supplies, Fountainhead, meeting rooms, facility
@@ -259,19 +112,130 @@ Departments and what they own:
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 - document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
-- funny: jokes, small-talk, casual chat, morale-boost, humour — only when there is NO real business intent
-- hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
+- funny: jokes, small-talk, casual chat, morale-boost, humour — ONLY when intent is casual with NO real business question
 
 User query: "{query}"
 
-Which ONE department should handle this query?
-Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny
+Reply with EXACTLY two words separated by a space: <intent> <department>
+Example: knowledge hr
+Example: casual funny
+Example: unclear hr
 
-If unsure, reply: hr
+If intent is casual, department MUST be funny.
+If intent is unclear and you cannot pick a department confidently, reply: unclear none
 
 Reply:"""
+
+# ── Casual intent heuristic (fallback when LLM is unavailable) ────────────────
+_CASUAL_WORDS = frozenset({
+    'joke', 'jokes', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
+    'lol', 'lmao', 'haha', 'rofl', 'sarcastic', 'witty', 'bored',
+    'cheer', 'fun', 'entertain', 'riddle', 'knock knock',
+})
+_BUSINESS_WORDS = frozenset({
+    'policy', 'leave', 'salary', 'payroll', 'benefit', 'insurance',
+    'vpn', 'password', 'laptop', 'software', 'travel', 'cab', 'expense',
+    'project', 'milestone', 'employee', 'attendance', 'document', 'letter',
+    'certificate', 'manager', 'department', 'team', 'allocation',
+    'onboarding', 'appraisal', 'increment', 'resignation', 'notice',
+    'reimbursement', 'tax', 'tds', 'pf', 'epf', 'ghi', 'posh',
+    'escalat', 'help', 'how', 'what', 'process', 'apply', 'request',
+})
+
+
+def _heuristic_is_casual(query: str) -> bool:
+    """Quick check: is this clearly casual/joke/small-talk with no business intent?"""
+    words = set(re.split(r'[\s.,!?;:]+', query.lower()))
+    has_casual = bool(words & _CASUAL_WORDS)
+    has_business = bool(words & _BUSINESS_WORDS)
+    return has_casual and not has_business
+
+
+# ── Lightweight keyword router (only when LLM is completely unavailable) ───────
+# Maps domain -> keywords.  Used as a last resort before disambiguation.
+# Intentionally kept small — the LLM prompt is the primary router.
+_FALLBACK_KEYWORDS: Dict[str, List[str]] = {
+    'hr': [
+        'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
+        'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
+        'gratuity', 'referral', 'appraisal', 'salary', 'notice period',
+        'resignation', 'onboarding', 'offboarding', 'increment', 'wfh',
+    ],
+    'it': [
+        'vpn', 'password', 'laptop', 'software', 'network', 'mfa',
+        'onedrive', 'outlook', 'wifi', 'remote access', 'antivirus',
+        'helpdesk', 'printer', 'teams',
+    ],
+    'admin': [
+        'travel', 'cab', 'orix', 'cabman', 'parking', 'office supplies',
+        'fountainhead', 'booking', 'hotel', 'flight', 'meeting room',
+        'facility',
+    ],
+    'pmo': [
+        'project', 'milestone', 'pmo', 'timeline', 'delivery',
+        'resource allocation', 'blocker', 'go-live', 'status report',
+    ],
+    'finance': [
+        'expense', 'tds', 'tax', 'declaration', 'form 16',
+        'reimbursement', 'kotak', 'income tax', 'investment proof',
+    ],
+    'org': [
+        'company', 'mission', 'structure', 'organization', 'organisation',
+        'values', 'vision', 'culture', 'leadership',
+    ],
+    'employee': [
+        'employee directory', 'reporting manager', 'my manager',
+        'my designation', 'my department', 'my profile', 'who is',
+        'employee count', 'total employees',
+    ],
+    'attendance': [
+        'attendance', 'check-in', 'check-out', 'checkin', 'checkout',
+        'clock in', 'clock out', 'punch in', 'punch out',
+        'working hours', 'hours worked',
+    ],
+    'document': [
+        'experience letter', 'offer letter', 'relieving letter',
+        'loan proof', 'noc', 'bonafide', 'salary certificate',
+        'generate letter', 'generate certificate',
+    ],
+    'funny': [
+        'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
+    ],
+}
+
+
+def _fallback_keyword_route(query: str) -> Optional[str]:
+    """
+    Lightweight keyword match — only used when LLM is completely unreachable.
+    Returns None (-> disambiguation) instead of defaulting to any domain.
+    """
+    q = query.lower()
+    scores = {
+        domain: sum(1 for kw in keywords if kw in q)
+        for domain, keywords in _FALLBACK_KEYWORDS.items()
+    }
+    best = max(scores, key=scores.get)
+    if scores[best] == 0:
+        return None  # no match — disambiguation, NOT a blind default
+    print(f"[MasterAgent] Keyword fallback (LLM offline) -> {best} (score={scores[best]})")
+    return best
+
+
+_DISAMBIGUATION_RESPONSE = (
+    "<p>I'm not sure which area that falls under. Could you tell me a bit more?</p>"
+    "<p>I can help with:</p>"
+    "<ul>"
+    "<li><strong>HR</strong> — leave, benefits, payroll, appraisals, policies</li>"
+    "<li><strong>IT</strong> — technical support, VPN, passwords, software</li>"
+    "<li><strong>Admin</strong> — travel, cab bookings, office facilities</li>"
+    "<li><strong>Finance</strong> — ZOHO expenses, TDS, tax declarations</li>"
+    "<li><strong>PMO</strong> — project status, milestones, resources</li>"
+    "<li><strong>Employee Directory</strong> — find colleagues, contact details</li>"
+    "<li><strong>Attendance</strong> — check-in/out records, working hours</li>"
+    "</ul>"
+    "<p>Just rephrase your question and I'll route it to the right team.</p>"
+)
 
 
 _SYNTHESIS_PROMPT = """\
@@ -309,17 +273,30 @@ class MasterAgent:
     def _setup_llm(self):
         try:
             from langchain_ollama import ChatOllama
-            from app.agents.working.config import LLMConfig
+            from app.agents.working.config import LLMConfig, is_reachable
             cfg = LLMConfig()
+
+            # Check actual connectivity — don't just create the object
+            if is_reachable(cfg.base_url, timeout=3):
+                url, model = cfg.base_url, cfg.model
+            elif is_reachable(cfg.fallback_url, timeout=3):
+                url, model = cfg.fallback_url, cfg.fallback_model
+            else:
+                print("[MasterAgent] LLM routing unavailable (no Ollama endpoint reachable); keyword fallback active")
+                self._llm = None
+                return
+
             self._llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
+                base_url=url,
+                model=model,
                 temperature=0,
                 num_predict=16,
+                timeout=8,
             )
-            print("[MasterAgent] LLM routing ready")
+            print(f"[MasterAgent] LLM routing ready | endpoint={url} | model={model}")
         except Exception as exc:
-            print(f"[MasterAgent] LLM routing unavailable ({exc}); keyword routing active")
+            print(f"[MasterAgent] LLM routing unavailable ({exc}); keyword fallback active")
+            self._llm = None
 
     def _get_slave(self, domain: str) -> Optional[object]:
         if domain in self._slaves:
@@ -410,41 +387,54 @@ class MasterAgent:
 
         return agent
 
-    def _route_llm(self, query: str) -> Optional[str]:
+    _VALID_DOMAINS = frozenset({
+        'hr', 'it', 'admin', 'pmo', 'finance', 'org',
+        'employee', 'attendance', 'document', 'funny',
+    })
+
+    def _route_llm(self, query: str) -> tuple:
+        """
+        Returns (intent, domain) using the combined intent+routing prompt.
+        intent is one of: knowledge, action, data_lookup, casual, unclear
+        domain is one of the valid domains, or None if unresolved.
+        """
         if not self._llm:
-            return None
+            return None, None
         try:
             prompt = _ROUTING_PROMPT.format(query=query)
-            with ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(self._llm.invoke, prompt)
-                response = future.result(timeout=5)
+            ex = ThreadPoolExecutor(max_workers=1)
+            future = ex.submit(self._llm.invoke, prompt)
+            try:
+                response = future.result(timeout=8)
+            except FuturesTimeout:
+                print("[MasterAgent] LLM routing timed out")
+                future.cancel()
+                ex.shutdown(wait=False)
+                return None, None
+            finally:
+                ex.shutdown(wait=False)
             tokens = response.content.strip().lower().split()
-            if not tokens:
-                return None
-            domain = tokens[0]
-            if domain in DOMAIN_KEYWORDS or domain == 'document':
-                print(f"[MasterAgent] LLM routed -> {domain}")
-                return domain
+            if len(tokens) >= 2:
+                intent, domain = tokens[0], tokens[1]
+                if intent == 'casual':
+                    domain = 'funny'  # enforce: casual always goes to funny
+                if domain in self._VALID_DOMAINS:
+                    print(f"[MasterAgent] LLM routed -> intent={intent} domain={domain}")
+                    return intent, domain
+                if domain == 'none':
+                    print(f"[MasterAgent] LLM routed -> intent={intent} domain=none")
+                    return intent, None
+            elif len(tokens) == 1 and tokens[0] in self._VALID_DOMAINS:
+                # Backward compat: LLM returned just a domain
+                print(f"[MasterAgent] LLM routed (single token) -> {tokens[0]}")
+                return 'knowledge', tokens[0]
         except FuturesTimeout:
-            print("[MasterAgent] LLM routing timed out -- falling back to keywords")
+            print("[MasterAgent] LLM routing timed out")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing error ({exc})")
-        return None
+        return None, None
 
-    def _route_keywords(self, query: str) -> str:
-        q = query.lower()
-        scores = {
-            domain: sum(1 for kw in keywords if kw in q)
-            for domain, keywords in DOMAIN_KEYWORDS.items()
-        }
-        best = max(scores, key=scores.get)
-        if scores[best] == 0:
-            print("[MasterAgent] No keyword match -- defaulting to hr")
-            return 'hr'
-        print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
-        return best
-
-    def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
+    def _route(self, query: str, user_email: str = "", user_id: str = "") -> Optional[str]:
         # Active document session takes priority — route follow-up field replies correctly
         try:
             from app.agents.document_agent import has_active_session
@@ -454,33 +444,32 @@ class MasterAgent:
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
-        # Escalation keyword — highest priority, bypass LLM
+        # Escalation substring — unambiguous, safety-critical, skip LLM
         if 'escalat' in query.lower():
             print("[MasterAgent] Escalation keyword -> escalation")
             return 'escalation'
 
-        # Attendance pattern pre-classifier — deterministic, checked before employee
-        if _is_attendance_query(query):
-            print("[MasterAgent] Attendance pattern → attendance")
-            return 'attendance'
-
-        # Employee directory pre-classifier — deterministic
-        if _is_employee_query(query):
-            print("[MasterAgent] Employee pattern -> employee")
-            return 'employee'
-
-        # Document pattern pre-classifier — deterministic, no LLM needed
-        if _is_document_query(query):
-            print("[MasterAgent] Document pattern -> document")
-            return 'document'
-
-        # LLM routing — preferred when available
-        domain = self._route_llm(query)
-        if domain:
+        # Combined intent + domain LLM routing — single call handles everything
+        intent, domain = self._route_llm(query)
+        if intent == 'casual':
+            return 'funny'
+        if domain and domain in self._VALID_DOMAINS:
             return domain
 
-        # Keyword fallback
-        return self._route_keywords(query)
+        # LLM unavailable or unclear — try heuristic casual check
+        if _heuristic_is_casual(query):
+            print("[MasterAgent] Heuristic casual -> funny")
+            return 'funny'
+
+        # LLM unavailable — keyword fallback (returns None if no match)
+        if intent is None:
+            kw_domain = _fallback_keyword_route(query)
+            if kw_domain:
+                return kw_domain
+
+        # No confident route — disambiguation
+        print("[MasterAgent] No confident route — disambiguation")
+        return None
 
     def _run_agent(
         self,
@@ -608,6 +597,11 @@ class MasterAgent:
             return self._contextual_block_response(q, category) or fallback
 
         domain = self._route(q, user_email=user_email, user_id=user_id)
+
+        # No confident route — ask user to clarify instead of blind default
+        if domain is None:
+            return _DISAMBIGUATION_RESPONSE
+
         resp, sources = self._run_agent(domain, q, user_email, user_id)
 
         if not resp:

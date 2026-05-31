@@ -113,8 +113,10 @@ class BaseDeepAgent:
     # pgvector retrieval
     # ------------------------------------------------------------------
 
-    # Lowered from 0.25 -- many valid policy chunks score in the 0.10-0.25 band.
-    _SIMILARITY_THRESHOLD = 0.10
+    # Minimum similarity for a chunk to be considered relevant context.
+    # Chunks below this threshold are discarded entirely — no more
+    # "keep top 3 even if irrelevant" behaviour.
+    _SIMILARITY_THRESHOLD = 0.15
     _DEFAULT_TOP_K = 10
 
     def _retrieve_pgvector(self, query: str, top_k: int = None) -> Tuple[str, List[str]]:
@@ -132,9 +134,8 @@ class BaseDeepAgent:
 
             relevant = [c for c in chunks if (c.get("similarity") or 0) >= self._SIMILARITY_THRESHOLD]
             if not relevant:
-                # Keep top 3 even below threshold -- weak context beats nothing.
-                relevant = chunks[:3]
-                print(f"[{self.__class__.__name__}] all below threshold; keeping top {len(relevant)}")
+                print(f"[{self.__class__.__name__}] all chunks below threshold {self._SIMILARITY_THRESHOLD} — skipping pgvector context")
+                return "", []
 
             context = "\n\n".join(
                 f"[{c.get('document_name', 'Company Document')}]\n{c['chunk_text']}"
