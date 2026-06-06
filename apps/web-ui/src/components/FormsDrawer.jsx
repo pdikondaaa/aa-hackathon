@@ -260,8 +260,7 @@ const FormsDrawer = ({ isOpen, onClose, user, initialQuery = '' }) => {
     setCreating(true);
     setError(null);
     try {
-      // Acquire a Graph token with Forms.ReadWrite scope from MSAL
-      const graphToken = await acquireFormsToken();
+      const { access_token, tenant_id, user_oid } = await acquireFormsToken();
       const payload = {
         title:               title.trim(),
         description:         description.trim() || null,
@@ -269,7 +268,9 @@ const FormsDrawer = ({ isOpen, onClose, user, initialQuery = '' }) => {
           text, type, required,
           choices: choices.filter((c) => c.trim()),
         })),
-        graph_access_token:  graphToken,
+        graph_access_token:  access_token,
+        tenant_id,
+        user_oid,
       };
       const res = await createMicrosoftForm(payload);
       setResult(res);
