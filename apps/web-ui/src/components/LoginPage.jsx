@@ -6,6 +6,7 @@ const LoginPage = ({ isDark, onLogin, error }) => {
   const [loading, setLoading] = useState(false);
   const logo = isDark ? alignedDarkLogo : alignedLightLogo;
 
+
   const handleLogin = async () => {
     setLoading(true);
     try {
@@ -15,6 +16,8 @@ const LoginPage = ({ isDark, onLogin, error }) => {
     }
   };
 
+  
+
   return (
     <div className="login-page">
       <div className="login-card">
@@ -23,7 +26,7 @@ const LoginPage = ({ isDark, onLogin, error }) => {
 
         <div className="login-app-badge">
           <span className="login-app-name">AURA</span>
-          <span className="login-app-version">v1.0</span>
+        
         </div>
 
         <p className="login-subtitle">Aligned Unified Resource Assistant</p>

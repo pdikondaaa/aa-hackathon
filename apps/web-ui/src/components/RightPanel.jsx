@@ -135,8 +135,7 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         </button>
       </div>
 
-      
-      {/* ── Upcoming Events (live from Outlook calendar) ── */}
+  {/* ── Upcoming Events (live from Outlook calendar) ── */}
       <section className="right-section" style={{ borderBottom: 'none' }}>
         <p className="right-section-label">{labels.upcoming}</p>
         {calLoading ? (
@@ -372,44 +371,6 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         )}
       </section>
 
-      {/* ── Escalations ───────────────────────────────────── */}
-      <section className="right-section" style={{ borderBottom: 'none' }}>
-        <p className="right-section-label">{labels.escalations}</p>
-        {escLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : escalations.length === 0 ? (
-          <p className="rp-empty-text">No escalations found</p>
-        ) : (
-          <ul className="escalation-list">
-            {escalations.map((esc) => {
-              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
-              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
-              return (
-                <li
-                  key={esc.id}
-                  className="escalation-card"
-                  style={{ borderLeftColor: domainColor }}
-                >
-                  <p className="escalation-title">{esc.subject}</p>
-                  <div className="escalation-meta">
-                    <span className="escalation-id">{shortId}</span>
-                    <span
-                      className="escalation-domain"
-                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
-                    >
-                      {esc.escalation_type.toUpperCase()}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
       {/* ── Today's Birthdays ──────────────────────────────── */}
       <section className="right-section">
         <p className="right-section-label">
@@ -483,6 +444,47 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
           </ul>
         )}
       </section>
+
+      {/* ── Escalations ───────────────────────────────────── */}
+      <section className="right-section" style={{ borderBottom: 'none' }}>
+        <p className="right-section-label">{labels.escalations}</p>
+        {escLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : escalations.length === 0 ? (
+          <p className="rp-empty-text">No escalations found</p>
+        ) : (
+          <ul className="escalation-list">
+            {escalations.map((esc) => {
+              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
+              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
+              return (
+                <li
+                  key={esc.id}
+                  className="escalation-card"
+                  style={{ borderLeftColor: domainColor }}
+                >
+                  <p className="escalation-title">{esc.subject}</p>
+                  <div className="escalation-meta">
+                    <span className="escalation-id">{shortId}</span>
+                    <span
+                      className="escalation-domain"
+                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
+                    >
+                      {esc.escalation_type.toUpperCase()}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+    
+
     </aside>
   );
 };
