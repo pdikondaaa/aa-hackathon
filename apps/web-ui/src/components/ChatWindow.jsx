@@ -46,7 +46,9 @@ const FORMS_INTENT_PATTERNS = [
 const detectFormsIntent = (text) =>
   FORMS_INTENT_PATTERNS.some((re) => re.test(text));
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const SpeechRecognition = window.isSecureContext
+  ? (window.SpeechRecognition || window.webkitSpeechRecognition)
+  : null;
 
 const getGreeting = (firstName) => {
   const h = new Date().getHours();
@@ -74,6 +76,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   const [loading, setLoading]           = useState(false);
   const [historyLoading, setHistoryLoading] = useState(!!selectedConversationId);
   const [historyError, setHistoryError]   = useState(false);
+  const [voiceError, setVoiceError]       = useState(null);
   const [thinkingIndex, setThinkingIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
 
@@ -311,7 +314,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     recognitionRef.current      = recognition;
     voiceBaseRef.current        = input;
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => { setIsListening(true); setVoiceError(null); };
 
     recognition.onresult = (e) => {
       let interim = '';
@@ -330,7 +333,19 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     };
 
     recognition.onend  = () => { setIsListening(false); textareaRef.current?.focus(); };
-    recognition.onerror = () => setIsListening(false);
+    recognition.onerror = (e) => {
+      setIsListening(false);
+      const errorMessages = {
+        'not-allowed':       'Microphone access denied. Allow microphone in browser settings, and ensure the site has a valid HTTPS certificate.',
+        'no-speech':         'No speech detected. Please try speaking again.',
+        'audio-capture':     'No microphone found. Please connect a microphone.',
+        'network':           'Network error during speech recognition. Please check your connection.',
+        'service-not-allowed': 'Speech recognition service is not available.',
+      };
+      const msg = errorMessages[e.error] || `Speech recognition error: ${e.error}`;
+      setVoiceError(msg);
+      setTimeout(() => setVoiceError(null), 5000);
+    };
 
     recognition.start();
   };
@@ -455,6 +470,14 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             onChange={handleFileSelect}
           />
 
+          {/* Voice error message */}
+          {voiceError && (
+            <div className="voice-error-msg" role="alert">
+              <i className="fas fa-exclamation-circle" />
+              <span>{voiceError}</span>
+            </div>
+          )}
+
           {/* Attachment preview chips */}
           {attachments.length > 0 && (
             <div className="attachment-preview">
@@ -489,6 +512,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
                 className="chat-input-icon-btn"
                 title="Attach file"
                 aria-label="Attach file"
+                disabled="true" // Placeholder for future file attachment enablement
                 onClick={() => fileInputRef.current?.click()}
               >
                 <i className="fas fa-paperclip" />
@@ -496,11 +520,16 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
               {/* <button className="chat-input-icon-btn" title="Search" aria-label="Search">
                 <i className="fas fa-search" />
               </button> */}
-              {SpeechRecognition && (
+              {(SpeechRecognition || !window.isSecureContext) && (
                 <button
-                  className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}`}
-                  onClick={toggleVoice}
-                  title={isListening ? 'Stop recording' : 'Voice input'}
+                  className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}${!SpeechRecognition ? ' mic-btn--disabled' : ''}`}
+                  onClick={SpeechRecognition ? toggleVoice : undefined}
+                  disabled={!SpeechRecognition}
+                  title={
+                    !window.isSecureContext
+                      ? 'Voice input requires a valid HTTPS certificate'
+                      : isListening ? 'Stop recording' : 'Voice input'
+                  }
                   aria-label={isListening ? 'Stop voice recording' : 'Start voice input'}
                   aria-pressed={isListening}
                 >
