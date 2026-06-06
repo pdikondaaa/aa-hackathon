@@ -197,7 +197,7 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
                       <span className="esc-email-draft-lbl">Subject</span>
                       <span className="esc-email-draft-val">{emailDraft.subject}</span>
                     </div>
-                    <div className="esc-email-draft-body">{emailDraft.body}</div>
+                    <div className="esc-email-draft-body">{renderEmailBody(emailDraft.body)}</div>
                   </div>
                   <button className="esc-outlook-btn" onClick={handleOpenOutlook}>
                     <i className="fab fa-microsoft" />
@@ -207,7 +207,7 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
               )}
 
               {!emailLoading && !emailDraft && (
-                <p className="esc-email-draft-note">Email draft unavailable — you can still notify the team manually.</p>
+                <p className="esc-email-draft-note">Email draft service unavailable</p>
               )}
             </div>
 
@@ -395,6 +395,25 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
     </>
   );
 };
+
+function renderEmailBody(body) {
+  if (!body) return null;
+  return body.split('\n').map((line, i) => {
+    const inlineLabel = line.match(/^([A-Za-z][A-Za-z ]+):\s+(.+)$/);
+    if (inlineLabel) {
+      return (
+        <div key={i}>
+          <strong>{inlineLabel[1]}:</strong>{' '}{inlineLabel[2]}
+        </div>
+      );
+    }
+    const labelOnly = line.match(/^([A-Za-z][A-Za-z ]+):$/);
+    if (labelOnly) {
+      return <div key={i}><strong>{labelOnly[1]}:</strong></div>;
+    }
+    return <div key={i}>{line || <>&nbsp;</>}</div>;
+  });
+}
 
 function typeIcon(type) {
   switch (type) {
