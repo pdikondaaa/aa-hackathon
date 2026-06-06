@@ -35,7 +35,12 @@ def _extract_csv(file_path: str) -> str:
 
 def _extract_docx(file_path: str) -> str:
     import docx
-    doc = docx.Document(file_path)
+    try:
+        doc = docx.Document(file_path)
+    except KeyError:
+        # Malformed docx: a relationship points to a zip entry that doesn't exist
+        # (e.g. 'word/#_Table_of_Contents'). Fall back to raw XML parsing.
+        return _extract_docx_fallback(file_path)
     paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
     # Also pull text from tables
     for table in doc.tables:
@@ -44,6 +49,18 @@ def _extract_docx(file_path: str) -> str:
             if row_text:
                 paragraphs.append(row_text)
     return "\n".join(paragraphs)
+
+
+def _extract_docx_fallback(file_path: str) -> str:
+    """Parse word/document.xml directly when python-docx fails on a malformed archive."""
+    import zipfile
+    import re
+    with zipfile.ZipFile(file_path) as zf:
+        with zf.open("word/document.xml") as xml_fh:
+            xml = xml_fh.read().decode("utf-8", errors="replace")
+    # Extract text runs (<w:t>) rather than stripping all tags, to avoid merging words
+    runs = re.findall(r'<w:t[^>]*>([^<]*)</w:t>', xml)
+    return " ".join(r.strip() for r in runs if r.strip())
 
 
 def _extract_pptx(file_path: str) -> str:
