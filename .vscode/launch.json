@@ -1,6 +1,9 @@
 {
   "version": "0.2.0",
   "configurations": [
+    
+
+
     {
       "name": "API Gateway (FastAPI)",
       "type": "python",
@@ -14,9 +17,8 @@
         "--port",
         "8000"
       ],
-      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
-      "jinja": true,
       "cwd": "${workspaceFolder}/apps/api-gateway",
+      "jinja": true,
       "env": {
         "DATABASE_URL": "postgresql://squadrons:TwlU0KL1LZbZLYS$@hackathon.alignedautomation.com:5432/squadrons",
         "SQL_ECHO": "false",
@@ -38,11 +40,11 @@
         "dev"
       ],
       "cwd": "${workspaceFolder}/apps/web-ui",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen",
       "env": {
         "VITE_API_URL": "http://localhost:8000"
       },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
       "skipFiles": [
         "<node_internals>/**"
       ]

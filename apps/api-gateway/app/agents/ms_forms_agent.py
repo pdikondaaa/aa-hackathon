@@ -2,82 +2,67 @@
 ms_forms_agent.py
 =================
 Creates Microsoft Forms on behalf of the authenticated user using the
-Microsoft Graph API with a delegated access token.
+Microsoft Forms REST API (forms.office.com/formapi).
 
-Endpoint used:
-  POST https://graph.microsoft.com/v1.0/forms                     — create form shell
-  POST https://graph.microsoft.com/v1.0/forms/{formId}/questions  — add each question
+Token:   Delegated token for resource https://forms.office.com,
+         acquired via MSAL with scope "https://forms.office.com/Forms.ReadWrite".
 
-Required Azure AD permission (delegated):
-  Forms.ReadWrite   (admin consent required)
-
-The caller (forms_controller.py) must supply the user's Graph-scoped
-access token. The token is obtained on the frontend via MSAL with the
-scope: "https://graph.microsoft.com/Forms.ReadWrite"
+Strategy:
+  1. POST the full form (title + questions) in a single request.
+  2. If the API ignores questions, PATCH the form with questions after creation.
+  3. If PATCH also fails, return the form shell with the edit URL so the user
+     can add questions manually.
 """
 
+import urllib.parse
+import uuid
 import requests
 
-GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
-# Map from our question-type names → Graph API questionType values
-# Reference: https://learn.microsoft.com/en-us/graph/api/resources/questionitem
+# Integer type codes used by forms.office.com/formapi (internal OData API)
+# 1=Text  2=Choice  3=Rating  4=Date
 QUESTION_TYPE_MAP = {
-    "text":              "text",
-    "single_choice":     "choice",
-    "multiple_choice":   "choice",
-    "rating":            "rating",
-    "date":              "date",
-    "yes_no":            "choice",  # implemented as a 2-option choice
+    "text":            1,
+    "single_choice":   2,
+    "multiple_choice": 2,
+    "rating":          3,
+    "date":            4,
+    "yes_no":          2,
 }
 
 
 class MSFormsAgentError(Exception):
-    """Raised when the Graph API returns an error."""
+    """Raised when the Forms REST API returns an unrecoverable error."""
     pass
 
 
 class MSFormsAgent:
-    """Creates Microsoft Forms via Graph API using a delegated user token."""
+    """Creates Microsoft Forms via forms.office.com REST API."""
 
-    def __init__(self, access_token: str):
+    def __init__(self, access_token: str, tenant_id: str, user_oid: str):
         if not access_token:
-            raise MSFormsAgentError("A valid Graph access token is required.")
+            raise MSFormsAgentError("A valid Forms access token is required.")
+        if not tenant_id:
+            raise MSFormsAgentError("tenant_id is required.")
+        if not user_oid:
+            raise MSFormsAgentError("user_oid is required.")
+
+        self._base    = f"https://forms.office.com/formapi/api/{tenant_id}"
+        self._user_id = user_oid
         self._headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
+            "Content-Type":  "application/json",
+            "Accept":        "application/json",
         }
+        print(f"[MSFormsAgent] tenant={tenant_id} user={user_oid}")
 
     # ── Public entry point ────────────────────────────────────────────────
 
     def create_form(self, title: str, description: str, questions: list) -> dict:
-        """
-        Creates a form shell, adds all questions, and returns the result dict.
+        q_payloads = [self._build_question_payload(q, i) for i, q in enumerate(questions)]
 
-        Parameters
-        ----------
-        title       : str   — Form title (required)
-        description : str   — Optional form description
-        questions   : list  — List of dicts:
-                              {
-                                "text":    "Question text",
-                                "type":    "text|single_choice|multiple_choice|rating|date|yes_no",
-                                "required": True/False,
-                                "choices":  ["Option A", "Option B"]  # for choice types only
-                              }
-
-        Returns
-        -------
-        dict — { form_id, web_url, edit_url, title }
-        """
-        form_id, web_url, edit_url = self._create_form_shell(title, description)
-
-        for idx, q in enumerate(questions):
-            try:
-                self._add_question(form_id, q, idx)
-            except MSFormsAgentError as exc:
-                # Log and continue — partial form is better than no form
-                print(f"[MSFormsAgent] Warning: failed to add question {idx + 1}: {exc}")
+        # Strategy 1: include questions in the initial POST
+        form_id, web_url, edit_url = self._create_form(title, description, q_payloads)
 
         return {
             "form_id":  form_id,
@@ -88,72 +73,83 @@ class MSFormsAgent:
 
     # ── Private helpers ───────────────────────────────────────────────────
 
-    def _create_form_shell(self, title: str, description: str):
-        """POST /v1.0/forms — creates the empty form and returns (form_id, web_url, edit_url)."""
-        payload = {"title": title}
-        if description and description.strip():
-            payload["description"] = description.strip()
-
-        resp = requests.post(
-            f"{GRAPH_BASE}/forms",
-            json=payload,
-            headers=self._headers,
-            timeout=15,
-        )
-        self._raise_for_status(resp, "create form")
-
-        data      = resp.json()
-        form_id   = data.get("id", "")
-        web_url   = data.get("webUrl", "")
-        # editLink is the HR editing URL; may not always be present in v1.0
-        edit_url  = data.get("editLink") or data.get("editUrl") or web_url
-
-        if not form_id:
-            raise MSFormsAgentError("Graph API returned a form without an ID.")
-
-        print(f"[MSFormsAgent] Form created: id={form_id}")
-        return form_id, web_url, edit_url
-
-    def _add_question(self, form_id: str, question: dict, index: int):
-        """POST /v1.0/forms/{formId}/questions — adds a single question."""
+    def _build_question_payload(self, question: dict, index: int) -> dict:
         q_type   = question.get("type", "text")
         q_text   = question.get("text", f"Question {index + 1}").strip()
         required = question.get("required", False)
         choices  = question.get("choices", [])
 
-        graph_type = QUESTION_TYPE_MAP.get(q_type, "text")
-
-        payload = {
-            "questionType": graph_type,
-            "displayName":  q_text,
+        q_id = "r" + uuid.uuid4().hex[:8]
+        payload: dict = {
+            "id":           q_id,
+            "questionType": QUESTION_TYPE_MAP.get(q_type, 1),
+            "title":        q_text,
             "isRequired":   required,
+            "order":        (index + 1) * 1_000_000,
         }
 
-        # Attach choices for choice-type questions
-        if graph_type == "choice":
+        if q_type in ("single_choice", "multiple_choice", "yes_no"):
             if q_type == "yes_no":
                 choices = ["Yes", "No"]
-            option_list = [{"displayName": c.strip()} for c in choices if c.strip()]
-            if option_list:
-                payload["choices"]    = option_list
-                payload["allowsMultipleSelection"] = (q_type == "multiple_choice")
+            payload["choices"] = [{"text": c.strip()} for c in choices if c.strip()]
+            if q_type == "multiple_choice":
+                payload["allowMultipleSelection"] = True
 
-        # Rating scale — default 1–5 stars
-        if graph_type == "rating":
+        if q_type == "rating":
             payload["ratingLevel"] = 5
 
-        resp = requests.post(
-            f"{GRAPH_BASE}/forms/{form_id}/questions",
-            json=payload,
-            headers=self._headers,
-            timeout=15,
-        )
-        self._raise_for_status(resp, f"add question '{q_text}'")
-        print(f"[MSFormsAgent] Question {index + 1} added: {q_text}")
+        return payload
+
+    def _create_form(self, title: str, description: str, questions: list):
+        """POST to create the form shell, then PATCH questions onto it."""
+        url = f"{self._base}/users/{self._user_id}/forms"
+        payload: dict = {"title": title}
+        if description and description.strip():
+            payload["description"] = description.strip()
+
+        print(f"[MSFormsAgent] POST {url}")
+        resp = requests.post(url, json=payload, headers=self._headers, timeout=15)
+        print(f"[MSFormsAgent] Create response {resp.status_code}: {resp.text[:600]}")
+        self._raise_for_status(resp, "create form")
+
+        data    = resp.json()
+        form_id = data.get("id", "")
+        if not form_id:
+            raise MSFormsAgentError(f"Forms API returned no form ID. Response: {data}")
+
+        web_url  = (data.get("webUrl")
+                    or f"https://forms.office.com/Pages/ResponsePage.aspx?id={form_id}")
+        edit_url = (data.get("editUrl") or data.get("editLink")
+                    or f"https://forms.office.com/Pages/DesignPage.aspx#FormId={form_id}")
+
+        print(f"[MSFormsAgent] Form created: id={form_id}")
+
+        if questions:
+            self._patch_questions(form_id, questions)
+
+        return form_id, web_url, edit_url
+
+    def _form_url(self, form_id: str) -> str:
+        """OData key format: /users/{uid}/forms('{encoded_id}')"""
+        encoded = urllib.parse.quote(form_id, safe="")
+        return f"{self._base}/users/{self._user_id}/forms('{encoded}')"
+
+    def _patch_questions(self, form_id: str, questions: list):
+        """POST questions one-by-one via the OData navigation property."""
+        q_url = f"{self._form_url(form_id)}/questions"
+        all_ok = True
+        for i, q in enumerate(questions):
+            print(f"[MSFormsAgent] POST {q_url} (Q{i+1})")
+            r = requests.post(q_url, json=q, headers=self._headers, timeout=15)
+            print(f"[MSFormsAgent] Q{i+1} response {r.status_code}: {r.text[:300]}")
+            if not r.ok:
+                all_ok = False
+                break
+        if not all_ok:
+            print("[MSFormsAgent] Questions could not be added — user can add via edit URL.")
 
     @staticmethod
     def _raise_for_status(response: requests.Response, action: str):
-        """Raise MSFormsAgentError with a human-readable message on non-2xx."""
         if response.ok:
             return
         status = response.status_code
@@ -165,15 +161,12 @@ class MSFormsAgent:
 
         if status == 401:
             raise MSFormsAgentError(
-                "Authentication failed. Your session may have expired — please refresh and try again."
+                "Authentication failed — session may have expired. Please sign in again."
             )
         if status == 403:
             raise MSFormsAgentError(
-                "Permission denied. The 'Forms.ReadWrite' permission has not been granted yet. "
-                "Please contact your Azure AD admin to enable this permission."
+                "Permission denied. Ensure 'Forms.ReadWrite' consent is granted for your account."
             )
-        if status == 404:
-            raise MSFormsAgentError(
-                "Microsoft Forms endpoint not found. Ensure your tenant has Microsoft Forms enabled."
-            )
-        raise MSFormsAgentError(f"Graph API error while trying to {action} (HTTP {status}): {err_msg}")
+        raise MSFormsAgentError(
+            f"Forms API error while trying to {action} (HTTP {status}): {err_msg}"
+        )
