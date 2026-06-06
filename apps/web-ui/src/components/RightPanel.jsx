@@ -135,175 +135,7 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         </button>
       </div>
 
-
-      {/* ── Attendance Details ────────────────────────────── */}
-      <section className="right-section">
-        <p className="right-section-label">ATTENDANCE</p>
-
-        {attLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : attError || !attData ? (
-          <p className="rp-empty-text">Could not load attendance data</p>
-        ) : (
-          <>
-            {/* Month tab switcher */}
-            <div className="att-tabs">
-              <button
-                className={`att-tab ${attTab === 'this' ? 'att-tab--active' : ''}`}
-                onClick={() => setAttTab('this')}
-              >
-                This Month
-              </button>
-              <button
-                className={`att-tab ${attTab === 'last' ? 'att-tab--active' : ''}`}
-                onClick={() => setAttTab('last')}
-              >
-                Last Month
-              </button>
-            </div>
-
-            {/* Month summary chips — days and hours are clickable */}
-            <div className="att-summary">
-              <button
-                className="att-summary-chip att-summary-chip--btn"
-                onClick={() => handleAttChipClick('days')}
-                title="Click to see attendance details in chat"
-              >
-                <span className="att-summary-val">{currentMonth.total_days}</span>
-                <span className="att-summary-lbl">days</span>
-              </button>
-              <button
-                className="att-summary-chip att-summary-chip--btn"
-                onClick={() => handleAttChipClick('hours')}
-                title="Click to see working hours in chat"
-              >
-                <span className="att-summary-val">{currentMonth.total_hours_label}</span>
-                <span className="att-summary-lbl">total hrs</span>
-              </button>
-              <div className="att-summary-chip">
-                <span className="att-summary-val">{currentMonth.month_label.split(' ')[0].slice(0, 3)}</span>
-                <span className="att-summary-lbl">{currentMonth.year}</span>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* ── Today's Birthdays ──────────────────────────────── */}
-      <section className="right-section">
-        <p className="right-section-label">
-          <i className="fas fa-birthday-cake" style={{ marginRight: 6, color: '#f472b6' }} />
-          TODAY'S BIRTHDAYS
-        </p>
-        {bdLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : birthdays.length === 0 ? (
-          <p className="rp-empty-text">No birthdays today 🎂</p>
-        ) : (
-          <ul className="birthday-list">
-            {birthdays.map((person, idx) => (
-              <li key={idx} className="birthday-card">
-                <div className="birthday-avatar">
-                  {person.first_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="birthday-info">
-                  <p className="birthday-name">{person.full_name}</p>
-                  {person.department && (
-                    <span className="birthday-dept">{person.department}</span>
-                  )}
-                </div>
-                <span className="birthday-emoji">🎉</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* ── Work Anniversaries ──────────────────────────────── */}
-      <section className="right-section">
-        <p className="right-section-label">
-          <i className="fas fa-trophy" style={{ marginRight: 6, color: '#f59e0b' }} />
-          WORK ANNIVERSARIES
-        </p>
-        {annLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : anniversaries.length === 0 ? (
-          <p className="rp-empty-text">No work anniversaries today 🏆</p>
-        ) : (
-          <ul className="birthday-list">
-            {anniversaries.map((person, idx) => (
-              <li key={idx} className="birthday-card">
-                <div className="birthday-avatar" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-                  {person.first_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="birthday-info">
-                  <p className="birthday-name">{person.full_name}</p>
-                  {person.department && (
-                    <span className="birthday-dept">{person.department}</span>
-                  )}
-                </div>
-                {person.years != null && (
-                  <span
-                    className="birthday-emoji"
-                    title={`${person.years} year${person.years !== 1 ? 's' : ''} at the company`}
-                    style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b', whiteSpace: 'nowrap' }}
-                  >
-                    {person.years}y 🏆
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* ── Escalations ───────────────────────────────────── */}
-      <section className="right-section" style={{ borderBottom: 'none' }}>
-        <p className="right-section-label">{labels.escalations}</p>
-        {escLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : escalations.length === 0 ? (
-          <p className="rp-empty-text">No escalations found</p>
-        ) : (
-          <ul className="escalation-list">
-            {escalations.map((esc) => {
-              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
-              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
-              return (
-                <li
-                  key={esc.id}
-                  className="escalation-card"
-                  style={{ borderLeftColor: domainColor }}
-                >
-                  <p className="escalation-title">{esc.subject}</p>
-                  <div className="escalation-meta">
-                    <span className="escalation-id">{shortId}</span>
-                    <span
-                      className="escalation-domain"
-                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
-                    >
-                      {esc.escalation_type.toUpperCase()}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
+      
       {/* ── Upcoming Events (live from Outlook calendar) ── */}
       <section className="right-section" style={{ borderBottom: 'none' }}>
         <p className="right-section-label">{labels.upcoming}</p>
@@ -484,6 +316,173 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         )}
       </section>
 
+      {/* ── Attendance Details ────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">ATTENDANCE</p>
+
+        {attLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : attError || !attData ? (
+          <p className="rp-empty-text">Could not load attendance data</p>
+        ) : (
+          <>
+            {/* Month tab switcher */}
+            <div className="att-tabs">
+              <button
+                className={`att-tab ${attTab === 'this' ? 'att-tab--active' : ''}`}
+                onClick={() => setAttTab('this')}
+              >
+                This Month
+              </button>
+              <button
+                className={`att-tab ${attTab === 'last' ? 'att-tab--active' : ''}`}
+                onClick={() => setAttTab('last')}
+              >
+                Last Month
+              </button>
+            </div>
+
+            {/* Month summary chips — days and hours are clickable */}
+            <div className="att-summary">
+              <button
+                className="att-summary-chip att-summary-chip--btn"
+                onClick={() => handleAttChipClick('days')}
+                title="Click to see attendance details in chat"
+              >
+                <span className="att-summary-val">{currentMonth.total_days}</span>
+                <span className="att-summary-lbl">days</span>
+              </button>
+              <button
+                className="att-summary-chip att-summary-chip--btn"
+                onClick={() => handleAttChipClick('hours')}
+                title="Click to see working hours in chat"
+              >
+                <span className="att-summary-val">{currentMonth.total_hours_label}</span>
+                <span className="att-summary-lbl">total hrs</span>
+              </button>
+              <div className="att-summary-chip">
+                <span className="att-summary-val">{currentMonth.month_label.split(' ')[0].slice(0, 3)}</span>
+                <span className="att-summary-lbl">{currentMonth.year}</span>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ── Escalations ───────────────────────────────────── */}
+      <section className="right-section" style={{ borderBottom: 'none' }}>
+        <p className="right-section-label">{labels.escalations}</p>
+        {escLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : escalations.length === 0 ? (
+          <p className="rp-empty-text">No escalations found</p>
+        ) : (
+          <ul className="escalation-list">
+            {escalations.map((esc) => {
+              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
+              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
+              return (
+                <li
+                  key={esc.id}
+                  className="escalation-card"
+                  style={{ borderLeftColor: domainColor }}
+                >
+                  <p className="escalation-title">{esc.subject}</p>
+                  <div className="escalation-meta">
+                    <span className="escalation-id">{shortId}</span>
+                    <span
+                      className="escalation-domain"
+                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
+                    >
+                      {esc.escalation_type.toUpperCase()}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* ── Today's Birthdays ──────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">
+          <i className="fas fa-birthday-cake" style={{ marginRight: 6, color: '#f472b6' }} />
+          TODAY'S BIRTHDAYS
+        </p>
+        {bdLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : birthdays.length === 0 ? (
+          <p className="rp-empty-text">No birthdays today 🎂</p>
+        ) : (
+          <ul className="birthday-list">
+            {birthdays.map((person, idx) => (
+              <li key={idx} className="birthday-card">
+                <div className="birthday-avatar">
+                  {person.first_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="birthday-info">
+                  <p className="birthday-name">{person.full_name}</p>
+                  {person.department && (
+                    <span className="birthday-dept">{person.department}</span>
+                  )}
+                </div>
+                <span className="birthday-emoji">🎉</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ── Work Anniversaries ──────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">
+          <i className="fas fa-trophy" style={{ marginRight: 6, color: '#f59e0b' }} />
+          WORK ANNIVERSARIES
+        </p>
+        {annLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : anniversaries.length === 0 ? (
+          <p className="rp-empty-text">No work anniversaries today 🏆</p>
+        ) : (
+          <ul className="birthday-list">
+            {anniversaries.map((person, idx) => (
+              <li key={idx} className="birthday-card">
+                <div className="birthday-avatar" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                  {person.first_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="birthday-info">
+                  <p className="birthday-name">{person.full_name}</p>
+                  {person.department && (
+                    <span className="birthday-dept">{person.department}</span>
+                  )}
+                </div>
+                {person.years != null && (
+                  <span
+                    className="birthday-emoji"
+                    title={`${person.years} year${person.years !== 1 ? 's' : ''} at the company`}
+                    style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b', whiteSpace: 'nowrap' }}
+                  >
+                    {person.years}y 🏆
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </aside>
   );
 };
