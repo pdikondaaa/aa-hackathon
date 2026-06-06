@@ -7,7 +7,8 @@ class LLMConfig:
     base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434"))
     model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", "gpt-oss"))
     temperature: float = 0.1
-    max_tokens: int = 2048
+    max_tokens: int = 800
+    num_ctx: int = 2048
 
 
 @dataclass

@@ -35,11 +35,11 @@ def chat(req: Ask, user=Depends(get_current_user)):
 
 
 @router.post("/chat/stream")
-def chat_stream(req: Ask, _user=Depends(get_current_user)):
+async def chat_stream(req: Ask, user=Depends(get_current_user)):
     """Streaming chat endpoint — returns SSE chunks so the UI renders tokens as they arrive."""
     try:
         return StreamingResponse(
-            _chat_service.stream_message(req.message),
+            _chat_service.stream_message(req.message, user_email=user["email"], user_id=user["user_id"]),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

@@ -4,7 +4,7 @@ import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
-from typing import Generator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import urlparse
 
 from app.agents.guardrails import check_input
@@ -108,6 +108,28 @@ def _is_greeting(text: str) -> bool:
     if len(words) == 2:
         return f"{words[0]} {words[1]}" in _PURE_TWO_WORD
     return False
+
+
+# ── Conversational openers that should go to the quick agent ─────────────────
+_CONVERSATIONAL_RE = re.compile(
+    r"""^[\s!.,?]*
+    (?:
+        how\s+are\s+you |
+        how\s+(?:r|are)\s+u |
+        how'?s\s+(?:it\s+going|everything|things|your\s+day) |
+        what(?:'s|\s+is)\s+up |
+        what\s+can\s+you\s+(?:do|help\s+(?:me\s+)?with) |
+        who\s+are\s+you |
+        what\s+are\s+you |
+        tell\s+me\s+about\s+yourself |
+        introduce\s+yourself
+    )[\s!.,?]*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _is_conversational(text: str) -> bool:
+    return bool(_CONVERSATIONAL_RE.match(text.strip()))
 
 
 _GREETING_RESPONSE = (
@@ -334,7 +356,7 @@ Synthesized answer:"""
 class MasterAgent:
     """Single orchestrator — routes to one domain agent and returns its response."""
 
-    _PREWARM_DOMAINS = ['hr', 'it', 'admin', 'pmo', 'finance', 'org']
+    _PREWARM_DOMAINS = ['general', 'hr', 'it', 'admin', 'pmo', 'finance', 'org']
 
     def __init__(self):
         self._slaves: Dict[str, object] = {}
@@ -370,7 +392,10 @@ class MasterAgent:
 
         agent = None
         try:
-            if domain == 'hr':
+            if domain == 'general':
+                from app.agents.working.quick_agent import QuickAgent
+                agent = QuickAgent()
+            elif domain == 'hr':
                 from app.agents.working.hr_agent import HRAgent
                 agent = HRAgent()
             elif domain == 'it':
@@ -480,8 +505,8 @@ class MasterAgent:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
-            print("[MasterAgent] No keyword match -- defaulting to hr")
-            return 'hr'
+            print("[MasterAgent] No keyword match -- routing to general (QuickAgent)")
+            return 'general'
         print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
         return best
 
@@ -502,12 +527,12 @@ class MasterAgent:
 
         # Microsoft Forms intent — fast-path before LLM
         if _is_forms_query(query):
-            print("[MasterAgent] Forms pattern → forms")
+            print("[MasterAgent] Forms pattern -> forms")
             return 'forms'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
         if _is_attendance_query(query):
-            print("[MasterAgent] Attendance pattern → attendance")
+            print("[MasterAgent] Attendance pattern -> attendance")
             return 'attendance'
 
         # Employee directory pre-classifier — deterministic
@@ -520,12 +545,12 @@ class MasterAgent:
             print("[MasterAgent] Document pattern -> document")
             return 'document'
 
-        # LLM routing — preferred when available
-        domain = self._route_llm(query)
-        if domain:
-            return domain
+        # Greetings and conversational openers — quick agent, no retrieval needed
+        if _is_greeting(query) or _is_conversational(query):
+            print("[MasterAgent] Greeting/conversational -> general")
+            return 'general'
 
-        # Keyword fallback
+        # Keyword routing — fast, no LLM call needed
         return self._route_keywords(query)
 
     def _run_agent(
@@ -641,15 +666,12 @@ class MasterAgent:
         if not q:
             return "<p>Please enter a question.</p>"
 
-        if _is_greeting(q):
-            return _GREETING_RESPONSE
-
         if _APPLY_LEAVE_RE.search(q):
             return _APPLY_LEAVE_RESPONSE
 
         # Microsoft Forms intent — return sentinel so frontend opens the Forms Drawer
         if _is_forms_query(q):
-            print("[MasterAgent] Forms intent detected → returning sentinel")
+            print("[MasterAgent] Forms intent detected -> returning sentinel")
             return _MS_FORMS_SENTINEL
 
         is_blocked, category, fallback = check_input(q)
@@ -676,21 +698,69 @@ class MasterAgent:
 
         return resp
 
-    def stream_query(
+    async def stream_query(
         self, query: str, user_email: str = "", user_id: str = "",
-    ) -> Generator[str, None, None]:
-        """Yield SSE-formatted chunks. Each chunk is a JSON object: {content: str}."""
+    ) -> AsyncGenerator[str, None]:
+        """Yield SSE-formatted chunks with real async token-by-token streaming."""
+        import asyncio
+        q = query.strip()
+        if not q:
+            yield _sse({"content": "<p>Please enter a question.</p>"})
+            yield _sse_done()
+            return
+
+        if _APPLY_LEAVE_RE.search(q):
+            yield _sse({"content": _APPLY_LEAVE_RESPONSE})
+            yield _sse_done()
+            return
+
+        if _is_forms_query(q):
+            yield _sse({"content": _MS_FORMS_SENTINEL})
+            yield _sse_done()
+            return
+
+        is_blocked, category, fallback = check_input(q)
+        if is_blocked:
+            if category in ('jailbreak', 'security', 'harmful'):
+                answer = fallback
+            else:
+                answer = self._contextual_block_response(q, category) or fallback
+            yield _sse({"content": answer})
+            yield _sse_done()
+            return
+
+        # Route then stream
         try:
-            answer = self._process_query_inner(
-                query, user_email=user_email, user_id=user_id,
-            )
+            domain = self._route(q, user_email=user_email, user_id=user_id)
+            agent = self._get_slave(domain)
+
+            if not agent:
+                yield _sse({"content": "<p>I couldn't find relevant information. Please reach out to the appropriate department.</p>"})
+                yield _sse_done()
+                return
+
+            if hasattr(agent, 'stream_query'):
+                # Async token streaming — event loop stays free between tokens
+                async for chunk in agent.stream_query(q, user_id=user_id):
+                    yield _sse({"content": chunk})
+            else:
+                # Non-streaming agents (employee, attendance, document, escalation)
+                resp, _ = await asyncio.to_thread(self._run_agent, domain, q, user_email, user_id)
+                answer = resp or "<p>I couldn't find relevant information. Please reach out to the appropriate department.</p>"
+                yield _sse({"content": answer})
+
+            sources = getattr(agent, 'last_sources', [])
+            if sources:
+                items = "".join(
+                    f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+                    for s in dict.fromkeys(sources)
+                )
+                yield _sse({"content": f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"})
+
         except Exception as exc:
             print(f"[MasterAgent] stream_query error: {exc}")
-            answer = (
-                "I couldn't find relevant information for your query. "
-                "Please reach out to the appropriate department directly."
-            )
-        yield _sse({"content": answer})
+            yield _sse({"content": "I couldn't find relevant information. Please reach out to the appropriate department directly."})
+
         yield _sse_done()
 
 
@@ -723,5 +793,6 @@ def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
     return _master.process_query(query, user_email=user_email, user_id=user_id)
 
 
-def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> Generator[str, None, None]:
-    return _master.stream_query(query, user_email=user_email, user_id=user_id)
+async def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> AsyncGenerator[str, None]:
+    async for chunk in _master.stream_query(query, user_email=user_email, user_id=user_id):
+        yield chunk
