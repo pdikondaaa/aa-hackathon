@@ -56,6 +56,10 @@ class BaseDeepAgent:
     _DATA_FOLDERS: List[str] = []
     _PERSONALITY: str = ""
     _FALLBACK_CONTACT: str = "your department contact"
+    # Subclasses set this to a plain-text/markdown block that is always
+    # prepended to the LLM context, making structured data (e.g. pricing
+    # tables) available to the model without requiring a vector search hit.
+    _STATIC_CONTEXT: str = ""
 
     def __init__(self, config: Optional[DeepAgentConfig] = None):
         self._config = config or DeepAgentConfig()
@@ -273,7 +277,9 @@ class BaseDeepAgent:
             # Optional web search
             web_context = tavily_search(query) if is_tavily_available() else ""
 
-            context_parts = [p for p in [memory_context, pg_context, local_context] if p]
+            # Static context (e.g. pricing tables) is always available to the
+            # model regardless of what vector search returns.
+            context_parts = [p for p in [self._STATIC_CONTEXT, memory_context, pg_context, local_context] if p]
             if web_context:
                 context_parts.append(f"[Web]\n{web_context}")
 

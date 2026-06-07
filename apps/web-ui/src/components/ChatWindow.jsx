@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat, saveEmailDraft } from '../services/api';
+import { buildParkingHtml, buildAlreadySubmittedHtml } from '../config/parkingConfig';
+import { parkingApi } from '../modules/parking-assistant/services/parkingApi';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -50,6 +52,62 @@ const EMAIL_INTENT_PATTERNS = [
 const detectEmailIntent = (text) =>
   EMAIL_INTENT_PATTERNS.some((re) => re.test(text));
 
+// ── Parking cost/charges query detection ──────────────────────────────────────
+const PARKING_COST_INTENT_PATTERNS = [
+  // "parking" followed by any cost keyword (singular + plural)
+  /\bparking\s+(cost|costs|charge|charges|fee|fees|rate|rates|price|prices|pricing|tariff|tariffs|amount)\b/i,
+
+  // "how much is/does/for [the] parking"
+  /\bhow\s+much\s+(is|does|for|are)\s+(the\s+)?(parking|park)\b/i,
+
+  // "how much does parking cost/charge" — keyword after parking
+  /\bhow\s+much\s+(parking|park)\s+(cost|costs|charge|charges|fee|fees)\b/i,
+
+  // "cost/fee/charge/rate/price of/for [the] parking"
+  /\b(cost|costs|fee|fees|charge|charges|rate|rates|price|prices)\s+(of|for)\s+(the\s+)?(parking|park)\b/i,
+
+  // parking + time-period implying cost inquiry
+  /\bparking\s+(monthly|daily|per\s+day|per\s+month|subscription|plan|pass)\b/i,
+
+  // "what are/is [the] parking cost/charges/options"
+  /\bwhat\s+(are|is|'s)\s+(the\s+)?(parking\s+(cost|costs|charge|charges|fee|fees|rate|rates|price|prices|option|options|plan|plans)|cost\s+of\s+parking)\b/i,
+
+  // "tell/show/give/list/explain [me] [the] parking charges"
+  /\b(tell|show|give|list|explain|share)\s+(me\s+)?(the\s+)?(parking\s+(cost|costs|charge|charges|fee|fees|rate|rates|price|prices|option|options|plan|plans))\b/i,
+
+  // "is parking free/paid/chargeable"
+  /\b(is|does)\s+parking\s+(free|paid|chargeable|have\s+a\s+fee|cost\s+anything)\b/i,
+
+  // "parking options/plans/info/details"
+  /\bparking\s+(option|options|plan|plans|information|info|details|breakdown|summary)\b/i,
+
+  // vehicle-type + parking cost: "2W parking fee", "bike parking charges"
+  /\b(2w|4w|two[\s-]?wheeler|four[\s-]?wheeler|bike|car|vehicle)\s+(parking\s+)?(cost|costs|charge|charges|fee|fees|rate|rates|price|prices)\b/i,
+
+  // "what do I pay / how much do I pay for parking"
+  /\b(pay|paying)\s+(for|towards)\s+parking\b/i,
+
+  // "AASPL / Fountainhead parking fee"
+  /\b(aaspl|fountainhead)\s+(parking\s+)?(cost|costs|charge|charges|fee|fees|rate|rates|price|prices)\b/i,
+];
+
+const detectParkingCostIntent = (text) =>
+  PARKING_COST_INTENT_PATTERNS.some((re) => re.test(text));
+
+// ── Parking intent detection ───────────────────────────────────────────────────
+const PARKING_INTENT_PATTERNS = [
+  /\b(parking|park)\s+(sticker|pass|rfid|card|permit|slot|space|application|request|apply|tracker)\b/i,
+  /\b(apply|request|get|need|want|obtain)\s+(a\s+)?(parking|park)\b/i,
+  /\bparking\s+(sticker|application|apply|request|form)\b/i,
+  /\b(vehicle|car|bike|two.?wheeler|four.?wheeler|2w|4w)\s+(parking|park|sticker)\b/i,
+  /\b(parking\s+tracker|tracker\s+parking)\b/i,
+  /\bdeactivate\s+(parking|sticker|rfid)\b/i,
+  /\b(surrender|return)\s+(parking|sticker|rfid|card)\b/i,
+];
+
+const detectParkingIntent = (text) =>
+  PARKING_INTENT_PATTERNS.some((re) => re.test(text));
+
 // ── Microsoft Forms intent detection ──────────────────────────────────────────
 const FORMS_INTENT_PATTERNS = [
   /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?(microsoft\s+)?form(s)?\b/i,
@@ -74,7 +132,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, onOpenFormsDrawer, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, onOpenFormsDrawer, onOpenParkingDrawer, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -219,8 +277,44 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     const abortCtrl = new AbortController();
     abortCtrlRef.current = abortCtrl;
 
-    const isEmailRequest = detectEmailIntent(trimmed);
-    const isFormsRequest = detectFormsIntent(trimmed);
+    const isEmailRequest      = detectEmailIntent(trimmed);
+    const isFormsRequest      = detectFormsIntent(trimmed);
+    const isParkingCostQuery  = detectParkingCostIntent(trimmed);
+    const isParkingRequest    = !isParkingCostQuery && detectParkingIntent(trimmed);
+
+    // Parking cost/charges question — check for existing request, then respond with live pricing card
+    if (isParkingCostQuery) {
+      let hasRequest = false;
+      try {
+        const res = await parkingApi.getMyRequest();
+        hasRequest = !!(res && res.id);
+      } catch { /* show default CTA on any error */ }
+      setMessages(prev => [
+        ...prev,
+        { id: nextId + 1, role: 'assistant', content: buildParkingHtml(hasRequest), timestamp: now },
+      ]);
+      setLoading(false);
+      return;
+    }
+
+    // Parking application — open drawer; if already submitted show a status card instead of the generic message
+    if (isParkingRequest) {
+      let existing = null;
+      try {
+        const res = await parkingApi.getMyRequest();
+        if (res && res.id) existing = res;
+      } catch { /* fall through to generic message */ }
+      onOpenParkingDrawer?.();
+      const content = existing
+        ? buildAlreadySubmittedHtml(existing)
+        : '🅿️ I\'ve opened the **Parking Tracker** on the right. Fill in your vehicle details to apply for a parking sticker, or view your existing request.';
+      setMessages(prev => [
+        ...prev,
+        { id: nextId + 1, role: 'assistant', content, timestamp: now },
+      ]);
+      setLoading(false);
+      return;
+    }
 
     try {
       // Create a conversation on the first message of a new chat session
@@ -250,7 +344,9 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
           backendId: msgResponse.id,
           conversationId: convId,
           role: 'assistant',
-          content: resolveSentinel(msgResponse.content),
+          content: msgResponse.content === '__MS_FORMS_INTENT__'
+            ? '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!'
+            : msgResponse.content,
           sources: [],
           timestamp: now,
         },
@@ -456,6 +552,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
                 user={user}
                 conversationId={conversationId}
                 onOpenEscalation={onOpenEscalation}
+                onOpenParkingDrawer={onOpenParkingDrawer}
               />
             ))}
 

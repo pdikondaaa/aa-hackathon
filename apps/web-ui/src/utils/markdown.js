@@ -40,6 +40,13 @@ export const parseMarkdown = (raw) => {
       continue;
     }
 
+    // Raw HTML lines — emit unchanged so backend/config HTML renders correctly
+    if (line.trimStart().startsWith('<')) {
+      flushList();
+      output.push(line);
+      continue;
+    }
+
     // Horizontal rule
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
       flushList();

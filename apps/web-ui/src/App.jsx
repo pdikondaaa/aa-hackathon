@@ -16,11 +16,12 @@ import AllocationBoard    from './components/AllocationBoard';
 import LoginPage       from './components/LoginPage';
 import EscalationDrawer from './components/EscalationDrawer';
 import FormsDrawer from './components/FormsDrawer';
+import ParkingDrawer from './components/ParkingDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
 import { getAllocationRole } from './services/api';
 import EmailAgentPage from './components/EmailAgentPage';
 import { AnalyticsDashboard } from './modules/analytics';
-import { COODashboard }       from './modules/coo-analytics';
+import { COODashboard }         from './modules/coo-analytics';
 import DocumentsPage from './components/DocumentsPage';
 import AdminPage from './components/AdminPage';
 import CommunicationsPage from './components/CommunicationsPage';
@@ -75,6 +76,7 @@ export default function App() {
   const [injectedMessage, setInjectedMessage] = useState('');
   const [formsDrawerOpen,       setFormsDrawerOpen]       = useState(false);
   const [formsDrawerQuery,      setFormsDrawerQuery]      = useState('');
+  const [parkingDrawerOpen,     setParkingDrawerOpen]     = useState(false);
 
   const [user,           setUser]           = useState(null);
   const [authLoading,    setAuthLoading]    = useState(true);
@@ -339,6 +341,7 @@ export default function App() {
                   setFormsDrawerQuery(query || '');
                   setFormsDrawerOpen(true);
                 }}
+                onOpenParkingDrawer={() => setParkingDrawerOpen(true)}
                 injectedMessage={injectedMessage}
                 onInjectedMessageSent={() => setInjectedMessage('')}
               />
@@ -371,6 +374,11 @@ export default function App() {
         onClose={() => setFormsDrawerOpen(false)}
         user={user}
         initialQuery={formsDrawerQuery}
+      />
+      <ParkingDrawer
+        isOpen={parkingDrawerOpen}
+        onClose={() => setParkingDrawerOpen(false)}
+        user={user}
       />
     </div>
   );

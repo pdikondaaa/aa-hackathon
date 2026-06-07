@@ -4,6 +4,7 @@ import {
 } from 'recharts';
 
 import { getAllocationBoard, getEmployeeDetail, askAllocationAura } from '../services/api';
+import { COOAnalyticsDashboard } from '../modules/coo-analytics/pages/COODashboard';
 
 const CHART_COLORS = ['#1D76BC', '#27AAE1', '#4ED44E', '#2A3D90', '#f59e0b', '#ef4444', '#a78bfa', '#10b981'];
 const BILLING_EXCLUDE_EXEC = ['Pipeline', 'Sales'];
@@ -1033,6 +1034,50 @@ export default function AllocationBoard() {
 
   if (!boardData) return null;
 
+  // Executive role: show COO Analytics Dashboard under the standard Allocation Board header
+  if (boardData.role === 'executive') {
+    return (
+      <div className="ab-root ab-root--exec">
+        <div style={{
+          background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%)',
+          borderBottom: '1px solid var(--border)',
+          padding: '18px 28px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          position: 'sticky',
+          top: 0,
+          zIndex: 20,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #1D76BC, #2A3D90)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <i className="fas fa-layer-group" style={{ color: '#fff', fontSize: 16 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
+                Allocation Board
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                Executive View · Operational Intelligence Cockpit
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, background: 'rgba(29,118,188,0.12)', border: '1px solid rgba(29,118,188,0.3)', color: '#1D76BC', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <i className="fas fa-circle" style={{ fontSize: 7 }} /> Executive
+            </span>
+            <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
+              <i className="fas fa-robot" />
+              Ask Aura
+            </button>
+          </div>
+        </div>
+        {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role="executive" />}
+        <COOAnalyticsDashboard hideHeader />
+      </div>
+    );
+  }
+
   const roleLabel   = ROLE_LABEL[boardData.role] || boardData.role;
   const notInSystem = !boardData.designation;
 
@@ -1061,9 +1106,6 @@ export default function AllocationBoard() {
       <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
       {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={boardData.role} />}
 
-      {boardData.role === 'executive' && (
-        <ExecutiveView data={boardData} onEmployeeClick={handleEmployeeClick} />
-      )}
       {(boardData.role === 'functional_lead' || boardData.role === 'business_lead') && (
         <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={boardData.role} />
       )}

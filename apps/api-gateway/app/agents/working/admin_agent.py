@@ -1,6 +1,7 @@
 import os
 from .base_deep_agent import BaseDeepAgent, DATA_ROOT
 from .personalities import ADMIN_PERSONALITY
+from app.agents.parking_config import PARKING_CONTEXT
 
 
 class AdminAgent(BaseDeepAgent):
@@ -10,3 +11,4 @@ class AdminAgent(BaseDeepAgent):
     ]
     _PERSONALITY = ADMIN_PERSONALITY
     _FALLBACK_CONTACT = "Admin Team at admin@alignedautomation.com"
+    _STATIC_CONTEXT = PARKING_CONTEXT
