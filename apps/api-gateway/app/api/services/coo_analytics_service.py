@@ -50,12 +50,22 @@ def get_coo_dashboard(email: str, filters: dict | None = None) -> dict:
     base = "ad.status_active_inactive = 'Active' AND ad.billing = 'Billable'"
     where = f"{base} AND {extra_where}" if extra_where else base
 
+    # Trend chart always shows 12-month history — strip date range so a single-month
+    # selection doesn't collapse the chart to one point.
+    trend_filters = {k: v for k, v in filters.items() if k not in ('date_from', 'date_to')}
+    trend_extra_where, trend_extra_params = _build_filter_where(trend_filters)
+    trend_where = f"{base} AND {trend_extra_where}" if trend_extra_where else base
+
+    # Zero-effort bucket includes non-billable active employees too
+    non_bill_base = "ad.status_active_inactive = 'Active' AND (ad.billing IS NULL OR ad.billing != 'Billable')"
+    non_bill_where = f"{non_bill_base} AND {extra_where}" if extra_where else non_bill_base
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            return _run_all_queries(cur, where, extra_params)
+            return _run_all_queries(cur, where, extra_params, trend_where, trend_extra_params, non_bill_where)
 
 
-def _run_all_queries(cur, where: str, params: list) -> dict:
+def _run_all_queries(cur, where: str, params: list, trend_where: str = None, trend_params: list = None, non_bill_where: str = None) -> dict:
 
     # ── Per-employee effort aggregation (foundation for KPIs + distribution) ──
     cur.execute(f"""
@@ -74,6 +84,26 @@ def _run_all_queries(cur, where: str, params: list) -> dict:
     underallocated  = sum(1 for r in per_emp if 0 < _f(r["total_efforts"]) < 100)
     overallocated   = sum(1 for r in per_emp if _f(r["total_efforts"]) > 100)
     zero_alloc      = sum(1 for r in per_emp if _f(r["total_efforts"]) == 0)
+
+    # Add non-billable active employees with zero efforts (exclude anyone already in billable scope)
+    if non_bill_where:
+        billable_ids = [r["employee_id"] for r in per_emp]
+        if billable_ids:
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT ad.employee_id) AS cnt
+                FROM allocation_details ad
+                WHERE {non_bill_where}
+                  AND COALESCE(ad.efforts_pct, 0) = 0
+                  AND ad.employee_id != ALL(%s)
+            """, params + [billable_ids])
+        else:
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT ad.employee_id) AS cnt
+                FROM allocation_details ad
+                WHERE {non_bill_where}
+                  AND COALESCE(ad.efforts_pct, 0) = 0
+            """, params)
+        zero_alloc += int((cur.fetchone() or {}).get("cnt") or 0)
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
     cur.execute(f"""
@@ -112,6 +142,8 @@ def _run_all_queries(cur, where: str, params: list) -> dict:
     ]
 
     # ── Allocation Trend ───────────────────────────────────────────────────────
+    _tw = trend_where or where
+    _tp = trend_params if trend_params is not None else params
     cur.execute(f"""
         SELECT
             TO_CHAR(DATE_TRUNC('month', ad.allocation_date), 'Mon YYYY') AS month_label,
@@ -119,12 +151,12 @@ def _run_all_queries(cur, where: str, params: list) -> dict:
             ROUND(AVG(ad.efforts_pct)::numeric, 1)                       AS avg_efforts,
             ROUND(AVG(ad.billability_pct)::numeric, 1)                   AS avg_billability
         FROM allocation_details ad
-        WHERE {where} AND ad.allocation_date IS NOT NULL
+        WHERE {_tw} AND ad.allocation_date IS NOT NULL
         GROUP BY DATE_TRUNC('month', ad.allocation_date),
                  TO_CHAR(DATE_TRUNC('month', ad.allocation_date), 'Mon YYYY')
         ORDER BY month_date DESC
         LIMIT 12
-    """, params)
+    """, _tp)
     trend_rows = [dict(r) for r in cur.fetchall()]
     trend_rows.reverse()
     allocation_trend = [
@@ -331,6 +363,56 @@ def _generate_insights(kpi: dict, client_conc: list, delivery_load: list) -> lis
     return out[:8]
 
 
+_ALLOWED_GROUP_KEYS = {'project_name', 'client_master', 'function', 'subfunction', 'delivery_manager'}
+
+
+def get_raw_records(email: str, filters: dict, group_key: str = None, group_value: str = None, allocation_filter: str = None) -> list:
+    profile = get_user_profile(email)
+    if profile["role"] not in ANALYTICS_ROLES:
+        raise PermissionError("COO Analytics requires executive or business lead access.")
+
+    filters = filters or {}
+    extra_where, extra_params = _build_filter_where(filters)
+    base = "ad.status_active_inactive = 'Active' AND ad.billing = 'Billable'"
+    where = f"{base} AND {extra_where}" if extra_where else base
+    params = list(extra_params)
+
+    if group_key and group_key in _ALLOWED_GROUP_KEYS and group_value:
+        where += f" AND ad.{group_key} = %s"
+        params.append(group_value)
+
+    if allocation_filter == 'fully_allocated':
+        where += " AND COALESCE(ad.efforts_pct, 0) = 100"
+    elif allocation_filter == 'underallocated':
+        where += " AND COALESCE(ad.efforts_pct, 0) > 0 AND COALESCE(ad.efforts_pct, 0) < 100"
+    elif allocation_filter == 'overallocated':
+        where += " AND COALESCE(ad.efforts_pct, 0) > 100"
+    elif allocation_filter == 'zero':
+        where += " AND COALESCE(ad.efforts_pct, 0) = 0"
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT
+                    ad.name,
+                    ad.employee_id,
+                    ad.project_name,
+                    ad.client_master,
+                    ad.function,
+                    ad.subfunction,
+                    ad.delivery_manager,
+                    ad.efforts_pct,
+                    ad.billability_pct,
+                    ad.project_status,
+                    ad.allocation_date::date AS allocation_date
+                FROM allocation_details ad
+                WHERE {where}
+                ORDER BY ad.name, ad.project_name
+                LIMIT 500
+            """, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
 def get_filter_options(email: str) -> dict:
     """Returns filter dropdown options scoped to active billable records."""
     profile = get_user_profile(email)
@@ -349,10 +431,21 @@ def get_filter_options(email: str) -> dict:
                 """)
                 return [r[col] for r in cur.fetchall()]
 
+            cur.execute("""
+                SELECT DISTINCT TO_CHAR(allocation_date, 'YYYY-MM') AS month_key
+                FROM allocation_details
+                WHERE status_active_inactive = 'Active'
+                  AND billing = 'Billable'
+                  AND allocation_date IS NOT NULL
+                ORDER BY month_key DESC
+            """)
+            available_months = [r["month_key"] for r in cur.fetchall()]
+
             return {
                 "functions":         _distinct("function"),
                 "subfunctions":      _distinct("subfunction"),
                 "clients":           _distinct("client_master"),
                 "project_statuses":  _distinct("project_status"),
                 "delivery_managers": _distinct("delivery_manager"),
+                "available_months":  available_months,
             }

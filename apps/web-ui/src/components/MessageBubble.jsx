@@ -79,7 +79,7 @@ const EmailDraftCard = ({ draft }) => {
 const getInitials = (name = '') =>
   name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation }) => {
+const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation, onOpenParkingDrawer }) => {
   const [feedback, setFeedback] = useState(message.initialFeedback?.rating ?? null);
   const [feedbackId, setFeedbackId] = useState(message.initialFeedback?.id ?? null);
   const [submitting, setSubmitting] = useState(false);
@@ -162,12 +162,17 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
               dangerouslySetInnerHTML={{ __html: parseMarkdown(message.content) }}
               onClick={(e) => {
                 const anchor = e.target.closest('a');
-                if (anchor && anchor.getAttribute('href') === '#escalation') {
+                if (!anchor) return;
+                const href = anchor.getAttribute('href');
+                if (href === '#escalation') {
                   e.preventDefault();
                   onOpenEscalation?.({
                     conversationId: conversationId ?? message.conversationId ?? null,
                     messageId: message.backendId ?? null,
                   });
+                } else if (href === '#parking-status') {
+                  e.preventDefault();
+                  onOpenParkingDrawer?.();
                 }
               }}
             />

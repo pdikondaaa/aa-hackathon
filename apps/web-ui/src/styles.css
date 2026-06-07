@@ -5305,6 +5305,7 @@ button, a, [role="button"] {
 
 /* ── Allocation Board v2 ──────────────────────────────────────────────────── */
 .ab-root { flex: 1; min-width: 0; padding: 1.25rem 1.5rem; overflow-y: auto; height: 100%; box-sizing: border-box; }
+.ab-root--exec { padding: 0; }
 .ab-analytics { display: flex; flex-direction: column; }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
