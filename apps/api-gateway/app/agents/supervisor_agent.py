@@ -32,6 +32,21 @@ _APPLY_LEAVE_RESPONSE = (
     '📅 Apply Leave on Zoho People</a>'
 )
 
+# ── Email draft fast-path ────────────────────────────────────────────────────
+_EMAIL_DRAFT_RE = re.compile(
+    r"""
+    \b(?:
+        draft(?:ing)?\s+(?:a\s+|an\s+)?email |
+        write\s+(?:a\s+|an\s+)?email |
+        compose\s+(?:a\s+|an\s+)?email |
+        create\s+(?:a\s+|an\s+)?email |
+        (?:help\s+(?:me\s+)?)?(?:draft|write|compose|prepare)\s+(?:a\s+|an\s+)?(?:\w+\s+)?email |
+        email\s+(?:draft|template)
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 # ── Microsoft Forms fast-path ─────────────────────────────────────────────────
 _MS_FORMS_RE = re.compile(
     r"""
@@ -52,7 +67,8 @@ _MS_FORMS_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_MS_FORMS_SENTINEL = "__MS_FORMS_INTENT__"
+_MS_FORMS_SENTINEL    = "__MS_FORMS_INTENT__"
+_EMAIL_DRAFT_SENTINEL = "__EMAIL_DRAFT_INTENT__"
 
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
 _GREETING_RE = re.compile(
@@ -227,6 +243,11 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
     ],
+    'email': [
+        'draft email', 'write email', 'compose email', 'create email',
+        'draft an email', 'write an email', 'compose an email',
+        'email draft', 'email template', 'help me draft', 'help me write an email',
+    ],
     'funny': [
         'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
         'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
@@ -321,6 +342,10 @@ def _is_attendance_query(query: str) -> bool:
     return any(p.search(query) for p in _ATT_PATTERNS)
 
 
+def _is_email_draft_query(query: str) -> bool:
+    return bool(_EMAIL_DRAFT_RE.search(query))
+
+
 def _is_forms_query(query: str) -> bool:
     return bool(_MS_FORMS_RE.search(query))
 
@@ -342,12 +367,13 @@ Departments and what they own:
 - hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
 - forms: create Microsoft Forms / surveys / questionnaires — HR survey, exit survey, onboarding form, feedback form, training questionnaire
+- email: draft, write, or compose a professional email — "draft an email for leave", "help me write an email to HR", "compose an email about my resignation"
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms, email
 
 If unsure, reply: hr
 
@@ -480,6 +506,36 @@ class MasterAgent:
                         return _MS_FORMS_SENTINEL
 
                 agent = _FormsPlaceholder()
+            elif domain == 'email':
+                from app.agents.email_agent import draft_email_from_chat as _email_fn
+
+                class _EmailWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, **__) -> str:
+                        try:
+                            result = self._fn(q)
+                            to = result.get("to", "")
+                            subject = result.get("refined_subject", "")
+                            body = result.get("refined_body", "")
+                            parts = []
+                            if to:
+                                parts.append(f"<p><strong>To:</strong> {to}</p>")
+                            if subject:
+                                parts.append(f"<p><strong>Subject:</strong> {subject}</p>")
+                            if body:
+                                parts.append(
+                                    f"<p><strong>Body:</strong></p>"
+                                    f"<p style='white-space:pre-wrap'>{body}</p>"
+                                )
+                            return "".join(parts) if parts else "<p>Could not draft the email. Please try again.</p>"
+                        except RuntimeError as exc:
+                            return f"<p>Unable to draft email: {exc}</p>"
+
+                agent = _EmailWrapper(_email_fn)
             elif domain == 'funny':
                 from app.agents.working.funny_agent import FunnyAgent
                 agent = FunnyAgent()
@@ -503,7 +559,7 @@ class MasterAgent:
             if not tokens:
                 return None
             domain = tokens[0]
-            if domain in DOMAIN_KEYWORDS or domain == 'document':
+            if domain in DOMAIN_KEYWORDS or domain in ('document', 'email'):
                 print(f"[MasterAgent] LLM routed -> {domain}")
                 return domain
         except FuturesTimeout:
@@ -544,6 +600,12 @@ class MasterAgent:
         if _is_forms_query(query):
             print("[MasterAgent] Forms pattern -> forms")
             return 'forms'
+
+        # Email draft intent — checked before employee to avoid false matches like
+        # "email for Leave Request" hitting the employee email-field pattern
+        if _is_email_draft_query(query):
+            print("[MasterAgent] Email draft pattern -> email")
+            return 'email'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
         if _is_attendance_query(query):
@@ -692,6 +754,11 @@ class MasterAgent:
             print("[MasterAgent] Forms intent detected -> returning sentinel")
             return _MS_FORMS_SENTINEL
 
+        # Email draft intent — return sentinel; frontend calls /api/email-agent/from-chat directly
+        if _is_email_draft_query(q):
+            print("[MasterAgent] Email draft intent detected -> returning sentinel")
+            return _EMAIL_DRAFT_SENTINEL
+
         # Name fast-path — answer from SSO token without a DB call
         if _NAME_QUERY_RE.search(q) and user_name:
             return f"<p>Your name is <strong>{user_name}</strong>.</p>"
@@ -738,6 +805,11 @@ class MasterAgent:
 
         if _is_forms_query(q):
             yield _sse({"content": _MS_FORMS_SENTINEL})
+            yield _sse_done()
+            return
+
+        if _is_email_draft_query(q):
+            yield _sse({"content": _EMAIL_DRAFT_SENTINEL})
             yield _sse_done()
             return
 

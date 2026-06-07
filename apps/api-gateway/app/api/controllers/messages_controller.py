@@ -56,6 +56,12 @@ class SendMessageIn(BaseModel):
     content: str
 
 
+class EmailDraftIn(BaseModel):
+    to: str = ""
+    subject: str = ""
+    body: str = ""
+
+
 # ------------------------------------------------------------------ #
 # 1. Send message  POST /api/conversations/{id}/messages             #
 # ------------------------------------------------------------------ #
@@ -70,6 +76,23 @@ def send_message(id: str, body: SendMessageIn, current_user: dict = Depends(get_
     Returns the assistant message record (status='pending' until the agent writes back)."""
     user_id = _resolve_user(current_user)
     result = _service.send_message(id, user_id, body.content)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return result
+
+
+# ------------------------------------------------------------------ #
+# 1b. Save email draft  POST /api/conversations/{id}/email-draft     #
+# ------------------------------------------------------------------ #
+@conv_router.post(
+    "/{id}/email-draft",
+    response_model=MessageOut,
+    status_code=201,
+    summary="Persist an AI-generated email draft as a conversation message",
+)
+def save_email_draft(id: str, body: EmailDraftIn, current_user: dict = Depends(get_current_user)):
+    user_id = _resolve_user(current_user)
+    result = _service.save_email_draft(id, user_id, body.to, body.subject, body.body)
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return result
