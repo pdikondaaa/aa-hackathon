@@ -47,7 +47,7 @@ def _get_embedder() -> HuggingFaceEmbeddings:
 def _get_pool() -> _pg_pool.ThreadedConnectionPool:
     global _conn_pool
     if _conn_pool is None:
-        print(f"[retriever] Creating connection pool → {_DB_URL}")
+        print(f"[retriever] Creating connection pool -> {_DB_URL}")
         _conn_pool = _pg_pool.ThreadedConnectionPool(1, 8, _DB_URL)
     return _conn_pool
 
