@@ -127,6 +127,18 @@ _CONVERSATIONAL_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# ── User identity name fast-path ──────────────────────────────────────────────
+_NAME_QUERY_RE = re.compile(
+    r"""
+    \b(?:
+        what(?:'s|\s+is)\s+my\s+(?:full\s+)?name |
+        tell\s+me\s+my\s+(?:full\s+)?name |
+        my\s+(?:full\s+)?name\s*[?]?$
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 
 def _is_conversational(text: str) -> bool:
     return bool(_CONVERSATIONAL_RE.match(text.strip()))
@@ -273,7 +285,10 @@ _EMP_PATTERNS = [
     re.compile(r"\b(?:manager\s+of|reports?\s+to|reporting\s+to|team\s+under)\s+[a-z]", re.IGNORECASE),
     re.compile(r"\bmy\s+(?:mobile|phone|email|designation|department|manager|role|grade)\b", re.IGNORECASE),
     re.compile(r"\bmy\s+(?:level|skill|project|blood|joining|detail|info|profile|team|location|experience|contact)\b", re.IGNORECASE),
-    re.compile(r"\b(?:who\s+am\s+i|about\s+me)\b", re.IGNORECASE),
+    re.compile(r"\b(?:who\s+am\s+i|about\s+me|about\s+myself)\b", re.IGNORECASE),
+    re.compile(r"\btell\s+me\s+about\s+(?:my)?self\b", re.IGNORECASE),
+    re.compile(r"\bmy\s+(?:full\s+)?name\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s|\s+is)\s+my\s+(?:full\s+)?name\b", re.IGNORECASE),
     re.compile(r"\bwho\s+is\s+\w", re.IGNORECASE),
     re.compile(r"\b(?:profile|details?|information|info)\s+(?:of|about|for)\s+\w", re.IGNORECASE),
     re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
@@ -422,8 +437,8 @@ class MasterAgent:
                     def __init__(self, fn) -> None:
                         self._fn = fn
 
-                    def process_query(self, q: str, user_email: str = "") -> str:
-                        return self._fn(q, user_email=user_email)
+                    def process_query(self, q: str, user_email: str = "", user_name: str = "") -> str:
+                        return self._fn(q, user_email=user_email, user_name=user_name)
 
                 agent = _EmpWrapper(_emp_fn)
             elif domain == 'attendance':
@@ -559,6 +574,7 @@ class MasterAgent:
         query: str,
         user_email: str = "",
         user_id: str = "",
+        user_name: str = "",
         conversation_history: Optional[List[Dict]] = None,
     ):
         agent = self._get_slave(domain)
@@ -567,7 +583,9 @@ class MasterAgent:
         try:
             if domain == 'document':
                 resp = agent.process_query(query, user_email=user_email, user_id=user_id)
-            elif domain in ('employee', 'attendance'):
+            elif domain == 'employee':
+                resp = agent.process_query(query, user_email=user_email, user_name=user_name)
+            elif domain == 'attendance':
                 resp = agent.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
@@ -651,9 +669,9 @@ class MasterAgent:
             print(f"[MasterAgent] _run_slave error for domain '{domain}': {exc}")
         return domain, None, []
 
-    def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
+    def process_query(self, query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
         try:
-            return self._process_query_inner(query, user_email=user_email, user_id=user_id)
+            return self._process_query_inner(query, user_email=user_email, user_id=user_id, user_name=user_name)
         except Exception as exc:
             print(f"[MasterAgent] Unhandled exception in process_query: {exc}")
             return (
@@ -661,7 +679,7 @@ class MasterAgent:
                 "Please try again or contact support if the issue persists."
             )
 
-    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "") -> str:
+    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
         q = query.strip()
         if not q:
             return "<p>Please enter a question.</p>"
@@ -674,6 +692,10 @@ class MasterAgent:
             print("[MasterAgent] Forms intent detected -> returning sentinel")
             return _MS_FORMS_SENTINEL
 
+        # Name fast-path — answer from SSO token without a DB call
+        if _NAME_QUERY_RE.search(q) and user_name:
+            return f"<p>Your name is <strong>{user_name}</strong>.</p>"
+
         is_blocked, category, fallback = check_input(q)
         if is_blocked:
             if category in ('jailbreak', 'security', 'harmful'):
@@ -681,7 +703,7 @@ class MasterAgent:
             return self._contextual_block_response(q, category) or fallback
 
         domain = self._route(q, user_email=user_email, user_id=user_id)
-        resp, sources = self._run_agent(domain, q, user_email, user_id)
+        resp, sources = self._run_agent(domain, q, user_email, user_id, user_name)
 
         if not resp:
             return (
@@ -699,7 +721,7 @@ class MasterAgent:
         return resp
 
     async def stream_query(
-        self, query: str, user_email: str = "", user_id: str = "",
+        self, query: str, user_email: str = "", user_id: str = "", user_name: str = "",
     ) -> AsyncGenerator[str, None]:
         """Yield SSE-formatted chunks with real async token-by-token streaming."""
         import asyncio
@@ -716,6 +738,12 @@ class MasterAgent:
 
         if _is_forms_query(q):
             yield _sse({"content": _MS_FORMS_SENTINEL})
+            yield _sse_done()
+            return
+
+        # Name fast-path — answer from SSO token without a DB call
+        if _NAME_QUERY_RE.search(q) and user_name:
+            yield _sse({"content": f"<p>Your name is <strong>{user_name}</strong>.</p>"})
             yield _sse_done()
             return
 
@@ -789,10 +817,10 @@ def _source_label(url: str) -> str:
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
-    return _master.process_query(query, user_email=user_email, user_id=user_id)
+def run_assistant(query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
+    return _master.process_query(query, user_email=user_email, user_id=user_id, user_name=user_name)
 
 
-async def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> AsyncGenerator[str, None]:
-    async for chunk in _master.stream_query(query, user_email=user_email, user_id=user_id):
+async def stream_assistant(query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> AsyncGenerator[str, None]:
+    async for chunk in _master.stream_query(query, user_email=user_email, user_id=user_id, user_name=user_name):
         yield chunk
