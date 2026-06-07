@@ -4,6 +4,7 @@ import { listDocuments } from '../services/api';
 // ── Category definitions — Aligned Automation brand colors only ────────────
 // Palette: Aligned Blue #1D76BC · Light Blue #27AAE1 · Deep Blue #2A3D90 · Energy Green #4ED44E
 const CATEGORIES = [
+  
   {
     id: 'all',
     label: 'All Documents',

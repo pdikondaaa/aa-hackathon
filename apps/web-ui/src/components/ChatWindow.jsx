@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
-import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat } from '../services/api';
+import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat, saveEmailDraft } from '../services/api';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -16,6 +16,23 @@ const THINKING_PHRASES = [
   'Sifting through records...',
   'Piecing it all together...',
 ];
+
+const SENTINEL_LABELS = {
+  '__MS_FORMS_INTENT__':    '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!',
+  '__EMAIL_DRAFT_INTENT__': '✉️ I\'ve drafted a professional email for you below. Review and edit it, then click **Send Email** to open it in Outlook.',
+};
+
+const resolveSentinel = (content) => SENTINEL_LABELS[content] ?? content;
+
+const parseEmailDraft = (content) => {
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.__type === 'email_draft') {
+      return { to: parsed.to || '', subject: parsed.subject || '', body: parsed.body || '' };
+    }
+  } catch { /* not JSON */ }
+  return null;
+};
 
 const EMAIL_INTENT_PATTERNS = [
   /\b(send|write|compose|draft)\s+(an?\s+)?email\b/i,
@@ -46,7 +63,9 @@ const FORMS_INTENT_PATTERNS = [
 const detectFormsIntent = (text) =>
   FORMS_INTENT_PATTERNS.some((re) => re.test(text));
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const SpeechRecognition = window.isSecureContext
+  ? (window.SpeechRecognition || window.webkitSpeechRecognition)
+  : null;
 
 const getGreeting = (firstName) => {
   const h = new Date().getHours();
@@ -74,6 +93,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   const [loading, setLoading]           = useState(false);
   const [historyLoading, setHistoryLoading] = useState(!!selectedConversationId);
   const [historyError, setHistoryError]   = useState(false);
+  const [voiceError, setVoiceError]       = useState(null);
   const [thinkingIndex, setThinkingIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
 
@@ -109,15 +129,19 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
         ]);
         if (cancelled) return;
         const feedbackMap = fbRes || {};
-        const msgs = (msgRes.data || []).map((m, i) => ({
-          id: i + 1,
-          backendId: m.id,
-          conversationId: selectedConversationId,
-          role: m.role,
-          content: m.content,
-          timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          initialFeedback: feedbackMap[m.id] ?? null,
-        }));
+        const msgs = (msgRes.data || []).map((m, i) => {
+          const emailDraft = m.role === 'assistant' ? parseEmailDraft(m.content) : null;
+          return {
+            id: i + 1,
+            backendId: m.id,
+            conversationId: selectedConversationId,
+            role: m.role,
+            content: emailDraft ? '' : resolveSentinel(m.content),
+            emailDraft,
+            timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            initialFeedback: feedbackMap[m.id] ?? null,
+          };
+        });
         setMessages(msgs);
         setConversationId(selectedConversationId);
       } catch (e) {
@@ -226,27 +250,29 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
           backendId: msgResponse.id,
           conversationId: convId,
           role: 'assistant',
-          // Replace sentinel with a friendly nudge; real output is in the drawer
-          content: msgResponse.content === '__MS_FORMS_INTENT__'
-            ? '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!'
-            : msgResponse.content,
+          content: resolveSentinel(msgResponse.content),
           sources: [],
           timestamp: now,
         },
       ];
 
       if (emailDraft) {
+        const draft = {
+          to: emailDraft.to || '',
+          subject: emailDraft.refined_subject || '',
+          body: emailDraft.refined_body || '',
+        };
         newMsgs.push({
           id: nextId + 2,
           role: 'assistant',
           content: '',
-          emailDraft: {
-            to: emailDraft.to || '',
-            subject: emailDraft.refined_subject || '',
-            body: emailDraft.refined_body || '',
-          },
+          emailDraft: draft,
           timestamp: now,
         });
+        // Persist the draft so it re-renders when the conversation is reopened
+        saveEmailDraft(convId, draft).catch(err =>
+          console.warn('[EmailDraft] Failed to save draft:', err)
+        );
       }
 
       setMessages(prev => [...prev, ...newMsgs]);
@@ -311,7 +337,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     recognitionRef.current      = recognition;
     voiceBaseRef.current        = input;
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => { setIsListening(true); setVoiceError(null); };
 
     recognition.onresult = (e) => {
       let interim = '';
@@ -330,7 +356,19 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     };
 
     recognition.onend  = () => { setIsListening(false); textareaRef.current?.focus(); };
-    recognition.onerror = () => setIsListening(false);
+    recognition.onerror = (e) => {
+      setIsListening(false);
+      const errorMessages = {
+        'not-allowed':       'Microphone access denied. Allow microphone in browser settings, and ensure the site has a valid HTTPS certificate.',
+        'no-speech':         'No speech detected. Please try speaking again.',
+        'audio-capture':     'No microphone found. Please connect a microphone.',
+        'network':           'Network error during speech recognition. Please check your connection.',
+        'service-not-allowed': 'Speech recognition service is not available.',
+      };
+      const msg = errorMessages[e.error] || `Speech recognition error: ${e.error}`;
+      setVoiceError(msg);
+      setTimeout(() => setVoiceError(null), 5000);
+    };
 
     recognition.start();
   };
@@ -455,6 +493,14 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             onChange={handleFileSelect}
           />
 
+          {/* Voice error message */}
+          {voiceError && (
+            <div className="voice-error-msg" role="alert">
+              <i className="fas fa-exclamation-circle" />
+              <span>{voiceError}</span>
+            </div>
+          )}
+
           {/* Attachment preview chips */}
           {attachments.length > 0 && (
             <div className="attachment-preview">
@@ -489,6 +535,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
                 className="chat-input-icon-btn"
                 title="Attach file"
                 aria-label="Attach file"
+                disabled="true" // Placeholder for future file attachment enablement
                 onClick={() => fileInputRef.current?.click()}
               >
                 <i className="fas fa-paperclip" />
@@ -496,11 +543,16 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
               {/* <button className="chat-input-icon-btn" title="Search" aria-label="Search">
                 <i className="fas fa-search" />
               </button> */}
-              {SpeechRecognition && (
+              {(SpeechRecognition || !window.isSecureContext) && (
                 <button
-                  className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}`}
-                  onClick={toggleVoice}
-                  title={isListening ? 'Stop recording' : 'Voice input'}
+                  className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}${!SpeechRecognition ? ' mic-btn--disabled' : ''}`}
+                  onClick={SpeechRecognition ? toggleVoice : undefined}
+                  disabled={!SpeechRecognition}
+                  title={
+                    !window.isSecureContext
+                      ? 'Voice input requires a valid HTTPS certificate'
+                      : isListening ? 'Stop recording' : 'Voice input'
+                  }
                   aria-label={isListening ? 'Stop voice recording' : 'Start voice input'}
                   aria-pressed={isListening}
                 >

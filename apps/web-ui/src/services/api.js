@@ -157,6 +157,10 @@ export async function draftEmailFromChat(message) {
   return httpClient.post('/api/email-agent/from-chat', { message });
 }
 
+export async function saveEmailDraft(conversationId, { to, subject, body }) {
+  return httpClient.post(`/api/conversations/${conversationId}/email-draft`, { to, subject, body });
+}
+
 // ── Conversations API ──────────────────────────────────────────────────────
 
 export async function createConversation(title) {
@@ -277,30 +281,27 @@ export async function listDocuments(page = 1, limit = 50, search, category) {
 export async function acquireFormsToken() {
   const FORMS_SCOPE = [
     import.meta.env.VITE_MS_FORMS_SCOPE ||
-    'https://graph.microsoft.com/Forms.ReadWrite',
+    'https://forms.office.com/Forms.ReadWrite',
   ];
+  const account = msalInstance.getActiveAccount();
+  if (!account) throw new Error('No active account. Please sign in again.');
+
+  let tokenRes;
   try {
-    const account = msalInstance.getActiveAccount();
-    if (!account) throw new Error('No active account. Please sign in again.');
-    const res = await msalInstance.acquireTokenSilent({ scopes: FORMS_SCOPE, account });
-    return res.accessToken;
-  } catch (silentErr) {
-    // Fall back to popup if silent fails (e.g. first-time consent)
+    tokenRes = await msalInstance.acquireTokenSilent({ scopes: FORMS_SCOPE, account });
+  } catch {
     try {
-      const account = msalInstance.getActiveAccount();
-      const res = await msalInstance.acquireTokenPopup({
-        scopes: FORMS_SCOPE,
-        account,
-        prompt: 'consent',
-      });
-      return res.accessToken;
-    } catch (popupErr) {
-      throw new Error(
-        'Unable to obtain Microsoft Forms permission. ' +
-        'Please ask your Azure AD admin to grant the Forms.ReadWrite permission.'
-      );
+      tokenRes = await msalInstance.acquireTokenPopup({ scopes: FORMS_SCOPE, account, prompt: 'consent' });
+    } catch {
+      throw new Error('Unable to obtain Microsoft Forms permission. Please ask your Azure AD admin to grant the Forms.ReadWrite permission.');
     }
   }
+
+  return {
+    access_token: tokenRes.accessToken,
+    tenant_id:    account.tenantId,
+    user_oid:     account.localAccountId,
+  };
 }
 
 /**

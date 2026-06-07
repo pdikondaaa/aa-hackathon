@@ -17,7 +17,7 @@ export const extractDocumentTitle = (content) => {
 };
 
 export const extractDocumentContent = (content) => {
-  const m = content.match(/---\n\n([\s\S]+?)\n\n---/);
+  const m = content.match(/---\n\n([\s\S]+)\n\n---/);
   return m ? m[1] : content;
 };
 

@@ -1,0 +1,4 @@
+# Test dependencies — install in addition to requirements.txt
+pytest>=7.4.0
+pytest-anyio>=0.0.0
+httpx>=0.24.0

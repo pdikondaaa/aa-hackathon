@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -263,6 +264,45 @@ class MessagesService:
                 row = cur.fetchone()
             conn.commit()
         return dict(row) if row else None
+
+    # ------------------------------------------------------------------ #
+    # Save email draft  (POST /api/conversations/{id}/email-draft)        #
+    # ------------------------------------------------------------------ #
+    def save_email_draft(
+        self,
+        conversation_id: str,
+        user_id: str,
+        to: str,
+        subject: str,
+        body: str,
+    ) -> Optional[dict]:
+        now = datetime.now(timezone.utc)
+        msg_id = str(uuid.uuid4())
+        content = json.dumps({"__type": "email_draft", "to": to, "subject": subject, "body": body})
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM conversations WHERE id = %s AND user_id = %s AND is_deleted = FALSE",
+                    (conversation_id, user_id),
+                )
+                if not cur.fetchone():
+                    return None
+                cur.execute(
+                    """
+                    INSERT INTO messages (id, conversation_id, role, content, status, created_at)
+                    VALUES (%s, %s, 'assistant', %s, 'done', %s)
+                    RETURNING id, conversation_id, role, content, status, created_at
+                    """,
+                    (msg_id, conversation_id, content, now),
+                )
+                row = dict(cur.fetchone())
+                cur.execute(
+                    "UPDATE conversations SET updated_at = %s WHERE id = %s",
+                    (now, conversation_id),
+                )
+            conn.commit()
+        return row
 
     # ------------------------------------------------------------------ #
     # Get citations  (GET /api/messages/{id}/citations)                   #

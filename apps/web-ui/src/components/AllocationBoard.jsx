@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
+
 import { getAllocationBoard, getEmployeeDetail, askAllocationAura } from '../services/api';
 
 const CHART_COLORS = ['#1D76BC', '#27AAE1', '#4ED44E', '#2A3D90', '#f59e0b', '#ef4444', '#a78bfa', '#10b981'];
@@ -216,14 +217,17 @@ function TruncatedYTick({ x, y, payload, maxChars = 26 }) {
   );
 }
 
-function ExecKpi({ value, label, accent, onClick }) {
+function ExecKpi({ value, label, accent, onClick, icon }) {
   return (
     <div
       className={`ab-kpi${accent ? ` ab-kpi--${accent}` : ''}${onClick ? ' ab-kpi--clickable' : ''}`}
       onClick={onClick}
     >
-      <div className="ab-kpi-value">{value}</div>
-      <div className="ab-kpi-label">{label}</div>
+      {icon && <div className="ab-kpi-icon"><i className={`fas ${icon}`} /></div>}
+      <div className="ab-kpi-body">
+        <div className="ab-kpi-value">{value}</div>
+        <div className="ab-kpi-label">{label}</div>
+      </div>
     </div>
   );
 }
@@ -286,13 +290,13 @@ function ExecutiveView({ data, onEmployeeClick }) {
 
       {/* ── KPI cards ─────────────────────────────────────────── */}
       <div className="ab-kpi-row">
-        <ExecKpi value={kpis.headcount} label="Total Employees"    accent="blue"
+        <ExecKpi value={kpis.headcount} label="Total Employees"    accent="blue"   icon="fa-users"
           onClick={() => drill('All Employees', () => true)} />
-        <ExecKpi value={kpis.projects}  label="Active Projects"    accent="purple"
+        <ExecKpi value={kpis.projects}  label="Active Projects"    accent="purple" icon="fa-briefcase"
           onClick={drillProjects} />
-        <ExecKpi value={kpis.billable}  label="Billable Resources" accent="green"
+        <ExecKpi value={kpis.billable}  label="Billable Resources" accent="green"  icon="fa-chart-line"
           onClick={() => drill('Billable Resources', r => (r.billing || '').toLowerCase() === 'billable')} />
-        <ExecKpi value={kpis.bench}     label="On Bench"           accent="amber"
+        <ExecKpi value={kpis.bench}     label="On Bench"           accent="amber"  icon="fa-hourglass-half"
           onClick={() => drill('On Bench', r => (r.project_name || '').toLowerCase() === 'no allocation')} />
       </div>
 
@@ -517,7 +521,7 @@ function LeadView({ data, onEmployeeClick, role }) {
       {/* Summary cards */}
       <div className="ab-lead-cards">
         <div
-          className="ab-lead-card ab-lead-card--clickable"
+          className="ab-lead-card ab-lead-card--team ab-lead-card--clickable"
           onClick={() => setTeamModal({
             title: 'My Team (Functional)',
             rows: myTeam,
@@ -525,12 +529,15 @@ function LeadView({ data, onEmployeeClick, role }) {
             colLabels: COL_LABELS,
           })}
         >
-          <div className="ab-lead-card-value">{myTeam.length}</div>
-          <div className="ab-lead-card-label">Team Members</div>
+          <div className="ab-lead-card-icon"><i className="fas fa-users" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{myTeam.length}</div>
+            <div className="ab-lead-card-label">Team Members</div>
+          </div>
         </div>
 
         <div
-          className="ab-lead-card ab-lead-card--clickable"
+          className="ab-lead-card ab-lead-card--direct ab-lead-card--clickable"
           onClick={() => setTeamModal({
             title: 'Direct Reportees',
             rows: reportees,
@@ -538,18 +545,27 @@ function LeadView({ data, onEmployeeClick, role }) {
             colLabels: COL_LABELS,
           })}
         >
-          <div className="ab-lead-card-value">{reportees.length}</div>
-          <div className="ab-lead-card-label">Direct Reportees</div>
+          <div className="ab-lead-card-icon"><i className="fas fa-user-friends" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{reportees.length}</div>
+            <div className="ab-lead-card-label">Direct Reportees</div>
+          </div>
         </div>
 
-        <div className="ab-lead-card">
-          <div className="ab-lead-card-value">{availablePool.length}</div>
-          <div className="ab-lead-card-label">Available</div>
+        <div className="ab-lead-card ab-lead-card--avail">
+          <div className="ab-lead-card-icon"><i className="fas fa-user-check" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{availablePool.length}</div>
+            <div className="ab-lead-card-label">Available</div>
+          </div>
         </div>
 
-        <div className="ab-lead-card">
-          <div className="ab-lead-card-value">{billableResources.length}</div>
-          <div className="ab-lead-card-label">Billable</div>
+        <div className="ab-lead-card ab-lead-card--billable">
+          <div className="ab-lead-card-icon"><i className="fas fa-chart-line" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{billableResources.length}</div>
+            <div className="ab-lead-card-label">Billable</div>
+          </div>
         </div>
       </div>
 
@@ -1024,7 +1040,7 @@ export default function AllocationBoard() {
     <div className="ab-root">
       <div className="ab-header">
         <div>
-          <h2 className="ab-title">Allocation Board</h2>
+          <h2 className="ab-title">Allocation <span>Board</span></h2>
           <div className="ab-header-meta">
             <span className="ab-role-badge">{roleLabel}</span>
           </div>
