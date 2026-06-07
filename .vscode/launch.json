@@ -2,8 +2,15 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python Debugger: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "API Gateway (FastAPI)",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
       "args": [
@@ -14,7 +21,6 @@
         "--port",
         "8000"
       ],
-      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "jinja": true,
       "cwd": "${workspaceFolder}/apps/api-gateway",
       "env": {
@@ -27,6 +33,15 @@
       "console": "integratedTerminal",
       "justMyCode": true,
       "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Create Communications Schema",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/apps/jobs/sharepoint_ingestion/create_communications_schema.py",
+      "cwd": "${workspaceFolder}/apps/jobs/sharepoint_ingestion",
+      "console": "integratedTerminal",
+      "justMyCode": true
     },
     {
       "name": "Web UI (React/Vite)",

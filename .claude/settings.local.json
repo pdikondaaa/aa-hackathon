@@ -5,7 +5,11 @@
       "Bash(.venv/Scripts/pip install *)",
       "Bash(python -c ' *)",
       "Bash(python create_schema.py)",
-      "Bash(grep -E \"\\\\.py$\")"
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(Get-ChildItem -Path \"d:\\\\AA Internal Projects\\\\AA Hackathon 2026\\\\aa-hackathon\\\\apps\\\\web-ui\" -Recurse -Depth 3)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(ConvertTo-Json)",
+      "Bash(Get-ChildItem -Path \"d:\\\\AA Internal Projects\\\\AA Hackathon 2026\\\\aa-hackathon\" -Force)"
     ]
   }
 }

@@ -314,4 +314,69 @@ export async function getTodaysAnniversaries() {
   return httpClient.get('/api/users/anniversaries/today');
 }
 
+// ── Communications — Announcements ─────────────────────────────────────────
+
+export async function getActiveAnnouncements() {
+  return httpClient.get('/api/communications/announcements/active');
+}
+
+export async function dismissAnnouncement(id) {
+  return httpClient.post(`/api/communications/announcements/${id}/dismiss`, {});
+}
+
+export async function adminListAnnouncements(page = 1, limit = 50, status) {
+  const params = new URLSearchParams({ page, limit });
+  if (status) params.set('status', status);
+  return httpClient.get(`/api/admin/communications/announcements?${params}`);
+}
+
+export async function adminCreateAnnouncement(payload) {
+  return httpClient.post('/api/admin/communications/announcements', payload);
+}
+
+export async function adminUpdateAnnouncement(id, payload) {
+  return httpClient.request(`/api/admin/communications/announcements/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminDeleteAnnouncement(id) {
+  return httpClient.delete(`/api/admin/communications/announcements/${id}`);
+}
+
+// ── Communications — Events ────────────────────────────────────────────────
+
+export async function listPublicEvents(page = 1, limit = 50, status) {
+  const params = new URLSearchParams({ page, limit });
+  if (status) params.set('status', status);
+  return httpClient.get(`/api/communications/events?${params}`);
+}
+
+export async function submitEventRsvp(eventId, payload) {
+  return httpClient.post(`/api/communications/events/${eventId}/rsvp`, payload);
+}
+
+export async function adminListEvents(page = 1, limit = 50, status, publishStatus) {
+  const params = new URLSearchParams({ page, limit });
+  if (status)        params.set('status', status);
+  if (publishStatus) params.set('publish_status', publishStatus);
+  return httpClient.get(`/api/admin/communications/events?${params}`);
+}
+
+export async function adminCreateEvent(payload) {
+  return httpClient.post('/api/admin/communications/events', payload);
+}
+
+export async function adminUpdateEvent(id, payload) {
+  return httpClient.request(`/api/admin/communications/events/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminDeleteEvent(id) {
+  return httpClient.delete(`/api/admin/communications/events/${id}`);
+}
+
 export default httpClient;

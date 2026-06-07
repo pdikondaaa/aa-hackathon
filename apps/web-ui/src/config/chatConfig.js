@@ -79,10 +79,18 @@ export const chatConfig = {
     { id: 'aiAssistant', label: 'AI Assistant', icon: 'fa-robot',       active: true  },
     { id: 'documents',   label: 'Documents',    icon: 'fa-folder-open', active: false },
     { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
-    { id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
-    { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap',      active: false },
-    { id: 'cooAnalytics',   label: 'COO Analytics',   icon: 'fa-gauge-high',   active: false },
+    { id: 'allocationBoard',  label: 'Allocation Board',  icon: 'fa-sitemap',      active: false },
+    { id: 'cooAnalytics',    label: 'COO Analytics',    icon: 'fa-gauge-high',   active: false },
+    { id: 'communications',  label: 'Communications',   icon: 'fa-bullhorn',     active: false },
     //{ id: 'myNotes',         label: 'My Notes',         icon: 'fa-sticky-note',  active: false },
+    {
+      id: 'admin', label: 'Admin', icon: 'fa-shield-halved', active: false,
+      children: [
+        { id: 'adminAnalytics',       label: 'Analytics',      icon: 'fa-chart-line'    },
+        { id: 'adminSettings',        label: 'Settings',       icon: 'fa-sliders'       },
+        { id: 'adminCommunications',  label: 'Communications', icon: 'fa-bullhorn'      },
+      ],
+    },
   ],
 
   // ─── Sidebar Recent Chats ──────────────────────────────────────────────────
@@ -188,7 +196,7 @@ export const chatConfig = {
     myStats:           'MY STATS',
     recentActivity:    'RECENT ACTIVITY',
     escalations:       'ESCALATIONS',
-    upcoming:          'UPCOMING',
+    upcoming:          'UPCOMING MEETINGS',
     kickstartHeading:  'Kickstart Your Journey with These Tools',
     learnMore:         'Learn more →',
     inputPlaceholder:  'Ask anything...',

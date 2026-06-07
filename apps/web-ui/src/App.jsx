@@ -22,6 +22,12 @@ import EmailAgentPage from './components/EmailAgentPage';
 import { AnalyticsDashboard } from './modules/analytics';
 import { COODashboard }       from './modules/coo-analytics';
 import DocumentsPage from './components/DocumentsPage';
+import AdminPage from './components/AdminPage';
+import CommunicationsPage from './components/CommunicationsPage';
+import CommunicationsAdmin from './components/CommunicationsAdmin';
+import AnnouncementBanner from './components/AnnouncementBanner';
+import AnnouncementOverlay from './components/AnnouncementOverlay';
+import CommunicationsWidget from './components/CommunicationsWidget';
 
 const SIDEBAR_BREAKPOINT = 900;
 
@@ -74,6 +80,8 @@ export default function App() {
   const [authLoading,    setAuthLoading]    = useState(true);
   const [authError,      setAuthError]      = useState(null);
   const [allocationRole, setAllocationRole] = useState(null);
+  // Lifted so the widget stays closed during in-session navigation but resets on page reload
+  const [widgetClosed,   setWidgetClosed]   = useState(false);
 
   // Auto-close sidebar when window shrinks below breakpoint
   useEffect(() => {
@@ -265,6 +273,12 @@ export default function App() {
         onGoHome={handleGoHome}
       />
 
+      {/* Global announcement banner — banner-mode, shown below TopBar */}
+      <AnnouncementBanner user={user} />
+
+      {/* Welcome overlay — overlay/carousel-mode announcements */}
+      <AnnouncementOverlay user={user} />
+
       <div className="app-layout">
         <Sidebar
           config={chatConfig}
@@ -282,6 +296,7 @@ export default function App() {
           refreshKey={sidebarRefreshKey}
           selectedConversationId={selectedConversationId}
           allocationRole={allocationRole}
+          user={user}
         />
 
         {activeNav === 'analytics' ? (
@@ -298,25 +313,36 @@ export default function App() {
           <COODashboard />
         ) : activeNav === 'emailAgent' ? (
           <EmailAgentPage user={user} />
+        ) : activeNav === 'communications' ? (
+          <CommunicationsPage user={user} />
+        ) : activeNav === 'adminAnalytics' && user?.isAdmin ? (
+          <AnalyticsDashboard user={user} />
+        ) : activeNav === 'adminSettings' && user?.isAdmin ? (
+          <AdminPage user={user} />
+        ) : activeNav === 'adminCommunications' && user?.isAdmin ? (
+          <CommunicationsAdmin user={user} />
         ) : (
-          <main className="main-content">
-            <ChatWindow
-              key={chatKey}
-              config={chatConfig}
-              user={user}
-              selectedConversationId={selectedConversationId}
-              onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
-              onOpenEscalation={({ conversationId, messageId } = {}) => {
-                setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
-                setEscalationOpen(true);
-              }}
-              onOpenFormsDrawer={(query) => {
-                setFormsDrawerQuery(query || '');
-                setFormsDrawerOpen(true);
-              }}
-              injectedMessage={injectedMessage}
-              onInjectedMessageSent={() => setInjectedMessage('')}
-            />
+          <main className="main-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <CommunicationsWidget user={user} onNavigate={setActiveNav} closed={widgetClosed} onClose={() => setWidgetClosed(true)} />
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <ChatWindow
+                key={chatKey}
+                config={chatConfig}
+                user={user}
+                selectedConversationId={selectedConversationId}
+                onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
+                onOpenEscalation={({ conversationId, messageId } = {}) => {
+                  setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
+                  setEscalationOpen(true);
+                }}
+                onOpenFormsDrawer={(query) => {
+                  setFormsDrawerQuery(query || '');
+                  setFormsDrawerOpen(true);
+                }}
+                injectedMessage={injectedMessage}
+                onInjectedMessageSent={() => setInjectedMessage('')}
+              />
+            </div>
           </main>
         )}
 
