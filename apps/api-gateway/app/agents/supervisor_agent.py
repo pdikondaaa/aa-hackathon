@@ -346,6 +346,55 @@ def _is_email_draft_query(query: str) -> bool:
     return bool(_EMAIL_DRAFT_RE.search(query))
 
 
+# ── Document field-response heuristic ────────────────────────────────────────
+# Question words / command verbs that strongly indicate a NEW request rather
+# than a reply with document field values.
+_QUESTION_START_RE = re.compile(
+    r"^(?:what|how|why|when|where|who|can|could|would|should|"
+    r"is|are|was|were|do|does|did|tell|show|find|help|give|get|"
+    r"apply|check|search|list|explain|describe|i\s+need|i\s+want)\b",
+    re.IGNORECASE,
+)
+
+# Keywords that almost never appear in document field values but are common
+# in unrelated employee queries (kept minimal to avoid false positives).
+_OFF_TOPIC_KW = frozenset([
+    "vpn", "password", "laptop", "antivirus", "mfa", "wi-fi", "wifi",
+    "travel", "cab", "parking",
+    "joke", "funny",
+])
+
+
+def _is_doc_field_response(query: str) -> bool:
+    """
+    Return True when the message is plausibly providing field values for
+    an active document session. Return False when it looks like a new,
+    unrelated request that should break the session.
+    """
+    q = query.strip()
+    # A question mark almost always means a new question
+    if "?" in q:
+        return False
+    # Starts with interrogative / command words → new request
+    if _QUESTION_START_RE.match(q):
+        return False
+    # Matches the other fast-path detectors → clearly a new intent
+    if (
+        _APPLY_LEAVE_RE.search(q)
+        or _is_email_draft_query(q)
+        or _is_forms_query(q)
+        or _is_attendance_query(q)
+        or _is_greeting(q)
+        or _is_conversational(q)
+    ):
+        return False
+    # Specific domain keywords that cannot appear as field values
+    q_lower = q.lower()
+    if any(kw in q_lower for kw in _OFF_TOPIC_KW):
+        return False
+    return True
+
+
 def _is_forms_query(query: str) -> bool:
     return bool(_MS_FORMS_RE.search(query))
 
@@ -582,12 +631,16 @@ class MasterAgent:
         return best
 
     def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
-        # Active document session takes priority — route follow-up field replies correctly
+        # Active document session — field replies go to document, off-topic breaks the session
         try:
-            from app.agents.document_agent import has_active_session
+            from app.agents.document_agent import has_active_session, cancel_session
             if has_active_session(user_email, user_id):
-                print("[MasterAgent] Active document session -> document")
-                return 'document'
+                if _is_doc_field_response(query):
+                    print("[MasterAgent] Active document session -> document")
+                    return 'document'
+                # Off-topic message: cancel the session and fall through to normal routing
+                cancel_session(user_email, user_id)
+                print("[MasterAgent] Off-topic during doc session -> session cancelled, routing normally")
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
@@ -769,8 +822,23 @@ class MasterAgent:
                 return fallback
             return self._contextual_block_response(q, category) or fallback
 
+        # Track whether a document session was active before routing so we can
+        # notify the user if their off-topic message broke the session.
+        _doc_session_was_active = False
+        try:
+            from app.agents.document_agent import has_active_session
+            _doc_session_was_active = has_active_session(user_email, user_id)
+        except Exception:
+            pass
+
         domain = self._route(q, user_email=user_email, user_id=user_id)
         resp, sources = self._run_agent(domain, q, user_email, user_id, user_name)
+
+        if _doc_session_was_active and domain != 'document' and resp:
+            resp = (
+                "<p><em>📝 Your document session has been cancelled. "
+                "Start a new request any time.</em></p>"
+            ) + resp
 
         if not resp:
             return (
@@ -831,7 +899,21 @@ class MasterAgent:
 
         # Route then stream
         try:
+            _doc_session_was_active = False
+            try:
+                from app.agents.document_agent import has_active_session
+                _doc_session_was_active = has_active_session(user_email, user_id)
+            except Exception:
+                pass
+
             domain = self._route(q, user_email=user_email, user_id=user_id)
+
+            if _doc_session_was_active and domain != 'document':
+                yield _sse({"content": (
+                    "<p><em>📝 Your document session has been cancelled. "
+                    "Start a new request any time.</em></p>"
+                )})
+
             agent = self._get_slave(domain)
 
             if not agent:

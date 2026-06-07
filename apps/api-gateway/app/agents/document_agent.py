@@ -264,6 +264,11 @@ def has_active_session(user_email: str, user_id: str = "") -> bool:
         return False
     return True
 
+
+def cancel_session(user_email: str, user_id: str = "") -> None:
+    """Cancel any active document session for this user."""
+    _sessions.pop(_session_key(user_email, user_id), None)
+
 # ── Reset/cancel pattern ──────────────────────────────────────────────────────
 
 _CANCEL_RE = re.compile(
@@ -326,7 +331,12 @@ def _build_extract_system(required_fields: Dict[str, str]) -> str:
     )
 
 
-def _extract_fields(message: str, required_fields: Dict[str, str]) -> Dict[str, str]:
+def _extract_fields(message: str, required_fields: Dict[str, str]) -> Optional[Dict[str, str]]:
+    """
+    Extract field values from the user's message.
+    Returns a dict (possibly empty) on success, or None when the LLM call fails.
+    Callers must treat None (server error) differently from {} (no fields found).
+    """
     try:
         system = _build_extract_system(required_fields)
         result = _call_llm(message, system, max_tokens=512)
@@ -334,9 +344,10 @@ def _extract_fields(message: str, required_fields: Dict[str, str]) -> Dict[str, 
         if json_match:
             extracted = json.loads(json_match.group())
             return {k: str(v) for k, v in extracted.items() if k in required_fields and v}
+        return {}
     except Exception as exc:
         print(f"[DocumentAgent] Field extraction error: {exc}")
-    return {}
+        return None  # None signals an infrastructure failure, not "no fields found"
 
 # ── Document generation ───────────────────────────────────────────────────────
 
@@ -630,6 +641,28 @@ class DocumentAgent:
             collected = {**session["fields"]}
 
             new_fields = _extract_fields(q, doc_info["required_fields"])
+
+            # None → LLM timed out / server error — keep session alive
+            if new_fields is None:
+                missing = {k: v for k, v in doc_info["required_fields"].items()
+                           if k not in collected}
+                return (
+                    "<p>Sorry, I had trouble processing that. "
+                    "Please try providing the details again.</p>"
+                    + _missing_fields_prompt(doc_info["name"], missing)
+                )
+
+            # {} → LLM ran fine but found no document field data → off-topic reply
+            if not new_fields:
+                self._clear_session(key)
+                return (
+                    "<p>I couldn't find any document details in your reply — "
+                    "your document session has been <strong>cancelled</strong>.</p>"
+                    "<p>If you still need the document, just ask again. "
+                    "Or feel free to ask me something else!</p>"
+                )
+
+            # One or more fields extracted — merge and continue
             collected.update(new_fields)
             self._save_session(key, doc_type, collected)
 
