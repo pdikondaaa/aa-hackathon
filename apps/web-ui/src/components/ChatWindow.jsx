@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import MessageBubble from './MessageBubble';
-import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat } from '../services/api';
+import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat, saveEmailDraft } from '../services/api';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -16,6 +16,23 @@ const THINKING_PHRASES = [
   'Sifting through records...',
   'Piecing it all together...',
 ];
+
+const SENTINEL_LABELS = {
+  '__MS_FORMS_INTENT__':    '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!',
+  '__EMAIL_DRAFT_INTENT__': '✉️ I\'ve drafted a professional email for you below. Review and edit it, then click **Send Email** to open it in Outlook.',
+};
+
+const resolveSentinel = (content) => SENTINEL_LABELS[content] ?? content;
+
+const parseEmailDraft = (content) => {
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.__type === 'email_draft') {
+      return { to: parsed.to || '', subject: parsed.subject || '', body: parsed.body || '' };
+    }
+  } catch { /* not JSON */ }
+  return null;
+};
 
 const EMAIL_INTENT_PATTERNS = [
   /\b(send|write|compose|draft)\s+(an?\s+)?email\b/i,
@@ -112,15 +129,19 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
         ]);
         if (cancelled) return;
         const feedbackMap = fbRes || {};
-        const msgs = (msgRes.data || []).map((m, i) => ({
-          id: i + 1,
-          backendId: m.id,
-          conversationId: selectedConversationId,
-          role: m.role,
-          content: m.content,
-          timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          initialFeedback: feedbackMap[m.id] ?? null,
-        }));
+        const msgs = (msgRes.data || []).map((m, i) => {
+          const emailDraft = m.role === 'assistant' ? parseEmailDraft(m.content) : null;
+          return {
+            id: i + 1,
+            backendId: m.id,
+            conversationId: selectedConversationId,
+            role: m.role,
+            content: emailDraft ? '' : resolveSentinel(m.content),
+            emailDraft,
+            timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            initialFeedback: feedbackMap[m.id] ?? null,
+          };
+        });
         setMessages(msgs);
         setConversationId(selectedConversationId);
       } catch (e) {
@@ -229,27 +250,29 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
           backendId: msgResponse.id,
           conversationId: convId,
           role: 'assistant',
-          // Replace sentinel with a friendly nudge; real output is in the drawer
-          content: msgResponse.content === '__MS_FORMS_INTENT__'
-            ? '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!'
-            : msgResponse.content,
+          content: resolveSentinel(msgResponse.content),
           sources: [],
           timestamp: now,
         },
       ];
 
       if (emailDraft) {
+        const draft = {
+          to: emailDraft.to || '',
+          subject: emailDraft.refined_subject || '',
+          body: emailDraft.refined_body || '',
+        };
         newMsgs.push({
           id: nextId + 2,
           role: 'assistant',
           content: '',
-          emailDraft: {
-            to: emailDraft.to || '',
-            subject: emailDraft.refined_subject || '',
-            body: emailDraft.refined_body || '',
-          },
+          emailDraft: draft,
           timestamp: now,
         });
+        // Persist the draft so it re-renders when the conversation is reopened
+        saveEmailDraft(convId, draft).catch(err =>
+          console.warn('[EmailDraft] Failed to save draft:', err)
+        );
       }
 
       setMessages(prev => [...prev, ...newMsgs]);

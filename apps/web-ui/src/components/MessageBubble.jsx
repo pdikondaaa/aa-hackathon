@@ -4,8 +4,13 @@ import { submitFeedback, deleteFeedback } from '../services/api';
 import { isDocumentMessage, downloadDocument, printDocument } from '../utils/documentDownload';
 
 const buildMailto = (to, subject, body) => {
-  const params = [`subject=${encodeURIComponent(subject)}`, `body=${encodeURIComponent(body)}`];
-  return `mailto:${encodeURIComponent(to)}?${params.join('&')}`;
+  // Outlook requires CRLF line endings in the body; 'to' must not be percent-encoded
+  const crlfBody = body.replace(/\r?\n/g, '\r\n');
+  const params = [
+    `subject=${encodeURIComponent(subject)}`,
+    `body=${encodeURIComponent(crlfBody)}`,
+  ];
+  return `mailto:${to}?${params.join('&')}`;
 };
 
 const EmailDraftCard = ({ draft }) => {

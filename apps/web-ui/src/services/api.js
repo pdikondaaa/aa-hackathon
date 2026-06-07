@@ -157,6 +157,10 @@ export async function draftEmailFromChat(message) {
   return httpClient.post('/api/email-agent/from-chat', { message });
 }
 
+export async function saveEmailDraft(conversationId, { to, subject, body }) {
+  return httpClient.post(`/api/conversations/${conversationId}/email-draft`, { to, subject, body });
+}
+
 // ── Conversations API ──────────────────────────────────────────────────────
 
 export async function createConversation(title) {
