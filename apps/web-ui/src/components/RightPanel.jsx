@@ -225,13 +225,23 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
             const dayOfWeek = todayStart.getDay(); // 0=Sun … 6=Sat
             const daysToSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
 
-            // This Sunday — last day shown
+            // This Sunday — last day of this week
             const thisSundayStart = new Date(todayStart);
             thisSundayStart.setDate(todayStart.getDate() + daysToSunday);
 
-            // Monday after this Sunday — exclusive cut-off
-            const weekEnd = new Date(thisSundayStart);
-            weekEnd.setDate(thisSundayStart.getDate() + 1);
+            // Monday of next week
+            const nextMonday = new Date(thisSundayStart);
+            nextMonday.setDate(thisSundayStart.getDate() + 1);
+
+            // Show 3 days into next week (Mon/Tue/Wed), exclusive cut-off is Thu
+            const nextWeekCutoff = new Date(nextMonday);
+            nextWeekCutoff.setDate(nextMonday.getDate() + 3);
+
+            const formatNextWeekLabel = (date) => {
+              const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+              const month = date.toLocaleDateString(undefined, { month: 'short' });
+              return `${weekday}, ${month} ${date.getDate()}`;
+            };
 
             const toLocalDay = (evt) => {
               if (!evt.start) return null;
@@ -246,20 +256,29 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
             const getBucket = (evt) => {
               const dDay = toLocalDay(evt);
               if (!dDay) return null;
-              if (dDay < todayStart) return null;  // past
-              if (dDay >= weekEnd) return null;    // next week — skip
+              if (dDay < todayStart) return null;        // past
+              if (dDay >= nextWeekCutoff) return null;   // beyond 3 days into next week
               if (dDay.getTime() === todayStart.getTime()) return 'Today';
               if (dDay.getTime() === tomorrowStart.getTime()) return 'Tomorrow';
+              if (dDay >= nextMonday) return formatNextWeekLabel(dDay); // next week days
               return dDay.toLocaleDateString(undefined, { weekday: 'long' });
             };
 
-            // Build ordered buckets: Today → Tomorrow → day names through Sunday
+            // Build ordered buckets: Today → Tomorrow → this week days → next week days (Mon–Wed)
             const BUCKET_ORDER = ['Today', 'Tomorrow'];
             for (let i = 2; i <= daysToSunday; i++) {
               const d = new Date(todayStart);
               d.setDate(todayStart.getDate() + i);
               const name = d.toLocaleDateString(undefined, { weekday: 'long' });
               if (!BUCKET_ORDER.includes(name)) BUCKET_ORDER.push(name);
+            }
+            for (let i = 0; i < 3; i++) {
+              const d = new Date(nextMonday);
+              d.setDate(nextMonday.getDate() + i);
+              // Skip if already covered by Today/Tomorrow buckets
+              if (d.getTime() !== todayStart.getTime() && d.getTime() !== tomorrowStart.getTime()) {
+                BUCKET_ORDER.push(formatNextWeekLabel(d));
+              }
             }
 
             const groups = {};
