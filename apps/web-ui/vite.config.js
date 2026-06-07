@@ -1,14 +1,13 @@
 import path from 'path'
 import { defineConfig } from 'vite'
-import basicSsl from '@vitejs/plugin-basic-ssl'
 
 export default defineConfig({
   envDir: path.resolve(__dirname, '..', '..'),
-  plugins: [basicSsl()],
+  base: '/project-aura/',
+  plugins: [],
   server: {
     host: '0.0.0.0',
     port: 5173,
-    https: true,
     allowedHosts: true,
     proxy: {
       '/api': {
