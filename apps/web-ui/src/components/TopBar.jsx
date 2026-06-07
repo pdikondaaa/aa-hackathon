@@ -203,9 +203,7 @@ const TopBar = ({
                 {displayUser.email && (
                   <span className="topbar-user-email">{displayUser.email}</span>
                 )}
-                {displayUser.jobTitle && (
-                  <span className="topbar-user-role">{displayUser.jobTitle}</span>
-                )}
+              
               </div>
               <hr className="topbar-dropdown-divider" />
               <button

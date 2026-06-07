@@ -25,6 +25,8 @@ from app.api.controllers.profile_controller import router as profile_router
 from app.api.controllers.documents_controller import router as documents_router
 from app.api.controllers.coo_analytics_controller import router as coo_analytics_router
 from app.api.controllers.forms_controller import router as forms_router
+from app.api.controllers.communications_controller import pub_router as communications_pub_router
+from app.api.controllers.communications_controller import admin_router as communications_admin_router
 
 
 tags_metadata = [
@@ -41,6 +43,7 @@ tags_metadata = [
     {"name": "Debug", "description": "Debug and diagnostic endpoints."},
     {"name": "Allocation", "description": "PMO Allocation Board — role-aware project and resource data."},
     {"name": "Microsoft Forms", "description": "Create Microsoft Forms / surveys on behalf of the authenticated user via Graph API."},
+    {"name": "Communications", "description": "Org-wide announcements and company events with RSVP support."},
 ]
 
 app = FastAPI(
@@ -79,3 +82,5 @@ app.include_router(profile_router)
 app.include_router(documents_router)
 app.include_router(coo_analytics_router)
 app.include_router(forms_router)
+app.include_router(communications_pub_router)
+app.include_router(communications_admin_router)

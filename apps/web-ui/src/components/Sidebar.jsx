@@ -4,14 +4,38 @@ import { listConversations, deleteConversation } from '../services/api';
 const ALLOCATION_BOARD_ROLES = new Set(['team_lead', 'functional_lead', 'business_lead', 'executive', 'admin']);
 const COO_ANALYTICS_ROLES    = new Set(['business_lead', 'executive', 'admin']);
 
-const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole }) => {
+const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole, user }) => {
   const { navigation, labels, app } = config;
 
   const visibleNav = navigation.filter(item => {
     if (item.id === 'allocationBoard') return ALLOCATION_BOARD_ROLES.has(allocationRole);
     if (item.id === 'cooAnalytics')   return COO_ANALYTICS_ROLES.has(allocationRole);
+    if (item.id === 'admin')          return user?.isAdmin;
     return true;
   });
+
+  // Track which parent items are expanded; auto-expand when a child is active
+  const [expandedParents, setExpandedParents] = useState(() => {
+    const initial = new Set();
+    navigation.forEach(item => {
+      if (item.children?.some(c => c.id === activeNav)) initial.add(item.id);
+    });
+    return initial;
+  });
+
+  const toggleParent = (id) => {
+    setExpandedParents(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleParentClick = (item) => {
+    toggleParent(item.id);
+    if (item.children?.length) onNavChange(item.children[0].id);
+  };
+
   const [conversations, setConversations] = useState([]);
   const [histLoading, setHistLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
@@ -113,19 +137,56 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
       {/* ── Features ────────────────────────────────────────── */}
       <div className="sidebar-section">
         <p className="sidebar-section-label">{labels.features}</p>
-        {visibleNav.map((item) => (
-          <div
-            key={item.id}
-            className={`sidebar-nav-item${activeNav === item.id ? ' active' : ''}`}
-            onClick={() => onNavChange(item.id)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && onNavChange(item.id)}
-          >
-            <i className={`fas ${item.icon}`} aria-hidden="true" />
-            <span>{item.label}</span>
-          </div>
-        ))}
+        {visibleNav.map((item) => {
+          if (item.children) {
+            const isExpanded = expandedParents.has(item.id) || item.children.some(c => c.id === activeNav);
+            return (
+              <div key={item.id}>
+                <div
+                  className="sidebar-nav-item"
+                  onClick={() => handleParentClick(item)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && handleParentClick(item)}
+                  style={{ justifyContent: 'space-between' }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <i className={`fas ${item.icon}`} aria-hidden="true" />
+                    <span>{item.label}</span>
+                  </span>
+                  <i className={`fas fa-chevron-${isExpanded ? 'down' : 'right'}`} style={{ fontSize: 11, opacity: 0.6 }} />
+                </div>
+                {isExpanded && item.children.map(child => (
+                  <div
+                    key={child.id}
+                    className={`sidebar-nav-item${activeNav === child.id ? ' active' : ''}`}
+                    onClick={() => onNavChange(child.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavChange(child.id)}
+                    style={{ paddingLeft: 36 }}
+                  >
+                    <i className={`fas ${child.icon}`} aria-hidden="true" />
+                    <span>{child.label}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          }
+          return (
+            <div
+              key={item.id}
+              className={`sidebar-nav-item${activeNav === item.id ? ' active' : ''}`}
+              onClick={() => onNavChange(item.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && onNavChange(item.id)}
+            >
+              <i className={`fas ${item.icon}`} aria-hidden="true" />
+              <span>{item.label}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Conversation history ─────────────────────────────── */}
