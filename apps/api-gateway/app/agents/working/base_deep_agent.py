@@ -80,6 +80,77 @@ class BaseDeepAgent:
             return self._llm_query(query, user_id=user_id)
         return self._keyword_query(query)
 
+    async def stream_query(self, query: str, user_id: str = "", **_):
+        """Async token streaming — pgvector + FAISS + memory fetched in parallel, LLM via astream()."""
+        import asyncio
+        self.last_sources = []
+        if self._mode != "llm":
+            yield self._keyword_query(query)
+            return
+        try:
+            async def _fetch_memory():
+                if user_id and _memory_client:
+                    try:
+                        return await asyncio.to_thread(_memory_client.get_context, user_id, query)
+                    except Exception:
+                        pass
+                return ""
+
+            # All three retrieval sources run simultaneously
+            (pg_context, pg_sources), docs, memory_context = await asyncio.gather(
+                asyncio.to_thread(self._retrieve_pgvector, query),
+                asyncio.to_thread(self._kb.retrieve, query),
+                _fetch_memory(),
+            )
+
+            # pgvector retry only if primary came back empty
+            if not pg_context:
+                simplified = self._simplified_query(query)
+                if simplified:
+                    pg_context, pg_sources = await asyncio.to_thread(self._retrieve_pgvector, simplified, 6)
+
+            self.last_sources = list(dict.fromkeys(s for s in pg_sources if s))
+            # Only use local KB results when pgvector returned nothing
+            if pg_context:
+                local_context = ""
+            else:
+                for d in docs:
+                    src = d.metadata.get("source", "")
+                    if src and src not in self.last_sources:
+                        self.last_sources.append(src)
+                local_context = "\n\n".join(
+                    f"[{d.metadata.get('source', '')}]\n{d.page_content}" for d in docs
+                )
+
+            web_context = await asyncio.to_thread(tavily_search, query) if is_tavily_available() else ""
+
+            context_parts = [p for p in [memory_context, pg_context, local_context] if p]
+            if web_context:
+                context_parts.append(f"[Web]\n{web_context}")
+
+            full_context = (
+                "\n\n".join(context_parts)
+                if context_parts
+                else (
+                    "(No matching company documents found. Answer using your role knowledge "
+                    "and flag clearly when guidance is general rather than policy-specific.)"
+                )
+            )
+
+            async for chunk in self._chain.astream({
+                "personality": self._PERSONALITY,
+                "generic_guardrail": GENERIC_GUARDRAIL,
+                "org_guardrail": ORG_GUARDRAIL,
+                "context": full_context,
+                "query": query,
+                "fallback_contact": self._FALLBACK_CONTACT,
+            }):
+                if chunk:
+                    yield chunk
+        except Exception as exc:
+            print(f"[{self.__class__.__name__}] stream_query error: {exc}")
+            yield self._keyword_query(query)
+
     # ------------------------------------------------------------------
     # Setup
     # ------------------------------------------------------------------
@@ -95,6 +166,7 @@ class BaseDeepAgent:
                 model=self._config.llm.model,
                 temperature=self._config.llm.temperature,
                 num_predict=self._config.llm.max_tokens,
+                num_ctx=self._config.llm.num_ctx,
             )
 
             prompt = ChatPromptTemplate.from_messages([
@@ -116,7 +188,7 @@ class BaseDeepAgent:
 
     # Lowered from 0.25 -- many valid policy chunks score in the 0.10-0.25 band.
     _SIMILARITY_THRESHOLD = 0.10
-    _DEFAULT_TOP_K = 10
+    _DEFAULT_TOP_K = 5
 
     def _retrieve_pgvector(self, query: str, top_k: int = None) -> Tuple[str, List[str]]:
         if top_k is None:
@@ -178,15 +250,17 @@ class BaseDeepAgent:
 
             self.last_sources = list(dict.fromkeys(s for s in pg_sources if s))
 
-            # Supplementary: local KB
-            docs = self._kb.retrieve(query)
-            for d in docs:
-                src = d.metadata.get("source", "")
-                if src and src not in self.last_sources:
-                    self.last_sources.append(src)
-            local_context = "\n\n".join(
-                f"[{d.metadata.get('source', '')}]\n{d.page_content}" for d in docs
-            )
+            # Supplementary: local KB — only when pgvector returned nothing
+            local_context = ""
+            if not pg_context:
+                docs = self._kb.retrieve(query)
+                for d in docs:
+                    src = d.metadata.get("source", "")
+                    if src and src not in self.last_sources:
+                        self.last_sources.append(src)
+                local_context = "\n\n".join(
+                    f"[{d.metadata.get('source', '')}]\n{d.page_content}" for d in docs
+                )
 
             # Per-user memory context (preferences + conversation history)
             memory_context = ""
