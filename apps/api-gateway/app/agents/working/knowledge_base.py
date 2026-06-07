@@ -88,11 +88,11 @@ class KnowledgeBase:
                     chunks = splitter.split_documents(raw)
                     all_chunks.extend(chunks)
                     loaded += 1
-                    print(f"[KnowledgeBase] ✓ {os.path.basename(fpath)} → {len(chunks)} chunks")
+                    print(f"[KnowledgeBase] ok {os.path.basename(fpath)} -> {len(chunks)} chunks")
                 except Exception as exc:
-                    print(f"[KnowledgeBase] ✗ {os.path.basename(fpath)}: {exc}")
+                    print(f"[KnowledgeBase] err {os.path.basename(fpath)}: {exc}")
 
-        print(f"[KnowledgeBase] Loaded {loaded} files → {len(all_chunks)} total chunks")
+        print(f"[KnowledgeBase] Loaded {loaded} files -> {len(all_chunks)} total chunks")
         return all_chunks
 
     def _load_file(self, path: str) -> List[Document]:
