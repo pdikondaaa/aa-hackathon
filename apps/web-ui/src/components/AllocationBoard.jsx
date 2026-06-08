@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 
-import { getAllocationBoard, getEmployeeDetail, askAllocationAura } from '../services/api';
+import { getAllocationBoard, getAllocationFilterOptions, getEmployeeDetail, askAllocationAura } from '../services/api';
 import { COOAnalyticsDashboard } from '../modules/coo-analytics/pages/COODashboard';
 
 const CHART_COLORS = ['#1D76BC', '#27AAE1', '#4ED44E', '#2A3D90', '#f59e0b', '#ef4444', '#a78bfa', '#10b981'];
@@ -32,6 +32,90 @@ function nameMatch(field, userName) {
   const f = field.trim().toLowerCase();
   const u = userName.trim().toLowerCase();
   return f.includes(u) || u.includes(f);
+}
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function getCurrentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(key) {
+  const [year, month] = key.split('-').map(Number);
+  return new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function monthKeyToDateRange(monthYear) {
+  if (!monthYear) return {};
+  const [year, month] = monthYear.split('-').map(Number);
+  const from = new Date(year, month - 1, 1);
+  const to   = new Date(year, month, 0);
+  const f = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { date_from: f(from), date_to: f(to) };
+}
+
+// ── Month timeline picker (for lead roles) ────────────────────────────────────
+
+const LEAD_MONTH_WINDOW = 6;
+
+function LeadMonthTimeline({ months, selectedMonth, onChange, topOffset = 65 }) {
+  const sorted = [...months].reverse();
+  const hasMore = sorted.length > LEAD_MONTH_WINDOW;
+  const recentSlice = sorted.slice(sorted.length - LEAD_MONTH_WINDOW);
+  const selectedIsOld = hasMore && !recentSlice.includes(selectedMonth);
+  const [expanded, setExpanded] = useState(false);
+  const showAll = expanded || selectedIsOld;
+  const visible = showAll ? sorted : recentSlice;
+  const hiddenCount = sorted.length - LEAD_MONTH_WINDOW;
+
+  const pill = (active) => ({
+    padding: '5px 14px', borderRadius: 20, fontSize: 11,
+    fontWeight: active ? 700 : 400, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+    border: active ? `1.5px solid #1D76BC` : '1px solid var(--border)',
+    background: active ? '#1D76BC' : 'transparent',
+    color: active ? '#fff' : 'var(--text-secondary)', transition: 'all .15s',
+  });
+
+  return (
+    <div style={{
+      position: 'sticky', top: topOffset, zIndex: 18,
+      background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
+      padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        PERIOD
+      </span>
+      {hasMore && !showAll && (
+        <button
+          onClick={() => setExpanded(true)}
+          style={{ padding: '5px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer', flexShrink: 0, background: 'var(--bg-elevated)', border: '1px solid rgba(245,158,11,0.55)', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <i className="fas fa-clock-rotate-left" style={{ fontSize: 10 }} />
+          {hiddenCount} earlier
+        </button>
+      )}
+      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none', padding: '8px 0', flex: 1 }}>
+        {visible.map(m => (
+          <button key={m} onClick={() => onChange(m)} style={pill(m === selectedMonth)}>
+            {formatMonthLabel(m)}
+          </button>
+        ))}
+      </div>
+      {hasMore && showAll && (
+        <button
+          onClick={() => setExpanded(false)}
+          style={{ padding: '5px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer', flexShrink: 0, background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <i className="fas fa-compress-alt" style={{ fontSize: 10 }} />
+          Recent only
+        </button>
+      )}
+      <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        {showAll ? `${sorted.length} months` : `last ${Math.min(LEAD_MONTH_WINDOW, sorted.length)}`}
+      </span>
+    </div>
+  );
 }
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
@@ -977,19 +1061,47 @@ function AskAuraPanel({ onClose, role }) {
 // ── Root component ────────────────────────────────────────────────────────────
 
 export default function AllocationBoard() {
-  const [boardData,     setBoardData]     = useState(null);
-  const [loading,       setLoading]       = useState(true);
-  const [error,         setError]         = useState(null);
-  const [drawerEmp,     setDrawerEmp]     = useState(null);
-  const [drawerLoading, setDrawerLoading] = useState(false);
-  const [auraOpen,      setAuraOpen]      = useState(false);
+  const [boardData,      setBoardData]      = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState(null);
+  const [drawerEmp,      setDrawerEmp]      = useState(null);
+  const [drawerLoading,  setDrawerLoading]  = useState(false);
+  const [auraOpen,       setAuraOpen]       = useState(false);
+  const [monthYear,      setMonthYear]      = useState(getCurrentMonthKey());
+  const [availableMonths, setAvailableMonths] = useState([]);
+
+  const fetchBoard = useCallback(async (month) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const dateRange = monthKeyToDateRange(month);
+      const data = await getAllocationBoard(dateRange);
+      setBoardData(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    getAllocationBoard()
-      .then(setBoardData)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    getAllocationFilterOptions()
+      .then(opts => {
+        const months = opts.available_months || [];
+        setAvailableMonths(months);
+        const defaultMonth = months.includes(getCurrentMonthKey())
+          ? getCurrentMonthKey()
+          : (months[0] || getCurrentMonthKey());
+        setMonthYear(defaultMonth);
+        fetchBoard(defaultMonth);
+      })
+      .catch(() => fetchBoard(monthYear));
   }, []);
+
+  const handleMonthChange = useCallback((m) => {
+    setMonthYear(m);
+    fetchBoard(m);
+  }, [fetchBoard]);
 
   const handleEmployeeClick = useCallback(async (employeeId) => {
     if (!employeeId) return;
@@ -1080,6 +1192,74 @@ export default function AllocationBoard() {
 
   const roleLabel   = ROLE_LABEL[boardData.role] || boardData.role;
   const notInSystem = !boardData.designation;
+  const isLeadRole  = boardData.role === 'functional_lead' || boardData.role === 'business_lead';
+
+  // Functional / Business Lead: same sticky-header + sticky-timeline layout as exec board
+  if (isLeadRole) {
+    const roleSubtitle = boardData.role === 'functional_lead'
+      ? 'Functional Lead View'
+      : 'Business Lead View';
+
+    return (
+      <div className="ab-root ab-root--exec">
+        {/* Sticky header — identical structure to exec board */}
+        <div style={{
+          background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%)',
+          borderBottom: '1px solid var(--border)',
+          padding: '18px 28px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          position: 'sticky', top: 0, zIndex: 20,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #1D76BC, #2A3D90)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <i className="fas fa-layer-group" style={{ color: '#fff', fontSize: 16 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
+                Allocation Board
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                {roleSubtitle}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, background: 'rgba(29,118,188,0.12)', border: '1px solid rgba(29,118,188,0.3)', color: '#1D76BC', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <i className="fas fa-circle" style={{ fontSize: 7 }} /> {roleLabel}
+            </span>
+            <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
+              <i className="fas fa-robot" />
+              Ask Aura
+            </button>
+          </div>
+        </div>
+
+        {/* Sticky month timeline — same position as COO dashboard timeline */}
+        {availableMonths.length > 0 && (
+          <LeadMonthTimeline
+            months={availableMonths}
+            selectedMonth={monthYear}
+            onChange={handleMonthChange}
+            topOffset={65}
+          />
+        )}
+
+        <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
+        {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={boardData.role} />}
+
+        {/* Content with padding, matching exec board body layout */}
+        <div style={{ padding: '20px 24px' }}>
+          {notInSystem && (
+            <div className="ab-notice">
+              <i className="fa fa-info-circle" style={{ marginRight: '0.5rem' }} />
+              Your profile was not found in employee records. Contact HR or Admin to update your designation.
+            </div>
+          )}
+          <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={boardData.role} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ab-root">
@@ -1106,9 +1286,6 @@ export default function AllocationBoard() {
       <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
       {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={boardData.role} />}
 
-      {(boardData.role === 'functional_lead' || boardData.role === 'business_lead') && (
-        <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={boardData.role} />
-      )}
       {boardData.role === 'team_lead' && (
         <TeamView data={boardData} onEmployeeClick={handleEmployeeClick} />
       )}

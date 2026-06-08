@@ -13,6 +13,7 @@ from app.api.services.allocation_service import (
     get_board_data,
     get_employee_detail,
     get_user_profile,
+    get_available_months,
     build_ask_context,
 )
 from app.utils.logging_config import get_logger
@@ -22,7 +23,7 @@ logger = get_logger("allocation_agent")
 
 class AllocationAgent:
 
-    def get_board(self, user_email: str) -> dict:
+    def get_board(self, user_email: str, date_from: str = None, date_to: str = None) -> dict:
         """
         Returns the full board payload for the requesting user.
         Role is resolved from the user's designation in employee_details.
@@ -36,7 +37,11 @@ class AllocationAgent:
             { role, designation, view, my_allocation }
         """
         logger.info(f"AllocationAgent.get_board for {user_email}")
-        return get_board_data(user_email)
+        return get_board_data(user_email, date_from=date_from, date_to=date_to)
+
+    def get_filter_options(self) -> dict:
+        """Returns available months derived from actual allocation data."""
+        return {"available_months": get_available_months()}
 
     def get_employee(self, employee_id: str, requester_email: str) -> dict:
         """
