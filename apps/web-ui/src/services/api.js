@@ -277,6 +277,12 @@ export async function listDocuments(page = 1, limit = 50, search, category) {
   return httpClient.get(`/api/documents?${params}`);
 }
 
+// ── Skills Analytics API ───────────────────────────────────────────────────
+
+export async function getSkillsAnalytics() {
+  return httpClient.get('/api/skills/analytics');
+}
+
 // ── Microsoft Forms API ──────────────────────────────────────────────────
 
 /**
