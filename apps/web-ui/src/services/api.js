@@ -210,8 +210,16 @@ export async function getConversationFeedback(conversationId) {
 
 // ── Allocation Board API ───────────────────────────────────────────────────
 
-export async function getAllocationBoard() {
-  return httpClient.get('/api/allocation/board');
+export async function getAllocationBoard(params = {}) {
+  const query = new URLSearchParams();
+  if (params.date_from) query.set('date_from', params.date_from);
+  if (params.date_to) query.set('date_to', params.date_to);
+  const qs = query.toString();
+  return httpClient.get(`/api/allocation/board${qs ? `?${qs}` : ''}`);
+}
+
+export async function getAllocationFilterOptions() {
+  return httpClient.get('/api/allocation/filters');
 }
 
 export async function getEmployeeDetail(employeeId) {

@@ -150,15 +150,47 @@ def get_team_view(email: str) -> dict:
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_full_allocation(email: str, role: str) -> list[dict]:
-    """
-    functional_lead / business_lead / executive: full allocation table.
-    `role` is pre-resolved by the caller so masking avoids per-row DB calls.
-    """
+def get_available_months() -> list[str]:
+    """Return distinct YYYY-MM keys that have allocation data, newest first."""
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                SELECT DISTINCT TO_CHAR(allocation_date, 'YYYY-MM') AS month_key
+                FROM allocation_details
+                WHERE allocation_date IS NOT NULL
+                ORDER BY month_key DESC
+                """
+            )
+            return [r["month_key"] for r in cur.fetchall()]
+
+
+def get_full_allocation(
+    email: str,
+    role: str,
+    date_from: str = None,
+    date_to: str = None,
+) -> list[dict]:
+    """
+    functional_lead / business_lead / executive: full allocation table.
+    `role` is pre-resolved by the caller so masking avoids per-row DB calls.
+    Optional date_from / date_to filter by allocation_date (YYYY-MM-DD strings).
+    """
+    conditions = []
+    params: list = []
+    if date_from:
+        conditions.append("ad.allocation_date >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("ad.allocation_date <= %s")
+        params.append(date_to)
+
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
                 SELECT ad.employee_id, ad.name, ad.project_name, ad.sub_project,
                        ad.project_lead, ad.delivery_manager, ad.functional_manager,
                        ad.function, ad.subfunction, ad.completion_status,
@@ -171,8 +203,10 @@ def get_full_allocation(email: str, role: str) -> list[dict]:
                        ed.exp_group
                 FROM allocation_details ad
                 LEFT JOIN employee_details ed ON ad.employee_id = ed.employee_id
+                {where_sql}
                 ORDER BY ad.function NULLS LAST, ad.name NULLS LAST
-                """
+                """,
+                params if params else None,
             )
             rows = cur.fetchall()
     return [_mask(row, email, role) for row in rows]
@@ -488,11 +522,12 @@ def build_ask_context(email: str) -> tuple[str, str]:
     return "\n".join(lines), role
 
 
-def get_board_data(email: str) -> dict:
+def get_board_data(email: str, date_from: str = None, date_to: str = None) -> dict:
     """
     Top-level entry point: resolve user profile once, return role-appropriate payload.
 
     All response shapes include `designation` and `role` so the UI can display them.
+    Optional date_from / date_to narrow allocation_rows to a specific period.
     """
     profile = get_user_profile(email)
     role        = profile["role"]
@@ -504,7 +539,7 @@ def get_board_data(email: str) -> dict:
         return {
             **base,
             "view":            "analytics",
-            "allocation_rows": get_full_allocation(email, role),
+            "allocation_rows": get_full_allocation(email, role, date_from=date_from, date_to=date_to),
             "analytics":       get_analytics(email, role),
         }
 
