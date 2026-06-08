@@ -1,9 +1,8 @@
 import { msalInstance } from '../utils/authService';
 
-let API_URL = import.meta.env.VITE_API_URL || '';
+let API_URL = import.meta.env.VITE_API_URL || '/aura-api';
 if (import.meta.env.DEV) {
-  // In local Vite dev, use the proxy mapped at /api to avoid HTTPS->HTTP mixed content.
-  API_URL = '';
+  API_URL = '/aura-api';
 }
 
 class HTTPClient {

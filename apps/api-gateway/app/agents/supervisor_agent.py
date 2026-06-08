@@ -846,12 +846,12 @@ class MasterAgent:
                 "Please reach out to the appropriate department directly.</p>"
             )
 
-        if sources:
-            items = "".join(
-                f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
-                for s in dict.fromkeys(sources)
-            )
-            resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
+        # if sources:
+        #     items = "".join(
+        #         f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+        #         for s in dict.fromkeys(sources)
+        #     )
+        #     resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
 
         return resp
 
