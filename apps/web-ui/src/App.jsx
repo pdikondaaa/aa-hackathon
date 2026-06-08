@@ -18,6 +18,7 @@ import EscalationDrawer from './components/EscalationDrawer';
 import FormsDrawer from './components/FormsDrawer';
 import ParkingDrawer from './components/ParkingDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
+import { SkillRadarDashboard }   from './modules/skill-hub';
 import { getAllocationRole } from './services/api';
 import EmailAgentPage from './components/EmailAgentPage';
 import { AnalyticsDashboard } from './modules/analytics';
@@ -315,6 +316,8 @@ export default function App() {
           <COODashboard />
         ) : activeNav === 'emailAgent' ? (
           <EmailAgentPage user={user} />
+        ) : activeNav === 'skillRadar' ? (
+          <SkillRadarDashboard user={user} />
         ) : activeNav === 'communications' ? (
           <CommunicationsPage user={user} />
         ) : activeNav === 'adminAnalytics' && user?.isAdmin ? (

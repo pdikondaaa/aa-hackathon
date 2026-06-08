@@ -81,6 +81,7 @@ export const chatConfig = {
     { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
     //{ id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
       { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap', active: false },
+      { id: 'skillRadar',      label: 'Skill Radar',      icon: 'fa-brain',   active: false },
       { id: 'communications', label: 'Communications', icon: 'fa-bullhorn', active: false },
 
     //{ id: 'cooAnalytics',   label: 'COO Analytics',   icon: 'fa-gauge-high',   active: false },

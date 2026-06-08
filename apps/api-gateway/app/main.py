@@ -28,6 +28,7 @@ from app.api.controllers.forms_controller import router as forms_router
 from app.api.controllers.communications_controller import pub_router as communications_pub_router
 from app.api.controllers.communications_controller import admin_router as communications_admin_router
 from app.api.controllers.parking_controller import router as parking_router
+from app.api.controllers.skills_controller import router as skills_router
 
 
 tags_metadata = [
@@ -46,6 +47,7 @@ tags_metadata = [
     {"name": "Microsoft Forms", "description": "Create Microsoft Forms / surveys on behalf of the authenticated user via Graph API."},
     {"name": "Communications", "description": "Org-wide announcements and company events with RSVP support."},
     {"name": "Parking", "description": "Employee parking preference management — check status, view options, declare or change preference, and cost calculator via conversational AI."},
+    {"name": "Skills", "description": "Org-wide skill analytics from employee_details.primary_skills — top skills, breakdown by function, experience, and employee search."},
 ]
 
 app = FastAPI(
@@ -87,3 +89,4 @@ app.include_router(forms_router)
 app.include_router(communications_pub_router)
 app.include_router(communications_admin_router)
 app.include_router(parking_router)
+app.include_router(skills_router)
