@@ -27,6 +27,8 @@ import DocumentsPage from './components/DocumentsPage';
 import AdminPage from './components/AdminPage';
 import CommunicationsPage from './components/CommunicationsPage';
 import CommunicationsAdmin from './components/CommunicationsAdmin';
+import QuickLinksAdmin from './components/QuickLinksAdmin';
+import { PMODashboard } from './modules/pmo-hub';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import AnnouncementOverlay from './components/AnnouncementOverlay';
 import CommunicationsWidget from './components/CommunicationsWidget';
@@ -318,6 +320,8 @@ export default function App() {
           <EmailAgentPage user={user} />
         ) : activeNav === 'skillRadar' ? (
           <SkillRadarDashboard user={user} />
+        ) : activeNav === 'pmoHub' ? (
+          <PMODashboard user={user} />
         ) : activeNav === 'communications' ? (
           <CommunicationsPage user={user} />
         ) : activeNav === 'adminAnalytics' && user?.isAdmin ? (
@@ -326,6 +330,8 @@ export default function App() {
           <AdminPage user={user} />
         ) : activeNav === 'adminCommunications' && user?.isAdmin ? (
           <CommunicationsAdmin user={user} />
+        ) : activeNav === 'adminQuickLinks' && user?.isAdmin ? (
+          <QuickLinksAdmin user={user} />
         ) : (
           <main className="main-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <CommunicationsWidget user={user} onNavigate={setActiveNav} closed={widgetClosed} onClose={() => setWidgetClosed(true)} />

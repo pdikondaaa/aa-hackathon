@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { autocorrectLastWord } from '../utils/autocorrect';
 import MessageBubble from './MessageBubble';
 import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat, saveEmailDraft } from '../services/api';
 import { buildParkingHtml, buildAlreadySubmittedHtml } from '../config/parkingConfig';
@@ -139,6 +140,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
 
   const [messages, setMessages]       = useState(initialMessages);
   const [input, setInput]             = useState('');
+  const [correctionFlash, setCorrectionFlash] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -231,7 +233,23 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   }, [loading]);
 
   const handleInput = (e) => {
-    setInput(e.target.value);
+    const raw = e.target.value;
+    const { corrected, didCorrect, original } = autocorrectLastWord(raw);
+    setInput(corrected);
+    if (didCorrect) {
+      setCorrectionFlash(original);
+      setTimeout(() => setCorrectionFlash(''), 2000);
+      // Sync the DOM value so caret position stays at end after correction
+      if (corrected !== raw) {
+        requestAnimationFrame(() => {
+          const el = e.target;
+          if (el) {
+            el.value = corrected;
+            el.selectionStart = el.selectionEnd = corrected.length;
+          }
+        });
+      }
+    }
     const el = e.target;
     el.style.height = 'auto';
     const minH = parseInt(getComputedStyle(el).minHeight, 10) || 50;
@@ -625,7 +643,16 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             onKeyDown={handleKeyDown}
             rows={1}
             aria-label="Message input"
+            spellCheck={true}
+            autoCorrect="on"
+            autoCapitalize="sentences"
           />
+          {correctionFlash && (
+            <div className="autocorrect-flash">
+              <i className="fas fa-spell-check" />
+              &ldquo;{correctionFlash}&rdquo; autocorrected
+            </div>
+          )}
           <div className="chat-input-footer">
             <div className="chat-input-left">
               <button

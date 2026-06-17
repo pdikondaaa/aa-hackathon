@@ -103,6 +103,7 @@ button, a, [role="button"] {
   width: auto;
   display: block;
   user-select: none;
+  cursor: pointer;
 }
 
 .topbar-actions {
@@ -550,7 +551,6 @@ button, a, [role="button"] {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 800px;
 }
 
 .feature-cards-heading {
@@ -563,7 +563,7 @@ button, a, [role="button"] {
 
 .feature-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -571,8 +571,8 @@ button, a, [role="button"] {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
-  padding: 15px 14px;
+  gap: 8px;
+  padding: 8px 10px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
@@ -590,19 +590,19 @@ button, a, [role="button"] {
 .feature-card:active         { transform: translateY(0); }
 
 .feature-card-icon {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .feature-card-body { min-width: 0; }
-.feature-card-body h4 { font-size: 12px; font-weight: 600; margin-bottom: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.feature-card-body p  { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feature-card-body h4 { font-size: 11px; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feature-card-body p  { font-size: 10px; color: var(--text-muted); margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; }
 
 .feature-card-link { display: none; }
 
@@ -740,6 +740,23 @@ button, a, [role="button"] {
   min-height: 50px; max-height: 160px; color: var(--text);
 }
 .chat-textarea::placeholder { color: var(--text-muted); }
+
+.autocorrect-flash {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 0 16px 4px;
+  padding: 3px 10px; border-radius: 20px;
+  background: rgba(29,118,188,0.12); border: 1px solid rgba(29,118,188,0.25);
+  color: var(--primary); font-size: 11px; font-weight: 500;
+  animation: autocorrect-in 0.15s ease, autocorrect-out 0.3s ease 1.7s forwards;
+  pointer-events: none;
+}
+@keyframes autocorrect-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes autocorrect-out {
+  to { opacity: 0; transform: translateY(-2px); }
+}
 
 .chat-input-footer  { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 10px; }
 .chat-input-actions { display: flex; align-items: center; gap: 6px; }
@@ -1071,7 +1088,7 @@ button, a, [role="button"] {
   }
 
   .feature-cards-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .messages-list {
@@ -1365,17 +1382,17 @@ button, a, [role="button"] {
 
   /* Feature cards */
   .feature-cards-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
     gap: 8px;
   }
   .feature-card {
-    padding: 10px;
-    gap: 8px;
+    padding: 8px 10px;
+    gap: 7px;
   }
   .feature-card-icon {
-    width: 28px;
-    height: 28px;
-    font-size: 12px;
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
   }
   .feature-card-body h4 {
     font-size: 11px;
@@ -7305,4 +7322,49 @@ button, a, [role="button"] {
 }
 @media (max-width: 480px) {
   .sh-stats-row { grid-template-columns: 1fr; }
+}
+
+/* ─── PMO Hub ─────────────────────────────────────────────────────────────── */
+.pmo-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.pmo-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: border-color 0.15s;
+}
+.pmo-stat-card:hover { border-color: #0F766E; }
+.pmo-stat-icon {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; flex-shrink: 0;
+}
+.pmo-stat-value { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1; }
+.pmo-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+.pmo-stat-sub   { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+.pmo-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  overflow: hidden;
+}
+.pmo-card-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+  margin-bottom: 14px;
+}
+@media (max-width: 900px) {
+  .pmo-stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .pmo-stats-row { grid-template-columns: 1fr; }
 }

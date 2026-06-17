@@ -4,7 +4,25 @@
 // icon   : Font Awesome 5 free solid class — shown when iconImg is absent/fails.
 // color  : hex accent for icon tile background and hover glow.
 
-export const QUICK_LINKS = [
+const STORAGE_KEY = 'aa_quick_links';
+
+export const getQuickLinks = () => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return DEFAULT_QUICK_LINKS;
+};
+
+export const saveQuickLinks = (links) => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(links));
+};
+
+export const resetQuickLinks = () => {
+  localStorage.removeItem(STORAGE_KEY);
+};
+
+export const DEFAULT_QUICK_LINKS = [
   {
     id: 'aa-website',
     label: 'Aligned Automation',
@@ -86,3 +104,6 @@ export const QUICK_LINKS = [
     color: '#0F766E',
   },
 ];
+
+// backward-compat alias — use getQuickLinks() for live/admin-configurable links
+export const QUICK_LINKS = DEFAULT_QUICK_LINKS;
