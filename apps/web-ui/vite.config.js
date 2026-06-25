@@ -10,6 +10,12 @@ export default defineConfig({
     port: 5173,
     allowedHosts: true,
     proxy: {
+      '/aura-api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/aura-api/, ''),
+      },
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,

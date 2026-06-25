@@ -5,7 +5,10 @@
       "Bash(.venv/Scripts/pip install *)",
       "Bash(python -c ' *)",
       "Bash(python create_schema.py)",
-      "Bash(grep -E \"\\\\.py$\")"
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(cd \"/d/AA Internal Projects/AA Hackathon 2026/aa-hackathon\" && find apps/api-gateway/app/api -type f -name \"*.py\" | head -40)",
+      "Read(//d/d/AA Internal Projects/AA Hackathon 2026/aa-hackathon/apps/api-gateway/app/**)",
+      "PowerShell(py -3.12 -m venv \"d:\\\\AA Internal Projects\\\\AA Hackathon 2026\\\\aa-hackathon\\\\.venv\" --upgrade-deps 2>&1)"
     ]
   }
 }

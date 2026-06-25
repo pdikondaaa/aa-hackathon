@@ -5,8 +5,10 @@
 const ENV = import.meta.env.MODE || 'development';
 
 // ─── Base API URLs by environment ──────────────────────────────────────────────
-// Override via VITE_API_URL in .env files
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// In dev, route through Vite proxy (/aura-api) to avoid CORS issues
+const API_BASE_URL = import.meta.env.DEV
+  ? '/aura-api'
+  : (import.meta.env.VITE_API_URL || 'http://localhost:8000');
 
 // ─── API Configuration ────────────────────────────────────────────────────────
 export const apiConfig = {
