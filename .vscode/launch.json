@@ -17,6 +17,7 @@
       "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "jinja": true,
       "cwd": "${workspaceFolder}/apps/api-gateway",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "DATABASE_URL": "postgresql://squadrons:TwlU0KL1LZbZLYS$@hackathon.alignedautomation.com:5432/squadrons",
         "SQL_ECHO": "false",
@@ -41,7 +42,9 @@
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "env": {
-        "VITE_API_URL": "http://localhost:8000"
+        "VITE_API_URL": "http://localhost:8000",
+        "VITE_AZURE_TENANT_ID": "3dcd35b5-f9c5-48ca-8653-821568ad3397",
+        "VITE_AZURE_CLIENT_ID": "f03e6b79-ed73-455c-b86a-f15a5d4b360c"
       },
       "skipFiles": [
         "<node_internals>/**"

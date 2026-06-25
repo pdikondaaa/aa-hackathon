@@ -6,9 +6,14 @@
       "Bash(python -c ' *)",
       "Bash(python create_schema.py)",
       "Bash(grep -E \"\\\\.py$\")",
-      "Bash(cd \"/d/AA Internal Projects/AA Hackathon 2026/aa-hackathon\" && find apps/api-gateway/app/api -type f -name \"*.py\" | head -40)",
-      "Read(//d/d/AA Internal Projects/AA Hackathon 2026/aa-hackathon/apps/api-gateway/app/**)",
-      "PowerShell(py -3.12 -m venv \"d:\\\\AA Internal Projects\\\\AA Hackathon 2026\\\\aa-hackathon\\\\.venv\" --upgrade-deps 2>&1)"
+      "Skill(run)",
+      "Skill(run:*)",
+      "PowerShell(python --version 2>&1)",
+      "PowerShell(node --version 2>&1)",
+      "PowerShell(npm --version 2>&1)",
+      "PowerShell(py --version 2>&1)",
+      "PowerShell(python3 --version 2>&1)",
+      "PowerShell(Get-Command py -ErrorAction SilentlyContinue)"
     ]
   }
 }

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import alignedDarkLogo  from '../assets/alignedDarkLogo.svg';
 import alignedLightLogo from '../assets/alignedLightLogo.svg';
 import AlignedLogo     from '../assets/AlignedLogo.png';
-import { QUICK_LINKS } from '../config/quickLinksConfig';
+import { getQuickLinks } from '../config/quickLinksConfig';
 
 const TopBar = ({
   config,
@@ -22,6 +22,7 @@ const TopBar = ({
   const [qlOpen, setQlOpen]       = useState(false);
   const [qlClosing, setQlClosing] = useState(false);
   const [imgErrors, setImgErrors] = useState(new Set());
+  const [quickLinks, setQuickLinks] = useState([]);
   const qlRef = useRef(null);
 
   // Determine what to render inside a link's icon tile
@@ -84,7 +85,10 @@ const TopBar = ({
 
   const handleQlClick = () => {
     if (qlOpen && !qlClosing) triggerClose();
-    else if (!qlOpen) setQlOpen(true);
+    else if (!qlOpen) {
+      setQuickLinks(getQuickLinks());
+      setQlOpen(true);
+    }
   };
 
   return (
@@ -135,7 +139,7 @@ const TopBar = ({
               className={`ql-drawer${qlClosing ? ' ql-drawer--closing' : ''}`}
             >
               <div className="ql-grid">
-                {QUICK_LINKS.map((link, i) => (
+                {quickLinks.map((link, i) => (
                   <a
                     key={link.id}
                     href={link.url}
