@@ -2312,6 +2312,220 @@ button, a, [role="button"] {
   color: #0a1a0a;
 }
 
+.email-draft-send-btn--sending {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.email-draft-sent-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(78, 212, 78, 0.12);
+  border: 1px solid rgba(78, 212, 78, 0.35);
+  border-radius: var(--radius-md);
+  color: var(--secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.email-draft-send-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--error, #e55);
+}
+
+.email-draft-outlook-fallback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition);
+  width: fit-content;
+}
+
+.email-draft-outlook-fallback:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+/* ── IT Ticket Form Card (inline in chat) ──────────────────────────────────── */
+
+.it-ticket-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  width: 100%;
+}
+
+.it-ticket-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--light-blue, #27aae1);
+}
+
+.it-ticket-header i {
+  font-size: 15px;
+}
+
+.it-ticket-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.it-ticket-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.it-ticket-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.it-ticket-optional {
+  font-weight: 400;
+  text-transform: none;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.it-ticket-select,
+.it-ticket-textarea {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text);
+  width: 100%;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.it-ticket-select:focus,
+.it-ticket-textarea:focus {
+  border-color: var(--primary);
+}
+
+.it-ticket-select:disabled,
+.it-ticket-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.it-ticket-textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.6;
+}
+
+.it-ticket-urgency-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.it-ticket-urgency-btn {
+  padding: 5px 14px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition), background var(--transition);
+}
+
+.it-ticket-urgency-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.it-ticket-urgency-btn--active {
+  background: rgba(29, 118, 188, 0.15);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.it-ticket-urgency-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.it-ticket-submit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--primary, #1d76bc);
+  color: #fff;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--transition), box-shadow var(--transition);
+  margin-top: 4px;
+}
+
+.it-ticket-submit-btn:hover:not(:disabled) {
+  opacity: 0.88;
+  box-shadow: 0 0 18px rgba(29, 118, 188, 0.4);
+}
+
+.it-ticket-submit-btn:disabled,
+.it-ticket-submit-btn--generating {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.it-ticket-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(78, 212, 78, 0.1);
+  border: 1px solid rgba(78, 212, 78, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.it-ticket-error {
+  font-size: 12px;
+  color: var(--error, #e55);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ── Personal Notes Component Styles
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 

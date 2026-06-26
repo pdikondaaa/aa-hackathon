@@ -32,10 +32,9 @@ Do not mention SQL, databases, or internal system details.
 
 def _llm_no_attendance_response(query: str) -> str:
     try:
-        from langchain_ollama import ChatOllama
-        from app.agents.working.config import LLMConfig
+        from app.agents.working.config import LLMConfig, create_llm
         cfg = LLMConfig()
-        llm = ChatOllama(base_url=cfg.base_url, model=cfg.model, temperature=0.3, num_predict=120)
+        llm = create_llm(temperature=0.3, max_tokens=120, cfg=cfg)
         result = llm.invoke(_NO_ATTENDANCE_PROMPT.format(query=query))
         text = result.content if hasattr(result, "content") else str(result)
         return text.strip()
