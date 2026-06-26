@@ -37,3 +37,24 @@ class ReporteeAttendanceOut(BaseModel):
     reportee_email: str         # The reportee being viewed
     reportee_name: str          # Full name of the reportee
     attendance: AttendanceOut   # Full attendance summary
+
+
+class ReporteeSummary(BaseModel):
+    """Compact attendance summary for one team member, used in team view."""
+    name: str
+    email: str
+    department: str
+    designation: str
+    this_month: MonthSummary
+    last_month: MonthSummary
+    total_days_combined: int
+    total_minutes_combined: int
+    total_hours_combined: str
+
+
+class TeamAttendanceOut(BaseModel):
+    """Attendance for all direct reports of the logged-in manager."""
+    manager_name: str
+    manager_email: str
+    team_size: int
+    reportees: list[ReporteeSummary]

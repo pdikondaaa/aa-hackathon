@@ -11,9 +11,7 @@ from __future__ import annotations
 import random
 from typing import List
 
-from langchain_ollama import ChatOllama
-
-from .config import LLMConfig
+from .config import LLMConfig, create_llm
 from .personalities import FUNNY_PERSONALITY
 
 _LLM_DOWN_FALLBACKS = [
@@ -52,13 +50,7 @@ class FunnyAgent:
     def _setup_llm(self) -> None:
         try:
             cfg = LLMConfig()
-            self._llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0.95,
-                top_p=0.95,
-                num_predict=200,
-            )
+            self._llm = create_llm(temperature=0.95, max_tokens=200, cfg=cfg)
         except Exception as exc:
             print(f"[FunnyAgent] LLM setup failed: {exc}")
             self._llm = None

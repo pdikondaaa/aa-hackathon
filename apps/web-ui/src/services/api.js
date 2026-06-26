@@ -160,6 +160,21 @@ export async function saveEmailDraft(conversationId, { to, subject, body }) {
   return httpClient.post(`/api/conversations/${conversationId}/email-draft`, { to, subject, body });
 }
 
+export async function draftITTicketEmail({ employeeName, issueType, description, urgency, stepsTried }) {
+  return httpClient.post('/api/email-agent/it-ticket', {
+    employee_name:   employeeName,
+    issue_type:      issueType,
+    description,
+    urgency,
+    steps_tried:     stepsTried || '',
+    submission_date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+  });
+}
+
+export async function sendEmail({ to, subject, body }) {
+  return httpClient.post('/api/email-agent/send', { to, subject, body });
+}
+
 // ── Conversations API ──────────────────────────────────────────────────────
 
 export async function createConversation(title) {
@@ -260,6 +275,10 @@ export async function getMyProfile() {
 
 export async function getMyAttendance() {
   return httpClient.get('/api/attendance/me');
+}
+
+export async function getTeamAttendance() {
+  return httpClient.get('/api/attendance/team');
 }
 
 // ── Birthdays API ──────────────────────────────────────────────────────────

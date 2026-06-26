@@ -7,10 +7,12 @@ sentence-transformers
 langgraph
 langchain
 langchain-ollama
+langchain-groq
 langchain-community
 langchain-text-splitters
 faiss-cpu
 pandas
+openpyxl
 pypdf
 httpx
 python-jose[cryptography]
@@ -20,3 +22,4 @@ tavily-python
 docx2txt
 python-pptx
 numpy
+pymssql

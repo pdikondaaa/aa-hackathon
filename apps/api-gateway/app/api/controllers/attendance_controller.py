@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.auth.auth_handler import get_current_user
-from app.api.models.attendance_model import AttendanceOut
+from app.api.models.attendance_model import AttendanceOut, TeamAttendanceOut
 from app.api.services.attendance_service import AttendanceService
 
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
@@ -31,3 +31,26 @@ def get_my_attendance(current_user: dict = Depends(get_current_user)):
     except Exception as exc:
         print(f"ERROR in GET /api/attendance/me for {email}: {exc}")
         raise HTTPException(status_code=500, detail="Failed to fetch attendance data")
+
+
+@router.get(
+    "/team",
+    response_model=TeamAttendanceOut,
+    summary="Get my team's attendance",
+    description=(
+        "Returns attendance summaries (this month + last month) for all active direct "
+        "reports of the logged-in manager, resolved from the Zoho People directory."
+    ),
+)
+def get_team_attendance(current_user: dict = Depends(get_current_user)):
+    email = current_user.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="User email not found in token")
+
+    try:
+        return _service.get_team_attendance(email)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        print(f"ERROR in GET /api/attendance/team for {email}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to fetch team attendance data")
