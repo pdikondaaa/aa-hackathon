@@ -29,6 +29,7 @@ import CommunicationsPage from './components/CommunicationsPage';
 import CommunicationsAdmin from './components/CommunicationsAdmin';
 import QuickLinksAdmin from './components/QuickLinksAdmin';
 import { PMODashboard } from './modules/pmo-hub';
+import { FeedbackPage, FeedbackAdmin } from './modules/feedback';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import AnnouncementOverlay from './components/AnnouncementOverlay';
 import CommunicationsWidget from './components/CommunicationsWidget';
@@ -335,6 +336,10 @@ export default function App() {
           <CommunicationsAdmin user={user} />
         ) : activeNav === 'adminQuickLinks' && user?.isAdmin ? (
           <QuickLinksAdmin user={user} />
+        ) : activeNav === 'adminFeedback' && user?.isAdmin ? (
+          <FeedbackAdmin user={user} />
+        ) : activeNav === 'feedback' ? (
+          <FeedbackPage user={user} />
         ) : (
           <main className="main-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <CommunicationsWidget user={user} onNavigate={setActiveNav} closed={widgetClosed} onClose={() => setWidgetClosed(true)} />

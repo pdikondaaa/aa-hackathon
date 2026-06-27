@@ -90,6 +90,7 @@ def retrieve_chunks(query: str, top_k: int = 10) -> list:
     conn = _get_db_conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SET ivfflat.probes = 10")
             cur.execute(
                 """
                 SELECT
