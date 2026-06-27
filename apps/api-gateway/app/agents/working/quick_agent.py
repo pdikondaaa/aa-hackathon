@@ -44,17 +44,10 @@ class QuickAgent:
 
     def _setup_llm(self) -> None:
         try:
-            from langchain_ollama import ChatOllama
-            from .config import LLMConfig
+            from .config import LLMConfig, create_llm
 
             cfg = LLMConfig()
-            self._llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0.4,
-                num_predict=400,
-                num_ctx=1024,
-            )
+            self._llm = create_llm(temperature=0.4, max_tokens=400, num_ctx=1024, cfg=cfg)
             print("[QuickAgent] ready")
         except Exception as exc:
             print(f"[QuickAgent] LLM setup failed: {exc}")
