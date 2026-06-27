@@ -1,4 +1,5 @@
 import { msalInstance } from '../utils/authService';
+import { InteractionRequiredAuthError } from '@azure/msal-browser';
 
 let API_URL = import.meta.env.VITE_API_URL || '/aura-api';
 if (import.meta.env.DEV) {
@@ -103,10 +104,19 @@ httpClient.addRequestInterceptor(async (config, endpoint) => {
     }
 
     const scopes = [`${import.meta.env.VITE_AZURE_CLIENT_ID}/.default`];
-    const response = await msalInstance.acquireTokenSilent({ scopes, account });
+    let tokenResponse;
+    try {
+      tokenResponse = await msalInstance.acquireTokenSilent({ scopes, account });
+    } catch (silentError) {
+      if (silentError instanceof InteractionRequiredAuthError) {
+        tokenResponse = await msalInstance.acquireTokenPopup({ scopes, account });
+      } else {
+        throw silentError;
+      }
+    }
 
     config.headers = config.headers || {};
-    config.headers['Authorization'] = `Bearer ${response.accessToken}`;
+    config.headers['Authorization'] = `Bearer ${tokenResponse.accessToken}`;
   } catch (error) {
     console.error('Failed to acquire token:', error);
     throw new Error('Authentication failed');
