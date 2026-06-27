@@ -33,6 +33,11 @@ JOBS_DIR = Path(__file__).resolve().parent
 SP_DIR   = JOBS_DIR / "sharepoint_ingestion"
 DF_DIR   = JOBS_DIR / "Data_Files"
 
+# Use the short-path venv for SharePoint step (needs sentence-transformers + torch).
+# Falls back to the current interpreter if the venv doesn't exist.
+_VENV_PYTHON = Path(r"C:\aura_venv\Scripts\python.exe")
+_SP_PYTHON   = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -65,6 +70,7 @@ STEPS = [
         "name":   "SharePoint document ingestion",
         "script": SP_DIR / "main.py",
         "cwd":    SP_DIR,
+        "python": _SP_PYTHON,
     },
 ]
 
@@ -77,8 +83,9 @@ def run_step(step: dict) -> bool:
     log.info("  STEP: %s", step["name"])
     log.info("=" * 60)
 
+    python = step.get("python", sys.executable)
     result = subprocess.run(
-        [sys.executable, str(step["script"])],
+        [python, str(step["script"])],
         cwd=str(step["cwd"]),
     )
 
