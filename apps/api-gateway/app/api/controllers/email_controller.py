@@ -55,9 +55,8 @@ def refine_email(
             body=req.body,
         )
         return result
-    except RuntimeError:
-        # LLM unavailable — return the original draft unrefined so the UI still works
-        return RefineResponse(refined_subject=req.subject, refined_body=req.body)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
         print(f"[email_controller] Unexpected error: {exc}")
         print(traceback.format_exc())

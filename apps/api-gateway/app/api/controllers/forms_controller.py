@@ -45,10 +45,11 @@ class CreateFormRequest(BaseModel):
     questions: List[FormQuestion] = Field(..., min_length=1, description="List of questions")
     graph_access_token: str = Field(
         ...,
-        description="Delegated token for https://forms.office.com (Forms.ReadWrite scope).",
+        description=(
+            "User's Graph API access token with Forms.ReadWrite scope. "
+            "Acquired by the frontend via MSAL."
+        ),
     )
-    tenant_id: str = Field(..., description="Azure AD tenant ID from MSAL account.tenantId")
-    user_oid: str = Field(..., description="User object ID from MSAL account.localAccountId")
 
 
 class CreateFormResponse(BaseModel):
@@ -101,11 +102,7 @@ def create_microsoft_form(
     try:
         from app.agents.ms_forms_agent import MSFormsAgent, MSFormsAgentError
 
-        agent  = MSFormsAgent(
-            access_token=req.graph_access_token,
-            tenant_id=req.tenant_id,
-            user_oid=req.user_oid,
-        )
+        agent  = MSFormsAgent(access_token=req.graph_access_token)
         result = agent.create_form(
             title=req.title,
             description=req.description or "",

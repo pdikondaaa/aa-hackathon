@@ -76,10 +76,9 @@ _SELF_RE = re.compile(
     \bmy\s+(?:mobile|phone|email|designation|department|manager|reporting\s+manager|
               role|grade|level|skill|project|blood\s*group|date\s+of\s+joining|
               joining|detail|info(?:rmation)?|profile|team|location|
-              nationality|experience|contact|address|work\s+phone|name)
+              nationality|experience|contact|address|work\s+phone)
     |\bwho\s+am\s+i\b
-    |\babout\s+me(?:self)?\b
-    |\btell\s+me\s+about\s+(?:my)?self\b
+    |\babout\s+me\b
     |\bmy\s+(?:employee|hr|personal)\s+(?:detail|info|profile|record|data)
     """,
     re.VERBOSE | re.IGNORECASE,
@@ -265,7 +264,6 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
     )
     if name_m:
         name = name_m.group(1).strip()
-        tokens = [t for t in name.split() if len(t) > 1]
         name_cols = [COL_FIRST_NAME, COL_LAST_NAME, COL_EMAIL]
         clause = _ilike_clause(name_cols)
         return (
@@ -470,7 +468,7 @@ def _format_results(rows: List[Dict], intent: str) -> str:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def employee_agent(query: str, user_email: str = "", user_name: str = "") -> str:
+def employee_agent(query: str, user_email: str = "") -> str:
     """
     Employee Agent — answers employee directory queries by reading
     the Zoho People database (people.vb_employees).
@@ -481,19 +479,13 @@ def employee_agent(query: str, user_email: str = "", user_name: str = "") -> str
     Attendance queries are handled by the dedicated AttendanceAgent.
     """
     try:
-        if user_email:
-            q_lower = query.lower()
-            # Name-based self-check uses the JWT display name — no DB call needed
-            name_parts = user_name.lower().split() if user_name else []
-            is_self_by_name = len(name_parts) >= 2 and all(p in q_lower for p in name_parts)
-
-            if _SELF_RE.search(query) or is_self_by_name:
-                rows = _run(
-                    f'SELECT * FROM {EMPLOYEE_VIEW} WHERE "{COL_EMAIL}" ILIKE %s LIMIT 1',
-                    (user_email,),
-                )
-                if rows:
-                    return _fmt_detail_card(rows[0])
+        if user_email and _SELF_RE.search(query):
+            rows = _run(
+                f'SELECT * FROM {EMPLOYEE_VIEW} WHERE "{COL_EMAIL}" ILIKE %s LIMIT 1',
+                (user_email,),
+            )
+            if rows:
+                return _fmt_detail_card(rows[0])
 
         sql, params, intent = _build_query(query)
         rows = _run(sql, params)

@@ -32,21 +32,6 @@ _APPLY_LEAVE_RESPONSE = (
     '📅 Apply Leave on Zoho People</a>'
 )
 
-# ── Email draft fast-path ────────────────────────────────────────────────────
-_EMAIL_DRAFT_RE = re.compile(
-    r"""
-    \b(?:
-        draft(?:ing)?\s+(?:a\s+|an\s+)?email |
-        write\s+(?:a\s+|an\s+)?email |
-        compose\s+(?:a\s+|an\s+)?email |
-        create\s+(?:a\s+|an\s+)?email |
-        (?:help\s+(?:me\s+)?)?(?:draft|write|compose|prepare)\s+(?:a\s+|an\s+)?(?:\w+\s+)?email |
-        email\s+(?:draft|template)
-    )\b
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
 # ── Microsoft Forms fast-path ─────────────────────────────────────────────────
 _MS_FORMS_RE = re.compile(
     r"""
@@ -67,8 +52,7 @@ _MS_FORMS_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_MS_FORMS_SENTINEL    = "__MS_FORMS_INTENT__"
-_EMAIL_DRAFT_SENTINEL = "__EMAIL_DRAFT_INTENT__"
+_MS_FORMS_SENTINEL = "__MS_FORMS_INTENT__"
 
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
 _GREETING_RE = re.compile(
@@ -140,18 +124,6 @@ _CONVERSATIONAL_RE = re.compile(
         tell\s+me\s+about\s+yourself |
         introduce\s+yourself
     )[\s!.,?]*$""",
-    re.IGNORECASE | re.VERBOSE,
-)
-
-# ── User identity name fast-path ──────────────────────────────────────────────
-_NAME_QUERY_RE = re.compile(
-    r"""
-    \b(?:
-        what(?:'s|\s+is)\s+my\s+(?:full\s+)?name |
-        tell\s+me\s+my\s+(?:full\s+)?name |
-        my\s+(?:full\s+)?name\s*[?]?$
-    )\b
-    """,
     re.IGNORECASE | re.VERBOSE,
 )
 
@@ -243,11 +215,6 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
     ],
-    'email': [
-        'draft email', 'write email', 'compose email', 'create email',
-        'draft an email', 'write an email', 'compose an email',
-        'email draft', 'email template', 'help me draft', 'help me write an email',
-    ],
     'funny': [
         'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
         'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
@@ -306,10 +273,7 @@ _EMP_PATTERNS = [
     re.compile(r"\b(?:manager\s+of|reports?\s+to|reporting\s+to|team\s+under)\s+[a-z]", re.IGNORECASE),
     re.compile(r"\bmy\s+(?:mobile|phone|email|designation|department|manager|role|grade)\b", re.IGNORECASE),
     re.compile(r"\bmy\s+(?:level|skill|project|blood|joining|detail|info|profile|team|location|experience|contact)\b", re.IGNORECASE),
-    re.compile(r"\b(?:who\s+am\s+i|about\s+me|about\s+myself)\b", re.IGNORECASE),
-    re.compile(r"\btell\s+me\s+about\s+(?:my)?self\b", re.IGNORECASE),
-    re.compile(r"\bmy\s+(?:full\s+)?name\b", re.IGNORECASE),
-    re.compile(r"\bwhat(?:'s|\s+is)\s+my\s+(?:full\s+)?name\b", re.IGNORECASE),
+    re.compile(r"\b(?:who\s+am\s+i|about\s+me)\b", re.IGNORECASE),
     re.compile(r"\bwho\s+is\s+\w", re.IGNORECASE),
     re.compile(r"\b(?:profile|details?|information|info)\s+(?:of|about|for)\s+\w", re.IGNORECASE),
     re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
@@ -342,59 +306,6 @@ def _is_attendance_query(query: str) -> bool:
     return any(p.search(query) for p in _ATT_PATTERNS)
 
 
-def _is_email_draft_query(query: str) -> bool:
-    return bool(_EMAIL_DRAFT_RE.search(query))
-
-
-# ── Document field-response heuristic ────────────────────────────────────────
-# Question words / command verbs that strongly indicate a NEW request rather
-# than a reply with document field values.
-_QUESTION_START_RE = re.compile(
-    r"^(?:what|how|why|when|where|who|can|could|would|should|"
-    r"is|are|was|were|do|does|did|tell|show|find|help|give|get|"
-    r"apply|check|search|list|explain|describe|i\s+need|i\s+want)\b",
-    re.IGNORECASE,
-)
-
-# Keywords that almost never appear in document field values but are common
-# in unrelated employee queries (kept minimal to avoid false positives).
-_OFF_TOPIC_KW = frozenset([
-    "vpn", "password", "laptop", "antivirus", "mfa", "wi-fi", "wifi",
-    "travel", "cab", "parking",
-    "joke", "funny",
-])
-
-
-def _is_doc_field_response(query: str) -> bool:
-    """
-    Return True when the message is plausibly providing field values for
-    an active document session. Return False when it looks like a new,
-    unrelated request that should break the session.
-    """
-    q = query.strip()
-    # A question mark almost always means a new question
-    if "?" in q:
-        return False
-    # Starts with interrogative / command words → new request
-    if _QUESTION_START_RE.match(q):
-        return False
-    # Matches the other fast-path detectors → clearly a new intent
-    if (
-        _APPLY_LEAVE_RE.search(q)
-        or _is_email_draft_query(q)
-        or _is_forms_query(q)
-        or _is_attendance_query(q)
-        or _is_greeting(q)
-        or _is_conversational(q)
-    ):
-        return False
-    # Specific domain keywords that cannot appear as field values
-    q_lower = q.lower()
-    if any(kw in q_lower for kw in _OFF_TOPIC_KW):
-        return False
-    return True
-
-
 def _is_forms_query(query: str) -> bool:
     return bool(_MS_FORMS_RE.search(query))
 
@@ -416,13 +327,12 @@ Departments and what they own:
 - hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
 - forms: create Microsoft Forms / surveys / questionnaires — HR survey, exit survey, onboarding form, feedback form, training questionnaire
-- email: draft, write, or compose a professional email — "draft an email for leave", "help me write an email to HR", "compose an email about my resignation"
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms, email
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms
 
 If unsure, reply: hr
 
@@ -512,8 +422,8 @@ class MasterAgent:
                     def __init__(self, fn) -> None:
                         self._fn = fn
 
-                    def process_query(self, q: str, user_email: str = "", user_name: str = "") -> str:
-                        return self._fn(q, user_email=user_email, user_name=user_name)
+                    def process_query(self, q: str, user_email: str = "") -> str:
+                        return self._fn(q, user_email=user_email)
 
                 agent = _EmpWrapper(_emp_fn)
             elif domain == 'attendance':
@@ -555,36 +465,6 @@ class MasterAgent:
                         return _MS_FORMS_SENTINEL
 
                 agent = _FormsPlaceholder()
-            elif domain == 'email':
-                from app.agents.email_agent import draft_email_from_chat as _email_fn
-
-                class _EmailWrapper:
-                    last_sources: List[str] = []
-
-                    def __init__(self, fn) -> None:
-                        self._fn = fn
-
-                    def process_query(self, q: str, **__) -> str:
-                        try:
-                            result = self._fn(q)
-                            to = result.get("to", "")
-                            subject = result.get("refined_subject", "")
-                            body = result.get("refined_body", "")
-                            parts = []
-                            if to:
-                                parts.append(f"<p><strong>To:</strong> {to}</p>")
-                            if subject:
-                                parts.append(f"<p><strong>Subject:</strong> {subject}</p>")
-                            if body:
-                                parts.append(
-                                    f"<p><strong>Body:</strong></p>"
-                                    f"<p style='white-space:pre-wrap'>{body}</p>"
-                                )
-                            return "".join(parts) if parts else "<p>Could not draft the email. Please try again.</p>"
-                        except RuntimeError as exc:
-                            return f"<p>Unable to draft email: {exc}</p>"
-
-                agent = _EmailWrapper(_email_fn)
             elif domain == 'funny':
                 from app.agents.working.funny_agent import FunnyAgent
                 agent = FunnyAgent()
@@ -608,7 +488,7 @@ class MasterAgent:
             if not tokens:
                 return None
             domain = tokens[0]
-            if domain in DOMAIN_KEYWORDS or domain in ('document', 'email'):
+            if domain in DOMAIN_KEYWORDS or domain == 'document':
                 print(f"[MasterAgent] LLM routed -> {domain}")
                 return domain
         except FuturesTimeout:
@@ -631,16 +511,12 @@ class MasterAgent:
         return best
 
     def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
-        # Active document session — field replies go to document, off-topic breaks the session
+        # Active document session takes priority — route follow-up field replies correctly
         try:
-            from app.agents.document_agent import has_active_session, cancel_session
+            from app.agents.document_agent import has_active_session
             if has_active_session(user_email, user_id):
-                if _is_doc_field_response(query):
-                    print("[MasterAgent] Active document session -> document")
-                    return 'document'
-                # Off-topic message: cancel the session and fall through to normal routing
-                cancel_session(user_email, user_id)
-                print("[MasterAgent] Off-topic during doc session -> session cancelled, routing normally")
+                print("[MasterAgent] Active document session -> document")
+                return 'document'
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
@@ -653,12 +529,6 @@ class MasterAgent:
         if _is_forms_query(query):
             print("[MasterAgent] Forms pattern -> forms")
             return 'forms'
-
-        # Email draft intent — checked before employee to avoid false matches like
-        # "email for Leave Request" hitting the employee email-field pattern
-        if _is_email_draft_query(query):
-            print("[MasterAgent] Email draft pattern -> email")
-            return 'email'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
         if _is_attendance_query(query):
@@ -689,7 +559,6 @@ class MasterAgent:
         query: str,
         user_email: str = "",
         user_id: str = "",
-        user_name: str = "",
         conversation_history: Optional[List[Dict]] = None,
     ):
         agent = self._get_slave(domain)
@@ -698,9 +567,7 @@ class MasterAgent:
         try:
             if domain == 'document':
                 resp = agent.process_query(query, user_email=user_email, user_id=user_id)
-            elif domain == 'employee':
-                resp = agent.process_query(query, user_email=user_email, user_name=user_name)
-            elif domain == 'attendance':
+            elif domain in ('employee', 'attendance'):
                 resp = agent.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
@@ -784,9 +651,9 @@ class MasterAgent:
             print(f"[MasterAgent] _run_slave error for domain '{domain}': {exc}")
         return domain, None, []
 
-    def process_query(self, query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
+    def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
         try:
-            return self._process_query_inner(query, user_email=user_email, user_id=user_id, user_name=user_name)
+            return self._process_query_inner(query, user_email=user_email, user_id=user_id)
         except Exception as exc:
             print(f"[MasterAgent] Unhandled exception in process_query: {exc}")
             return (
@@ -794,7 +661,7 @@ class MasterAgent:
                 "Please try again or contact support if the issue persists."
             )
 
-    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
+    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "") -> str:
         q = query.strip()
         if not q:
             return "<p>Please enter a question.</p>"
@@ -807,38 +674,14 @@ class MasterAgent:
             print("[MasterAgent] Forms intent detected -> returning sentinel")
             return _MS_FORMS_SENTINEL
 
-        # Email draft intent — return sentinel; frontend calls /api/email-agent/from-chat directly
-        if _is_email_draft_query(q):
-            print("[MasterAgent] Email draft intent detected -> returning sentinel")
-            return _EMAIL_DRAFT_SENTINEL
-
-        # Name fast-path — answer from SSO token without a DB call
-        if _NAME_QUERY_RE.search(q) and user_name:
-            return f"<p>Your name is <strong>{user_name}</strong>.</p>"
-
         is_blocked, category, fallback = check_input(q)
         if is_blocked:
             if category in ('jailbreak', 'security', 'harmful'):
                 return fallback
             return self._contextual_block_response(q, category) or fallback
 
-        # Track whether a document session was active before routing so we can
-        # notify the user if their off-topic message broke the session.
-        _doc_session_was_active = False
-        try:
-            from app.agents.document_agent import has_active_session
-            _doc_session_was_active = has_active_session(user_email, user_id)
-        except Exception:
-            pass
-
         domain = self._route(q, user_email=user_email, user_id=user_id)
-        resp, sources = self._run_agent(domain, q, user_email, user_id, user_name)
-
-        if _doc_session_was_active and domain != 'document' and resp:
-            resp = (
-                "<p><em>📝 Your document session has been cancelled. "
-                "Start a new request any time.</em></p>"
-            ) + resp
+        resp, sources = self._run_agent(domain, q, user_email, user_id)
 
         if not resp:
             return (
@@ -856,7 +699,7 @@ class MasterAgent:
         return resp
 
     async def stream_query(
-        self, query: str, user_email: str = "", user_id: str = "", user_name: str = "",
+        self, query: str, user_email: str = "", user_id: str = "",
     ) -> AsyncGenerator[str, None]:
         """Yield SSE-formatted chunks with real async token-by-token streaming."""
         import asyncio
@@ -876,17 +719,6 @@ class MasterAgent:
             yield _sse_done()
             return
 
-        if _is_email_draft_query(q):
-            yield _sse({"content": _EMAIL_DRAFT_SENTINEL})
-            yield _sse_done()
-            return
-
-        # Name fast-path — answer from SSO token without a DB call
-        if _NAME_QUERY_RE.search(q) and user_name:
-            yield _sse({"content": f"<p>Your name is <strong>{user_name}</strong>.</p>"})
-            yield _sse_done()
-            return
-
         is_blocked, category, fallback = check_input(q)
         if is_blocked:
             if category in ('jailbreak', 'security', 'harmful'):
@@ -899,21 +731,7 @@ class MasterAgent:
 
         # Route then stream
         try:
-            _doc_session_was_active = False
-            try:
-                from app.agents.document_agent import has_active_session
-                _doc_session_was_active = has_active_session(user_email, user_id)
-            except Exception:
-                pass
-
             domain = self._route(q, user_email=user_email, user_id=user_id)
-
-            if _doc_session_was_active and domain != 'document':
-                yield _sse({"content": (
-                    "<p><em>📝 Your document session has been cancelled. "
-                    "Start a new request any time.</em></p>"
-                )})
-
             agent = self._get_slave(domain)
 
             if not agent:
@@ -971,10 +789,10 @@ def _source_label(url: str) -> str:
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
-    return _master.process_query(query, user_email=user_email, user_id=user_id, user_name=user_name)
+def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
+    return _master.process_query(query, user_email=user_email, user_id=user_id)
 
 
-async def stream_assistant(query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> AsyncGenerator[str, None]:
-    async for chunk in _master.stream_query(query, user_email=user_email, user_id=user_id, user_name=user_name):
+async def stream_assistant(query: str, user_email: str = "", user_id: str = "") -> AsyncGenerator[str, None]:
+    async for chunk in _master.stream_query(query, user_email=user_email, user_id=user_id):
         yield chunk

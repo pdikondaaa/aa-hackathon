@@ -26,7 +26,7 @@ class ChatResponse(BaseModel):
 def chat(req: Ask, user=Depends(get_current_user)):
     """Chat endpoint — returns full answer as JSON."""
     try:
-        answer = _chat_service.process_message(req.message, user_email=user["email"], user_id=user["user_id"], user_name=user.get("name", ""))
+        answer = _chat_service.process_message(req.message, user_email=user["email"], user_id=user["user_id"])
         return {"answer": answer, "user_email": user["email"], "user_id": user["user_id"]}
     except Exception as e:
         print(f"ERROR in /api/chat: {e}")
@@ -39,7 +39,7 @@ async def chat_stream(req: Ask, user=Depends(get_current_user)):
     """Streaming chat endpoint — returns SSE chunks so the UI renders tokens as they arrive."""
     try:
         return StreamingResponse(
-            _chat_service.stream_message(req.message, user_email=user["email"], user_id=user["user_id"], user_name=user.get("name", "")),
+            _chat_service.stream_message(req.message, user_email=user["email"], user_id=user["user_id"]),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

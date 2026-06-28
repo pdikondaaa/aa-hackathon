@@ -40,7 +40,6 @@ def _get_from_chat_system_prompt() -> str:
         f"- Organisation / management matters → {email_org}\n"
         "- Unknown recipient → leave the TO field blank\n\n"
         "Rules:\n"
-        "- Start the email body with a warm greeting such as 'Hi,' or 'Hello,' or 'Dear [Name],'\n"
         "- Keep the email concise and professional (3-5 sentences for the body)\n"
         "- Use a warm but formal tone — signed off as 'Regards'\n"
         "- Do NOT invent facts not mentioned by the user\n"
