@@ -21,6 +21,22 @@ const RightPanel = ({ config, onClose, onSendMessage, onNavigate, user }) => {
   const [birthdays, setBirthdays] = useState([]);
   const [bdLoading, setBdLoading] = useState(true);
 
+  const WISH_KEY = `bd_wished_${new Date().toISOString().slice(0, 10)}`;
+  const [wishedSet, setWishedSet] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(WISH_KEY)) || []); }
+    catch { return new Set(); }
+  });
+
+  const handleWish = (person, teamsUrl) => {
+    const key = person.full_name;
+    if (wishedSet.has(key)) return;
+    const next = new Set(wishedSet);
+    next.add(key);
+    setWishedSet(next);
+    try { localStorage.setItem(WISH_KEY, JSON.stringify([...next])); } catch {}
+    window.open(teamsUrl, '_blank', 'noopener,noreferrer');
+  };
+
   // ── Anniversaries state ───────────────────────────────────────────────────
   const [anniversaries, setAnniversaries] = useState([]);
   const [annLoading, setAnnLoading] = useState(true);
@@ -418,20 +434,63 @@ const RightPanel = ({ config, onClose, onSendMessage, onNavigate, user }) => {
           <p className="rp-empty-text">No birthdays today 🎂</p>
         ) : (
           <ul className="birthday-list">
-            {birthdays.map((person, idx) => (
-              <li key={idx} className="birthday-card">
-                <div className="birthday-avatar">
-                  {person.first_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="birthday-info">
-                  <p className="birthday-name">{person.full_name}</p>
-                  {person.department && (
-                    <span className="birthday-dept">{person.department}</span>
+            {birthdays.map((person, idx) => {
+              const email    = person.full_name.trim().replace(/\s+/, '.') + '@alignedautomation.com';
+              const msg      = encodeURIComponent(`Happy Birthday ${person.first_name}! 🎂🎉 Wishing you a wonderful day!`);
+              const teamsUrl = `https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(email)}&message=${msg}`;
+              const wished   = wishedSet.has(person.full_name);
+              return (
+                <li key={idx} className="birthday-card">
+                  <div className="birthday-avatar">
+                    {person.first_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="birthday-info">
+                    <p className="birthday-name">{person.full_name}</p>
+                    {person.department && (
+                      <span className="birthday-dept">{person.department}</span>
+                    )}
+                  </div>
+                  {wished ? (
+                    <span style={{
+                      display:    'inline-flex',
+                      alignItems: 'center',
+                      gap:        4,
+                      color:      '#4ED44E',
+                      fontSize:   10,
+                      fontWeight: 700,
+                      flexShrink: 0,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      <i className="fas fa-check-circle" style={{ fontSize: 11 }} />
+                      Wished
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handleWish(person, teamsUrl)}
+                      title={`Wish ${person.first_name} on Teams`}
+                      style={{
+                        display:     'inline-flex',
+                        alignItems:  'center',
+                        gap:         4,
+                        background:  'linear-gradient(135deg, #6264A7, #464775)',
+                        color:       '#fff',
+                        border:      'none',
+                        borderRadius: 6,
+                        padding:     '3px 8px',
+                        fontSize:    10,
+                        fontWeight:  700,
+                        cursor:      'pointer',
+                        whiteSpace:  'nowrap',
+                        flexShrink:  0,
+                      }}
+                    >
+                      <i className="fas fa-comment" style={{ fontSize: 9 }} />
+                      Wish
+                    </button>
                   )}
-                </div>
-                <span className="birthday-emoji">🎉</span>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

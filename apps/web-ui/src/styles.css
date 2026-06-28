@@ -2360,6 +2360,15 @@ button, a, [role="button"] {
   cursor: not-allowed;
 }
 
+.email-draft-error {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(220, 53, 69, 0.12);
+  color: #dc3545;
+  font-size: 0.82rem;
+}
+
 .email-draft-sent-banner {
   display: flex;
   align-items: center;

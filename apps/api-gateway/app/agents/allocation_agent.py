@@ -7,7 +7,6 @@ Role resolution is designation-based:
   email → employee_details.designation → allocation_role_map.role
 """
 import os
-import requests
 
 from app.api.services.allocation_service import (
     get_board_data,
@@ -70,7 +69,7 @@ class AllocationAgent:
     def ask_aura(self, user_email: str, question: str) -> str:
         """
         Answer a natural-language question about allocation data scoped to the user's role.
-        Uses Ollama (same model as email agent) with a context block built from live DB data.
+        Uses the configured LLM provider (Claude, Groq, or Ollama) via create_llm().
         """
         logger.info(f"AllocationAgent.ask_aura from {user_email}: {question[:80]}")
         context_text, role = build_ask_context(user_email)
@@ -87,26 +86,16 @@ class AllocationAgent:
             "---"
         )
 
-        ollama_url   = os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434")
-        ollama_model = os.environ.get("OLLAMA_MODEL", "gpt-oss")
-
-        payload = {
-            "model": ollama_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": question.strip()},
-            ],
-            "stream": False,
-        }
         try:
-            resp = requests.post(f"{ollama_url}/api/chat", json=payload, timeout=120)
-            resp.raise_for_status()
-            return resp.json()["message"]["content"]
-        except requests.exceptions.ConnectionError:
-            raise RuntimeError(f"Cannot reach LLM at {ollama_url}.")
-        except requests.exceptions.Timeout:
-            raise RuntimeError("LLM request timed out.")
-        except (KeyError, requests.exceptions.HTTPError) as exc:
+            from app.agents.working.config import LLMConfig, create_llm
+            cfg = LLMConfig()
+            llm = create_llm(temperature=0.1, max_tokens=512, cfg=cfg)
+            result = llm.invoke([
+                ("system", system_prompt),
+                ("human", question.strip()),
+            ])
+            return result.content if hasattr(result, "content") else str(result)
+        except Exception as exc:
             raise RuntimeError(f"LLM error: {exc}") from exc
 
 

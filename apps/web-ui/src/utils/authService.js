@@ -1,5 +1,5 @@
 import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
-import { msalConfig, loginRequest, graphRequest, graphConfig, plannerRequest, calendarRequest } from '../config/authConfig';
+import { msalConfig, loginRequest, graphRequest, graphConfig, plannerRequest, calendarRequest, mailRequest } from '../config/authConfig';
 import {
   isUserAuthorized,
   getUserRole,
@@ -261,6 +261,60 @@ export async function fetchCalendarEvents(daysAhead = 30, top = 10) {
   } catch {
     return { events: [], error: 'fetch_failed' };
   }
+}
+
+// ─── Email via Graph API ───────────────────────────────────────────────────────
+
+async function acquireMailToken() {
+  try {
+    const account = msalInstance.getActiveAccount();
+    return await msalInstance.acquireTokenSilent({ ...mailRequest, account });
+  } catch (err) {
+    if (err instanceof InteractionRequiredAuthError) {
+      try {
+        return await msalInstance.acquireTokenPopup({ ...mailRequest });
+      } catch {
+        return null;
+      }
+    }
+    throw err;
+  }
+}
+
+export async function sendEmailViaGraph(to, subject, body) {
+  const token = await acquireMailToken();
+  if (!token) throw new Error('Mail.Send consent is required. Please accept the permission popup and try again.');
+
+  const account  = msalInstance.getActiveAccount();
+  const claims   = account?.idTokenClaims || {};
+  const fromAddr = claims.preferred_username || claims.email || account?.username || '';
+  const fromName = claims.name || account?.name || '';
+
+  const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token.accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message: {
+        subject,
+        body: { contentType: 'Text', content: body },
+        toRecipients: [{ emailAddress: { address: to } }],
+        from: { emailAddress: { name: fromName, address: fromAddr } },
+      },
+      saveToSentItems: 'true',
+    }),
+  });
+
+  if (res.status === 202) return;
+
+  let detail = res.statusText;
+  try {
+    const errBody = await res.json();
+    detail = errBody?.error?.message || detail;
+  } catch { /* non-JSON body */ }
+  throw new Error(`Failed to send email: ${detail}`);
 }
 
 // ─── User Authorization Functions ─────────────────────────────────────────────
