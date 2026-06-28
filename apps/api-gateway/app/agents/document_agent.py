@@ -7,32 +7,20 @@ Session state is maintained in-memory, keyed by user_email.
 import os
 import re
 import json
-import requests
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
 # ── LLM helpers ───────────────────────────────────────────────────────────────
 
-def _ollama_base_url() -> str:
-    return os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434")
-
-def _ollama_model() -> str:
-    return os.environ.get("OLLAMA_MODEL", "gpt-oss")
-
 def _call_llm(user_content: str, system_prompt: str, max_tokens: int = 2048) -> str:
-    url = f"{_ollama_base_url()}/api/chat"
-    payload = {
-        "model": _ollama_model(),
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        "stream": False,
-        "options": {"num_predict": max_tokens},
-    }
-    resp = requests.post(url, json=payload, timeout=120)
-    resp.raise_for_status()
-    return resp.json()["message"]["content"]
+    from app.agents.working.config import LLMConfig, create_llm
+    cfg = LLMConfig()
+    llm = create_llm(temperature=0.1, max_tokens=max_tokens, cfg=cfg)
+    result = llm.invoke([
+        ("system", system_prompt),
+        ("human", user_content),
+    ])
+    return result.content if hasattr(result, "content") else str(result)
 
 # ── Document catalogue ────────────────────────────────────────────────────────
 

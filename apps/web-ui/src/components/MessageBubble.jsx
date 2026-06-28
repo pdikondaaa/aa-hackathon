@@ -1,28 +1,28 @@
 import React, { useState } from 'react';
 import { parseMarkdown } from '../utils/markdown';
 import { submitFeedback, deleteFeedback } from '../services/api';
+import { sendEmailViaGraph } from '../utils/authService';
 import { isDocumentMessage, downloadDocument, printDocument } from '../utils/documentDownload';
-
-const buildMailto = (to, subject, body) => {
-  // Outlook requires CRLF line endings in the body; 'to' must not be percent-encoded
-  const crlfBody = body.replace(/\r?\n/g, '\r\n');
-  const params = [
-    `subject=${encodeURIComponent(subject)}`,
-    `body=${encodeURIComponent(crlfBody)}`,
-  ];
-  return `mailto:${to}?${params.join('&')}`;
-};
 
 const EmailDraftCard = ({ draft }) => {
   const [to, setTo]           = useState(draft.to);
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody]       = useState(draft.body);
-  const [launched, setLaunched] = useState(false);
+  const [status, setStatus]   = useState('idle'); // idle | sending | sent | error
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleSend = () => {
-    window.location.href = buildMailto(to, subject, body);
-    setLaunched(true);
-    setTimeout(() => setLaunched(false), 3000);
+  const handleSend = async () => {
+    if (status === 'sending') return;
+    setStatus('sending');
+    setErrorMsg('');
+    try {
+      await sendEmailViaGraph(to.trim(), subject.trim(), body.trim());
+      setStatus('sent');
+    } catch (err) {
+      setErrorMsg(err?.message || 'Failed to send email. Please try again.');
+      setStatus('error');
+      setTimeout(() => setStatus('idle'), 4000);
+    }
   };
 
   return (
@@ -42,6 +42,7 @@ const EmailDraftCard = ({ draft }) => {
             value={to}
             onChange={e => setTo(e.target.value)}
             placeholder="recipient@example.com"
+            disabled={status === 'sent'}
           />
         </div>
         <div className="email-draft-field">
@@ -51,6 +52,7 @@ const EmailDraftCard = ({ draft }) => {
             type="text"
             value={subject}
             onChange={e => setSubject(e.target.value)}
+            disabled={status === 'sent'}
           />
         </div>
         <div className="email-draft-field">
@@ -60,19 +62,26 @@ const EmailDraftCard = ({ draft }) => {
             value={body}
             onChange={e => setBody(e.target.value)}
             rows={6}
+            disabled={status === 'sent'}
           />
         </div>
       </div>
 
+      {status === 'error' && (
+        <div className="email-draft-error">{errorMsg}</div>
+      )}
+
       <button
-        className={`email-draft-send-btn${launched ? ' launched' : ''}`}
+        className={`email-draft-send-btn${status === 'sent' ? ' launched' : ''}`}
         onClick={handleSend}
-        disabled={!to.trim() || !subject.trim()}
+        disabled={!to.trim() || !subject.trim() || status === 'sending' || status === 'sent'}
       >
-        {launched ? (
-          <><i className="fas fa-check" /> Outlook is opening...</>
+        {status === 'sending' ? (
+          <><i className="fas fa-spinner fa-spin" /> Sending...</>
+        ) : status === 'sent' ? (
+          <><i className="fas fa-check" /> Email Sent</>
         ) : (
-          <><i className="fab fa-microsoft" /> Send Email</>
+          <><i className="fas fa-paper-plane" /> Send Email</>
         )}
       </button>
     </div>

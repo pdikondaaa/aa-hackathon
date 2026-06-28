@@ -55,7 +55,7 @@ def create_llm(temperature=None, max_tokens=None, num_ctx=None, cfg=None):
 
 @dataclass
 class EmbeddingsConfig:
-    base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+    base_url: str = field(default_factory=lambda: os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434"))
     model: str = field(default_factory=lambda: os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"))
 
 
