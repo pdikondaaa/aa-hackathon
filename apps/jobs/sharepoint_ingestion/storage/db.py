@@ -123,6 +123,18 @@ class DocumentRepository:
 
     # ─── Chunk operations ─────────────────────────────────────────────────────
 
+    def purge_all(self):
+        """Drop all document rows and their chunks before a fresh full re-ingest."""
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("TRUNCATE documents CASCADE")
+                conn.commit()
+        except Exception:
+            self._rollback()
+            raise
+        logger.info("Purged all documents and chunks — starting fresh ingest")
+
     def delete_document_chunks(self, document_id: str):
         """Remove all existing chunks for a document (called before re-ingestion)."""
         conn = self._get_conn()

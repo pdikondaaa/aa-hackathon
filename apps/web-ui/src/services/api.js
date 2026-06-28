@@ -1,4 +1,5 @@
 import { msalInstance } from '../utils/authService';
+import { InteractionRequiredAuthError } from '@azure/msal-browser';
 
 let API_URL = import.meta.env.VITE_API_URL || '/aura-api';
 if (import.meta.env.DEV) {
@@ -103,10 +104,19 @@ httpClient.addRequestInterceptor(async (config, endpoint) => {
     }
 
     const scopes = [`${import.meta.env.VITE_AZURE_CLIENT_ID}/.default`];
-    const response = await msalInstance.acquireTokenSilent({ scopes, account });
+    let tokenResponse;
+    try {
+      tokenResponse = await msalInstance.acquireTokenSilent({ scopes, account });
+    } catch (silentError) {
+      if (silentError instanceof InteractionRequiredAuthError) {
+        tokenResponse = await msalInstance.acquireTokenPopup({ scopes, account });
+      } else {
+        throw silentError;
+      }
+    }
 
     config.headers = config.headers || {};
-    config.headers['Authorization'] = `Bearer ${response.accessToken}`;
+    config.headers['Authorization'] = `Bearer ${tokenResponse.accessToken}`;
   } catch (error) {
     console.error('Failed to acquire token:', error);
     throw new Error('Authentication failed');
@@ -158,6 +168,21 @@ export async function draftEmailFromChat(message) {
 
 export async function saveEmailDraft(conversationId, { to, subject, body }) {
   return httpClient.post(`/api/conversations/${conversationId}/email-draft`, { to, subject, body });
+}
+
+export async function draftITTicketEmail({ employeeName, issueType, description, urgency, stepsTried }) {
+  return httpClient.post('/api/email-agent/it-ticket', {
+    employee_name:   employeeName,
+    issue_type:      issueType,
+    description,
+    urgency,
+    steps_tried:     stepsTried || '',
+    submission_date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+  });
+}
+
+export async function sendEmail({ to, subject, body }) {
+  return httpClient.post('/api/email-agent/send', { to, subject, body });
 }
 
 // ── Conversations API ──────────────────────────────────────────────────────
@@ -260,6 +285,10 @@ export async function getMyProfile() {
 
 export async function getMyAttendance() {
   return httpClient.get('/api/attendance/me');
+}
+
+export async function getTeamAttendance() {
+  return httpClient.get('/api/attendance/team');
 }
 
 // ── Birthdays API ──────────────────────────────────────────────────────────

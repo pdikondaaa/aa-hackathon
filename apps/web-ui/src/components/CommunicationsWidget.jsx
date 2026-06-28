@@ -45,7 +45,7 @@ export default function CommunicationsWidget({ user, onNavigate, closed, onClose
   const [announcements, setAnnouncements] = useState([]);
   const [events,        setEvents]        = useState([]);
   const [loading,       setLoading]       = useState(true);
-  const [collapsed,     setCollapsed]     = useState(false);
+  const [collapsed,     setCollapsed]     = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,15 +92,20 @@ export default function CommunicationsWidget({ user, onNavigate, closed, onClose
       }}>
 
         {/* ── Top bar ─────────────────────────────────────────────────── */}
-        <div style={{
-          display:      'flex',
-          alignItems:   'center',
-          padding:      '0 16px',
-          height:       40,
-          gap:          8,
-          borderBottom: collapsed ? 'none' : '1px solid var(--border-light)',
-          flexShrink:   0,
-        }}>
+        <div
+          onClick={() => setCollapsed(c => !c)}
+          style={{
+            display:      'flex',
+            alignItems:   'center',
+            padding:      '0 16px',
+            height:       40,
+            gap:          8,
+            borderBottom: collapsed ? 'none' : '1px solid var(--border-light)',
+            flexShrink:   0,
+            cursor:       'pointer',
+            userSelect:   'none',
+          }}
+        >
           <i className="fas fa-bullhorn" style={{ color: '#1D76BC', fontSize: 12 }} />
           <span style={{
             color: 'var(--text-secondary)', fontSize: 11,
@@ -112,15 +117,15 @@ export default function CommunicationsWidget({ user, onNavigate, closed, onClose
           {hasAnn  && <Pill count={announcements.length} color="#1D76BC" label="announcement" />}
           {hasEvts && <Pill count={events.length}        color="#27AAE1" label="event" />}
 
-          <button onClick={() => onNavigate('communications')} style={headerBtnStyle('#1D76BC')}>
+          <button onClick={(e) => { e.stopPropagation(); onNavigate('communications'); }} style={headerBtnStyle('#1D76BC')}>
             <i className="fas fa-arrow-up-right-from-square" style={{ marginRight: 4, fontSize: 9 }} />
             View All
           </button>
-          <button onClick={() => setCollapsed(c => !c)} title={collapsed ? 'Expand' : 'Collapse'} style={headerBtnStyle('var(--text-muted)')}>
+          <button onClick={(e) => { e.stopPropagation(); setCollapsed(c => !c); }} title={collapsed ? 'Expand' : 'Collapse'} style={headerBtnStyle('var(--text-muted)')}>
             <i className={`fas fa-chevron-${collapsed ? 'down' : 'up'}`} style={{ fontSize: 10 }} />
           </button>
           <button
-            onClick={onClose}
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
             title="Close — reappears on next page reload"
             style={{
               background: 'none', border: 'none', color: 'var(--text-muted)',

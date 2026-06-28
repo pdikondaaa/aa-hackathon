@@ -163,16 +163,6 @@ const TopBar = ({
           )}
         </div>
 
-        {/* Theme toggle */}
-        <button
-          className="topbar-icon-btn"
-          onClick={onThemeToggle}
-          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-          aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          <i className={`fas ${isDark ? 'fa-sun' : 'fa-moon'}`} />
-        </button>
-
         {/* Right panel toggle */}
         <button
           className={`topbar-icon-btn topbar-panel-btn${rightPanelOpen ? ' panel-active' : ''}`}
@@ -181,6 +171,20 @@ const TopBar = ({
           title={rightPanelOpen ? 'Hide overview panel' : 'Show overview panel'}
         >
           <i className="fas fa-table-columns" />
+        </button>
+
+        {/* Theme toggle switch — beside profile */}
+        <button
+          className={`theme-toggle${isDark ? ' theme-toggle--dark' : ''}`}
+          onClick={onThemeToggle}
+          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          role="switch"
+          aria-checked={isDark}
+        >
+          <span className="theme-toggle__thumb">
+            <i className={`fas ${isDark ? 'fa-moon' : 'fa-sun'}`} />
+          </span>
         </button>
 
         {/* ── User avatar + dropdown ───────────────────────── */}

@@ -47,6 +47,10 @@ export const calendarRequest = {
   scopes: ['Calendars.ReadBasic'],
 };
 
+export const mailRequest = {
+  scopes: ['Mail.Send'],
+};
+
 export const graphConfig = {
   graphMeEndpoint: 'https://graph.microsoft.com/v1.0/me',
 };

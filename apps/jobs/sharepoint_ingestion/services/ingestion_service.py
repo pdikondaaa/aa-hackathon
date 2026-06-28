@@ -39,6 +39,9 @@ class IngestionService:
     def run(self):
         logger.info("IngestionService: starting job run")
 
+        logger.info("Purging existing documents and chunks for fresh ingest...")
+        self.db.purge_all()
+
         try:
             _, sync_results = self.sync.run()
         except Exception as exc:
@@ -107,7 +110,7 @@ class IngestionService:
             return
 
         # Chunk
-        chunks = self.chunker.chunk(text)
+        chunks = self.chunker.chunk(text, file_name)
         if not chunks:
             logger.warning(f"Zero chunks produced for {file_name}, skipping")
             stats["failed"] += 1

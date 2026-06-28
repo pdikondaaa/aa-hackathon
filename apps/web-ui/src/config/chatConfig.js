@@ -84,6 +84,7 @@ export const chatConfig = {
       { id: 'skillRadar',      label: 'Skill Radar',      icon: 'fa-brain',           active: false },
       { id: 'pmoHub',          label: 'Project Hub',      icon: 'fa-diagram-project', active: false },
       { id: 'communications',  label: 'Communications',   icon: 'fa-bullhorn',        active: false },
+      { id: 'feedback',        label: 'Feedback',         icon: 'fa-comment-dots',    active: false },
 
     //{ id: 'cooAnalytics',   label: 'COO Analytics',   icon: 'fa-gauge-high',   active: false },
     //{ id: 'myNotes',         label: 'My Notes',         icon: 'fa-sticky-note',  active: false },
@@ -94,6 +95,7 @@ export const chatConfig = {
         { id: 'adminSettings',        label: 'Settings',           icon: 'fa-sliders'       },
         { id: 'adminCommunications',  label: 'Communications',     icon: 'fa-bullhorn'      },
         { id: 'adminQuickLinks',      label: 'Quick Links Setup',  icon: 'fa-th'            },
+        { id: 'adminFeedback',        label: 'Feedback',           icon: 'fa-comment-dots'  },
       ],
     },
   ],

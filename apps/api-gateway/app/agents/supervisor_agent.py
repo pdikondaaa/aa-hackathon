@@ -83,7 +83,12 @@ _GREETING_RE = re.compile(
 
 
 def _check_ollama(base_url: str, timeout: int = 3) -> bool:
-    """Return True if the Ollama host is reachable, log clearly if not."""
+    """Return True if the Ollama host is reachable (skipped when Claude or Groq is active)."""
+    import os
+    if os.environ.get("USE_Claude_API_Key", "False").lower() in ("true", "1", "yes"):
+        return True
+    if os.environ.get("USE_Groq_API_Key", "False").lower() in ("true", "1", "yes"):
+        return True
     parsed = urlparse(base_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or 11434
@@ -212,6 +217,8 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'network', 'security', 'onedrive', 'outlook', 'wifi',
         'remote access', 'polycom', 'hardware', 'printer', 'access',
         'helpdesk', 'antivirus', 'backup', 'teams', 'install',
+        'ticket', 'it ticket', 'support ticket', 'raise ticket',
+        'log ticket', 'it support', 'it issue', 'it problem', 'it request',
     ],
     'admin': [
         'travel', 'cab', 'orix', 'cabman', 'parking', 'workplace', 'office supplies',
@@ -270,6 +277,22 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'punch in', 'punch-in', 'punch out', 'punch-out',
         'working hours', 'hours worked', 'arrival time', 'departure time',
         'in time', 'out time',
+    ],
+    'license': [
+        'ai license', 'ai licens', 'ai tool', 'ai tools',
+        'claude license', 'claude user', 'claude access', 'claude seat', 'claude list',
+        'figma license', 'figma user', 'figma access', 'figma seat', 'figma list',
+        'lovable license', 'lovable user', 'lovable access', 'lovable list',
+        'm365 license', 'm365 copilot', 'microsoft 365', 'copilot license',
+        'copilot user', 'copilot access', 'copilot seat', 'copilot list',
+        'how many licenses', 'how many ai', 'license count', 'seat count',
+        'who has claude', 'who has figma', 'who has copilot', 'who has lovable',
+        'ai subscription', 'tool subscription', 'tool access', 'software license',
+        'license for', 'licenses for', 'has a license', 'have a license',
+        'user list', 'list of users', 'list of claude', 'list of figma',
+        'list of lovable', 'list of copilot', 'show me the users', 'show all users',
+        'all claude', 'all figma', 'all lovable', 'all copilot', 'all m365',
+        'claude subscribers', 'figma subscribers', 'licensed users', 'license holders',
     ],
 }
 
@@ -417,12 +440,13 @@ Departments and what they own:
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
 - forms: create Microsoft Forms / surveys / questionnaires — HR survey, exit survey, onboarding form, feedback form, training questionnaire
 - email: draft, write, or compose a professional email — "draft an email for leave", "help me write an email to HR", "compose an email about my resignation"
+- license: AI tool licenses — Claude, Figma, Lovable, M365 Copilot — how many, who has access, seat counts, license lists
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms, email
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms, email, license
 
 If unsure, reply: hr
 
@@ -463,15 +487,9 @@ class MasterAgent:
 
     def _setup_llm(self):
         try:
-            from langchain_ollama import ChatOllama
-            from app.agents.working.config import LLMConfig
+            from app.agents.working.config import LLMConfig, create_llm
             cfg = LLMConfig()
-            self._llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0,
-                num_predict=16,
-            )
+            self._llm = create_llm(temperature=0, max_tokens=16, cfg=cfg)
             print("[MasterAgent] LLM routing ready")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing unavailable ({exc}); keyword routing active")
@@ -529,6 +547,19 @@ class MasterAgent:
                         return self._fn(q, user_email=user_email)
 
                 agent = _AttWrapper(_att_fn)
+            elif domain == 'license':
+                from app.agents.license_agent import license_agent as _lic_fn
+
+                class _LicWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, user_email: str = "", **__) -> str:
+                        return self._fn(q, user_email=user_email)
+
+                agent = _LicWrapper(_lic_fn)
             elif domain == 'escalation':
                 from app.agents.escalation_agent import escalation_agent as _esc_fn
 
@@ -724,15 +755,9 @@ class MasterAgent:
         if not prompt_template:
             return None
         try:
-            from langchain_ollama import ChatOllama
-            from app.agents.working.config import LLMConfig
+            from app.agents.working.config import LLMConfig, create_llm
             cfg = LLMConfig()
-            llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0.3,
-                num_predict=200,
-            )
+            llm = create_llm(temperature=0.3, max_tokens=200, cfg=cfg)
             prompt = prompt_template.format(query=query)
             with ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(llm.invoke, prompt)
@@ -749,15 +774,9 @@ class MasterAgent:
         )
         if self._llm:
             try:
-                from langchain_ollama import ChatOllama
-                from app.agents.working.config import LLMConfig
+                from app.agents.working.config import LLMConfig, create_llm
                 cfg = LLMConfig()
-                synth_llm = ChatOllama(
-                    base_url=cfg.base_url,
-                    model=cfg.model,
-                    temperature=0.1,
-                    num_predict=cfg.max_tokens,
-                )
+                synth_llm = create_llm(temperature=0.1, cfg=cfg)
                 prompt = _SYNTHESIS_PROMPT.format(query=query, responses=formatted)
                 return synth_llm.invoke(prompt).content
             except Exception as exc:

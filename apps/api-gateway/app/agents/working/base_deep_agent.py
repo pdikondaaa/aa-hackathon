@@ -161,16 +161,15 @@ class BaseDeepAgent:
 
     def _setup_llm(self):
         try:
-            from langchain_ollama import ChatOllama
             from langchain_core.prompts import ChatPromptTemplate
             from langchain_core.output_parsers import StrOutputParser
+            from app.agents.working.config import create_llm
 
-            self._llm = ChatOllama(
-                base_url=self._config.llm.base_url,
-                model=self._config.llm.model,
+            self._llm = create_llm(
                 temperature=self._config.llm.temperature,
-                num_predict=self._config.llm.max_tokens,
+                max_tokens=self._config.llm.max_tokens,
                 num_ctx=self._config.llm.num_ctx,
+                cfg=self._config.llm,
             )
 
             prompt = ChatPromptTemplate.from_messages([
@@ -180,7 +179,14 @@ class BaseDeepAgent:
 
             self._chain = prompt | self._llm | StrOutputParser()
             self._mode = "llm"
-            print(f"[{self.__class__.__name__}] mode=llm | model={self._config.llm.model}")
+            llm_mod = type(self._llm).__module__
+            if "anthropic" in llm_mod:
+                active_model = self._config.llm.claude_model
+            elif "groq" in llm_mod:
+                active_model = self._config.llm.groq_model
+            else:
+                active_model = self._config.llm.model
+            print(f"[{self.__class__.__name__}] mode=llm | model={active_model}")
 
         except Exception as exc:
             print(f"[{self.__class__.__name__}] LLM setup failed ({exc}) -- keyword fallback")
