@@ -83,8 +83,10 @@ _GREETING_RE = re.compile(
 
 
 def _check_ollama(base_url: str, timeout: int = 3) -> bool:
-    """Return True if the Ollama host is reachable (skipped when Groq is active)."""
+    """Return True if the Ollama host is reachable (skipped when Claude or Groq is active)."""
     import os
+    if os.environ.get("USE_Claude_API_Key", "False").lower() in ("true", "1", "yes"):
+        return True
     if os.environ.get("USE_Groq_API_Key", "False").lower() in ("true", "1", "yes"):
         return True
     parsed = urlparse(base_url)

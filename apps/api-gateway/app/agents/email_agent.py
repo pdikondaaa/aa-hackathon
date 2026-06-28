@@ -1,10 +1,9 @@
 """
-Email Agent — refines email drafts by calling the Ollama REST API directly.
-Uses requests (no LangChain dependency) to avoid singleton/init issues.
+Email Agent — refines email drafts using the configured LLM provider.
+Supports Claude, Groq, or Ollama based on environment flags (USE_Claude_API_Key, etc.).
 """
 import os
 import re
-import requests
 from typing import Optional
 
 _SYSTEM_PROMPT = (
@@ -53,29 +52,15 @@ def _get_from_chat_system_prompt() -> str:
     )
 
 
-def _ollama_base_url() -> str:
-    return os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434")
-
-
-def _ollama_model() -> str:
-    return os.environ.get("OLLAMA_MODEL", "gpt-oss")
-
-
-def _call_ollama(user_content: str, system_prompt: str = None) -> str:
-    url = f"{_ollama_base_url()}/api/chat"
-    payload = {
-        "model": _ollama_model(),
-        "messages": [
-            {"role": "system", "content": system_prompt or _SYSTEM_PROMPT},
-            {"role": "user",   "content": user_content},
-        ],
-        "stream": False,
-    }
-    resp = requests.post(url, json=payload, timeout=120)
-    resp.raise_for_status()
-    data = resp.json()
-    # Ollama /api/chat response: {"message": {"role": "assistant", "content": "..."}}
-    return data["message"]["content"]
+def _call_llm(user_content: str, system_prompt: str = None) -> str:
+    from app.agents.working.config import LLMConfig, create_llm
+    cfg = LLMConfig()
+    llm = create_llm(temperature=0.3, max_tokens=1024, cfg=cfg)
+    result = llm.invoke([
+        ("system", system_prompt or _SYSTEM_PROMPT),
+        ("human", user_content),
+    ])
+    return result.content if hasattr(result, "content") else str(result)
 
 
 def _parse_response(text: str, fallback_subject: str) -> dict:
@@ -98,6 +83,77 @@ def _parse_from_chat_response(text: str) -> dict:
     }
 
 
+def _get_graph_token() -> str:
+    """Obtain an app-only access token for Microsoft Graph using client credentials."""
+    import requests
+    tenant_id     = os.environ.get("AZURE_TENANT_ID", "")
+    client_id     = os.environ.get("AZURE_CLIENT_ID", "")
+    client_secret = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
+
+    if not (tenant_id and client_id and client_secret):
+        raise RuntimeError("Azure credentials not configured (AZURE_TENANT_ID / AZURE_CLIENT_ID / SHAREPOINT_CLIENT_SECRET).")
+
+    url  = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    data = {
+        "grant_type":    "client_credentials",
+        "client_id":     client_id,
+        "client_secret": client_secret,
+        "scope":         "https://graph.microsoft.com/.default",
+    }
+    resp = requests.post(url, data=data, timeout=15)
+    if not resp.ok:
+        raise RuntimeError(f"Failed to get Graph token: {resp.status_code} {resp.text}")
+    return resp.json()["access_token"]
+
+
+def send_email(to: str, subject: str, body: str, sender: str = "") -> None:
+    """
+    Sends an email via Microsoft Graph API (HTTPS) using the Azure AD app credentials.
+    `sender` should be the logged-in user's email (used as the From address).
+    Requires the app to have the Mail.Send application permission in Azure AD.
+    Raises RuntimeError on failure.
+    """
+    import requests
+
+    sender    = sender or os.environ.get("SMTP_USER", "")
+    from_name = os.environ.get("SMTP_FROM_NAME", "AURA Bot")
+
+    if not sender:
+        raise RuntimeError("Sender email address is not available. Please ensure you are logged in.")
+
+    token = _get_graph_token()
+
+    payload = {
+        "message": {
+            "subject": subject,
+            "body": {
+                "contentType": "Text",
+                "content": body,
+            },
+            "toRecipients": [{"emailAddress": {"address": to}}],
+            "from": {"emailAddress": {"name": from_name, "address": sender}},
+        },
+        "saveToSentItems": "true",
+    }
+
+    url  = f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
+    resp = requests.post(
+        url,
+        json=payload,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        timeout=15,
+    )
+
+    if resp.status_code == 202:
+        return  # success — Graph returns 202 Accepted with no body
+
+    try:
+        detail = resp.json().get("error", {}).get("message", resp.text)
+    except Exception:
+        detail = resp.text
+    raise RuntimeError(f"Graph API error {resp.status_code}: {detail}")
+
+
 def draft_email_from_chat(message: str) -> dict:
     """
     Uses the LLM to draft a professional email from a plain-language chat request.
@@ -106,19 +162,10 @@ def draft_email_from_chat(message: str) -> dict:
     """
     user_content = f"Draft a professional email based on this employee request:\n\n\"{message.strip()}\""
     try:
-        raw = _call_ollama(user_content, system_prompt=_get_from_chat_system_prompt())
+        raw = _call_llm(user_content, system_prompt=_get_from_chat_system_prompt())
         return _parse_from_chat_response(raw)
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(
-            f"Cannot reach the LLM server at {_ollama_base_url()}. "
-            "Please check the OLLAMA_BASE_URL environment variable."
-        )
-    except requests.exceptions.Timeout:
-        raise RuntimeError("LLM request timed out after 120 seconds.")
-    except requests.exceptions.HTTPError as exc:
-        raise RuntimeError(f"LLM server returned an error: {exc}") from exc
-    except (KeyError, ValueError) as exc:
-        raise RuntimeError(f"Unexpected response format from LLM: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"LLM request failed: {exc}") from exc
 
 
 def refine_email_draft(to: str, cc: Optional[str], subject: str, body: str) -> dict:
@@ -134,16 +181,7 @@ def refine_email_draft(to: str, cc: Optional[str], subject: str, body: str) -> d
     user_content = "Please refine this email draft:\n\n" + "\n".join(lines)
 
     try:
-        raw = _call_ollama(user_content)
+        raw = _call_llm(user_content)
         return _parse_response(raw, subject)
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(
-            f"Cannot reach the LLM server at {_ollama_base_url()}. "
-            "Please check the OLLAMA_BASE_URL environment variable."
-        )
-    except requests.exceptions.Timeout:
-        raise RuntimeError("LLM request timed out after 120 seconds.")
-    except requests.exceptions.HTTPError as exc:
-        raise RuntimeError(f"LLM server returned an error: {exc}") from exc
-    except (KeyError, ValueError) as exc:
-        raise RuntimeError(f"Unexpected response format from LLM: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"LLM request failed: {exc}") from exc

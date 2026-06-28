@@ -179,7 +179,13 @@ class BaseDeepAgent:
 
             self._chain = prompt | self._llm | StrOutputParser()
             self._mode = "llm"
-            active_model = self._config.llm.groq_model if "groq" in type(self._llm).__module__ else self._config.llm.model
+            llm_mod = type(self._llm).__module__
+            if "anthropic" in llm_mod:
+                active_model = self._config.llm.claude_model
+            elif "groq" in llm_mod:
+                active_model = self._config.llm.groq_model
+            else:
+                active_model = self._config.llm.model
             print(f"[{self.__class__.__name__}] mode=llm | model={active_model}")
 
         except Exception as exc:

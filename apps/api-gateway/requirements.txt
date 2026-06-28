@@ -25,3 +25,4 @@ docx2txt
 python-pptx
 numpy
 pymssql
+langchain_anthropic
