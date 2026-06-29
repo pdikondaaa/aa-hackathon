@@ -40,7 +40,7 @@ coverage.xml
 venv/
 # ENV/
 # env/
- .venv
+.venv
 
 
 # IDE
@@ -114,6 +114,6 @@ dmypy.json
 /.vs
 
 
-# .env
-# *.env
+ .env
+ *.env
 .venv
