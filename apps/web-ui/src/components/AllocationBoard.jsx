@@ -1060,15 +1060,30 @@ function AskAuraPanel({ onClose, role }) {
 
 // ── Root component ────────────────────────────────────────────────────────────
 
+const ROLE_LABEL = {
+  executive:     'Executive',
+  business_lead: 'Business Lead',
+  team_lead:     'Team Lead',
+  employee:      'Employee',
+};
+
+const ROLE_SUBTITLE = {
+  executive:     'Executive View · Operational Intelligence Cockpit',
+  business_lead: 'Business Lead View',
+  team_lead:     'Team Lead View',
+  employee:      'Employee View',
+};
+
 export default function AllocationBoard() {
-  const [boardData,      setBoardData]      = useState(null);
-  const [loading,        setLoading]        = useState(true);
-  const [error,          setError]          = useState(null);
-  const [drawerEmp,      setDrawerEmp]      = useState(null);
-  const [drawerLoading,  setDrawerLoading]  = useState(false);
-  const [auraOpen,       setAuraOpen]       = useState(false);
-  const [monthYear,      setMonthYear]      = useState(getCurrentMonthKey());
+  const [boardData,       setBoardData]       = useState(null);
+  const [loading,         setLoading]         = useState(true);
+  const [error,           setError]           = useState(null);
+  const [drawerEmp,       setDrawerEmp]       = useState(null);
+  const [drawerLoading,   setDrawerLoading]   = useState(false);
+  const [auraOpen,        setAuraOpen]        = useState(false);
+  const [monthYear,       setMonthYear]       = useState(getCurrentMonthKey());
   const [availableMonths, setAvailableMonths] = useState([]);
+  const [activeTab,       setActiveTab]       = useState('overview');
 
   const fetchBoard = useCallback(async (month) => {
     setLoading(true);
@@ -1122,14 +1137,6 @@ export default function AllocationBoard() {
     setDrawerLoading(false);
   }, []);
 
-  const ROLE_LABEL = {
-    executive:       'Executive',
-    business_lead:   'Business Lead',
-    functional_lead: 'Functional Lead',
-    team_lead:       'Team Lead',
-    employee:        'Employee',
-  };
-
   if (loading) return (
     <div className="ab-state-center">
       <div className="ab-spinner" />
@@ -1146,108 +1153,109 @@ export default function AllocationBoard() {
 
   if (!boardData) return null;
 
-  // Executive role: show COO Analytics Dashboard under the standard Allocation Board header
-  if (boardData.role === 'executive') {
-    return (
-      <div className="ab-root ab-root--exec">
-        <div style={{
-          background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%)',
-          borderBottom: '1px solid var(--border)',
-          padding: '18px 28px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 20,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #1D76BC, #2A3D90)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <i className="fas fa-layer-group" style={{ color: '#fff', fontSize: 16 }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
-                Allocation Board
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                Executive View · Operational Intelligence Cockpit
-              </div>
-            </div>
+  const role        = boardData.role;
+  const roleLabel   = ROLE_LABEL[role] || null;
+  const notInSystem = !boardData.designation;
+  const isLeadRole  = role === 'functional_lead' || role === 'business_lead';
+  // executive has no personalised lead view — only show Lead View tab for other roles
+  const hasLeadTab  = role !== 'executive';
+
+  // Month timeline sits below header (65px) + tab bar (44px)
+  const timelineTopOffset = 109;
+
+  return (
+    <div className="ab-root ab-root--exec">
+
+      {/* ── Sticky header ─────────────────────────────────────────── */}
+      <div style={{
+        background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%)',
+        borderBottom: '1px solid var(--border)',
+        padding: '18px 28px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        position: 'sticky', top: 0, zIndex: 20,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #1D76BC, #2A3D90)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <i className="fas fa-layer-group" style={{ color: '#fff', fontSize: 16 }} />
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, background: 'rgba(29,118,188,0.12)', border: '1px solid rgba(29,118,188,0.3)', color: '#1D76BC', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              <i className="fas fa-circle" style={{ fontSize: 7 }} /> Executive
-            </span>
-            <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
-              <i className="fas fa-robot" />
-              Ask Aura
-            </button>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
+              Allocation Board
+            </div>
+            {(ROLE_SUBTITLE[role]) && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                {ROLE_SUBTITLE[role]}
+              </div>
+            )}
           </div>
         </div>
-        {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role="executive" />}
-        <COOAnalyticsDashboard hideHeader />
-      </div>
-    );
-  }
-
-  const roleLabel   = ROLE_LABEL[boardData.role] || boardData.role;
-  const notInSystem = !boardData.designation;
-  const isLeadRole  = boardData.role === 'functional_lead' || boardData.role === 'business_lead';
-
-  // Functional / Business Lead: same sticky-header + sticky-timeline layout as exec board
-  if (isLeadRole) {
-    const roleSubtitle = boardData.role === 'functional_lead'
-      ? 'Functional Lead View'
-      : 'Business Lead View';
-
-    return (
-      <div className="ab-root ab-root--exec">
-        {/* Sticky header — identical structure to exec board */}
-        <div style={{
-          background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%)',
-          borderBottom: '1px solid var(--border)',
-          padding: '18px 28px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          position: 'sticky', top: 0, zIndex: 20,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #1D76BC, #2A3D90)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <i className="fas fa-layer-group" style={{ color: '#fff', fontSize: 16 }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
-                Allocation Board
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                {roleSubtitle}
-              </div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {roleLabel && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, background: 'rgba(29,118,188,0.12)', border: '1px solid rgba(29,118,188,0.3)', color: '#1D76BC', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <i className="fas fa-circle" style={{ fontSize: 7 }} /> {roleLabel}
             </span>
-            <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
-              <i className="fas fa-robot" />
-              Ask Aura
-            </button>
-          </div>
+          )}
+          <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
+            <i className="fas fa-robot" />
+            Ask Aura
+          </button>
         </div>
+      </div>
 
-        {/* Sticky month timeline — same position as COO dashboard timeline */}
-        {availableMonths.length > 0 && (
-          <LeadMonthTimeline
-            months={availableMonths}
-            selectedMonth={monthYear}
-            onChange={handleMonthChange}
-            topOffset={65}
-          />
-        )}
+      {/* ── Tab bar ───────────────────────────────────────────────── */}
+      <div style={{
+        position: 'sticky', top: 65, zIndex: 19,
+        background: 'var(--bg-secondary)',
+        borderBottom: '1px solid var(--border)',
+        padding: '0 24px',
+        display: 'flex', gap: 0,
+      }}>
+        {[
+          { key: 'overview', label: 'Overview',  icon: 'fa-chart-pie' },
+          ...(hasLeadTab ? [{ key: 'lead', label: 'Lead View', icon: 'fa-users' }] : []),
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              padding: '11px 20px',
+              fontSize: 13,
+              fontWeight: activeTab === tab.key ? 700 : 500,
+              color: activeTab === tab.key ? '#1D76BC' : 'var(--text-secondary)',
+              background: 'transparent',
+              border: 'none',
+              borderBottom: activeTab === tab.key ? '2px solid #1D76BC' : '2px solid transparent',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 7,
+              transition: 'all .15s',
+              marginBottom: -1,
+            }}
+          >
+            <i className={`fas ${tab.icon}`} style={{ fontSize: 12 }} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-        <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
-        {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={boardData.role} />}
+      {/* ── Month timeline (lead tab, lead roles only) ────────────── */}
+      {activeTab === 'lead' && isLeadRole && availableMonths.length > 0 && (
+        <LeadMonthTimeline
+          months={availableMonths}
+          selectedMonth={monthYear}
+          onChange={handleMonthChange}
+          topOffset={timelineTopOffset}
+        />
+      )}
 
-        {/* Content with padding, matching exec board body layout */}
+      <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
+      {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={role} />}
+
+      {/* ── Tab content ───────────────────────────────────────────── */}
+      {activeTab === 'overview' && (
+        <COOAnalyticsDashboard hideHeader />
+      )}
+
+      {activeTab === 'lead' && (
         <div style={{ padding: '20px 24px' }}>
           {notInSystem && (
             <div className="ab-notice">
@@ -1255,42 +1263,16 @@ export default function AllocationBoard() {
               Your profile was not found in employee records. Contact HR or Admin to update your designation.
             </div>
           )}
-          <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={boardData.role} />
+          {isLeadRole && (
+            <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={role} />
+          )}
+          {role === 'team_lead' && (
+            <TeamView data={boardData} onEmployeeClick={handleEmployeeClick} />
+          )}
+          {role === 'employee' && (
+            <SelfView data={boardData} />
+          )}
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="ab-root">
-      <div className="ab-header">
-        <div>
-          <h2 className="ab-title">Allocation <span>Board</span></h2>
-          <div className="ab-header-meta">
-            <span className="ab-role-badge">{roleLabel}</span>
-          </div>
-        </div>
-        <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
-          <i className="fas fa-robot" />
-          Ask Aura
-        </button>
-      </div>
-
-      {notInSystem && (
-        <div className="ab-notice">
-          <i className="fa fa-info-circle" style={{ marginRight: '0.5rem' }} />
-          Your profile was not found in employee records. Contact HR or Admin to update your designation.
-        </div>
-      )}
-
-      <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
-      {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={boardData.role} />}
-
-      {boardData.role === 'team_lead' && (
-        <TeamView data={boardData} onEmployeeClick={handleEmployeeClick} />
-      )}
-      {boardData.role === 'employee' && (
-        <SelfView data={boardData} />
       )}
     </div>
   );
