@@ -29,6 +29,8 @@ from app.api.controllers.communications_controller import pub_router as communic
 from app.api.controllers.communications_controller import admin_router as communications_admin_router
 from app.api.controllers.parking_controller import router as parking_router
 from app.api.controllers.skills_controller import router as skills_router
+from app.api.controllers.form_builder_controller import pub_router as ncl_pub_router
+from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
 
 
 tags_metadata = [
@@ -48,6 +50,8 @@ tags_metadata = [
     {"name": "Communications", "description": "Org-wide announcements and company events with RSVP support."},
     {"name": "Parking", "description": "Employee parking preference management — check status, view options, declare or change preference, and cost calculator via conversational AI."},
     {"name": "Skills", "description": "Org-wide skill analytics from employee_details.primary_skills — top skills, breakdown by function, experience, and employee search."},
+    {"name": "No-Code Platform", "description": "No-code / low-code form builder — create, publish, and submit metadata-driven forms with workflow automation and business rules."},
+    {"name": "No-Code Platform (Admin)", "description": "Admin-only endpoints for managing form definitions, fields, workflows, rules, and audit logs."},
 ]
 
 app = FastAPI(
@@ -90,3 +94,5 @@ app.include_router(communications_pub_router)
 app.include_router(communications_admin_router)
 app.include_router(parking_router)
 app.include_router(skills_router)
+app.include_router(ncl_pub_router)
+app.include_router(ncl_admin_router)

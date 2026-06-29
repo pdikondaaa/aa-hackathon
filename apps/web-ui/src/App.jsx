@@ -34,6 +34,9 @@ import AnnouncementBanner from './components/AnnouncementBanner';
 import AnnouncementOverlay from './components/AnnouncementOverlay';
 import CommunicationsWidget from './components/CommunicationsWidget';
 import AttendancePage from './components/AttendancePage';
+import { FormBuilderAdmin, FormDesignerPage } from './modules/form-builder';
+import FormChatPanel from './modules/form-builder/components/FormChatPanel';
+import SlashCommandAdmin from './modules/form-builder/pages/SlashCommandAdmin';
 
 const SIDEBAR_BREAKPOINT = 900;
 
@@ -82,6 +85,9 @@ export default function App() {
   const [formsDrawerOpen,       setFormsDrawerOpen]       = useState(false);
   const [formsDrawerQuery,      setFormsDrawerQuery]      = useState('');
   const [parkingDrawerOpen,     setParkingDrawerOpen]     = useState(false);
+  const [formBuilderView,       setFormBuilderView]       = useState('list'); // 'list' | 'designer'
+  const [editingFormId,         setEditingFormId]         = useState(null);
+  const [formPanelRef,          setFormPanelRef]          = useState(null);  // { slug, name, icon, ... }
 
   const [user,           setUser]           = useState(null);
   const [authLoading,    setAuthLoading]    = useState(true);
@@ -336,10 +342,25 @@ export default function App() {
           <CommunicationsAdmin user={user} />
         ) : activeNav === 'adminQuickLinks' && user?.isAdmin ? (
           <QuickLinksAdmin user={user} />
+        ) : activeNav === 'adminSlashCommands' && user?.isAdmin ? (
+          <SlashCommandAdmin />
         ) : activeNav === 'adminFeedback' && user?.isAdmin ? (
           <FeedbackAdmin user={user} />
         ) : activeNav === 'feedback' ? (
           <FeedbackPage user={user} />
+        ) : activeNav === 'adminFormBuilder' && user?.isAdmin ? (
+          formBuilderView === 'designer' ? (
+            <FormDesignerPage
+              formId={editingFormId}
+              onBack={() => { setFormBuilderView('list'); setEditingFormId(null); }}
+            />
+          ) : (
+            <FormBuilderAdmin
+              user={user}
+              onCreateForm={() => { setEditingFormId(null); setFormBuilderView('designer'); }}
+              onEditForm={(form) => { setEditingFormId(form.id); setFormBuilderView('designer'); }}
+            />
+          )
         ) : (
           <main className="main-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <CommunicationsWidget user={user} onNavigate={setActiveNav} closed={widgetClosed} onClose={() => setWidgetClosed(true)} />
@@ -358,6 +379,7 @@ export default function App() {
                   setFormsDrawerQuery(query || '');
                   setFormsDrawerOpen(true);
                 }}
+                onOpenFormPanel={(formRef) => setFormPanelRef(formRef)}
                 onOpenParkingDrawer={() => setParkingDrawerOpen(true)}
                 injectedMessage={injectedMessage}
                 onInjectedMessageSent={() => setInjectedMessage('')}
@@ -398,6 +420,15 @@ export default function App() {
         onClose={() => setParkingDrawerOpen(false)}
         user={user}
       />
+
+      {/* NCL Form Chat Panel — slides in from right when a /slash form is selected */}
+      {formPanelRef && (
+        <FormChatPanel
+          formRef={formPanelRef}
+          user={user}
+          onClose={() => setFormPanelRef(null)}
+        />
+      )}
     </div>
   );
 }
