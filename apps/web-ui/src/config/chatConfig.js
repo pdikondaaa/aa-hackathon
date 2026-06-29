@@ -95,6 +95,8 @@ export const chatConfig = {
         { id: 'adminSettings',        label: 'Settings',           icon: 'fa-sliders'       },
         { id: 'adminCommunications',  label: 'Communications',     icon: 'fa-bullhorn'      },
         { id: 'adminQuickLinks',      label: 'Quick Links Setup',  icon: 'fa-th'            },
+        { id: 'adminFormBuilder',     label: 'Form Builder',       icon: 'fa-wpforms'       },
+        { id: 'adminSlashCommands',   label: 'Slash Commands',     icon: 'fa-bolt'          },
         { id: 'adminFeedback',        label: 'Feedback',           icon: 'fa-comment-dots'  },
       ],
     },

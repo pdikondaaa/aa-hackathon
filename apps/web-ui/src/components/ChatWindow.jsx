@@ -4,6 +4,10 @@ import MessageBubble from './MessageBubble';
 import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat, saveEmailDraft } from '../services/api';
 import { buildParkingHtml, buildAlreadySubmittedHtml } from '../config/parkingConfig';
 import { parkingApi } from '../modules/parking-assistant/services/parkingApi';
+import {
+  searchForms, listPublishedForms,
+  searchSlashCommands, listActiveSlashCommands,
+} from '../modules/form-builder/services/formBuilderApi';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -133,7 +137,7 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, onOpenFormsDrawer, onOpenParkingDrawer, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, onOpenFormsDrawer, onOpenParkingDrawer, onOpenFormPanel, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
@@ -156,6 +160,14 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   const [voiceError, setVoiceError]       = useState(null);
   const [thinkingIndex, setThinkingIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
+
+  // ── Slash-command form picker ──────────────────────────────────────────────
+  const [slashQuery, setSlashQuery]       = useState('');   // text after "/"
+  const [slashResults, setSlashResults]   = useState([]);
+  const [slashActive, setSlashActive]     = useState(false);
+  const [slashHighlight, setSlashHighlight] = useState(0);
+  const slashDebounceRef = useRef(null);
+  const slashMenuRef     = useRef(null);
 
   useEffect(() => {
     if (!messages.length) return;
@@ -232,8 +244,134 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [loading]);
 
+  // Slash-command: search metadata-driven commands when input starts with "/"
+  useEffect(() => {
+    if (!slashActive) return;
+    if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
+    slashDebounceRef.current = setTimeout(async () => {
+      try {
+        let results = [];
+        if (slashQuery.trim()) {
+          // Search metadata-driven slash commands first; fall back to published forms
+          try {
+            const cmdRes = await searchSlashCommands(slashQuery.trim());
+            results = (cmdRes?.results || []).map(c => ({
+              id:          c.id,
+              name:        c.label,
+              slug:        c.form_slug || '',
+              icon:        c.icon || (c.type === 'url' ? 'fa-external-link-alt' : c.type === 'builtin' ? 'fa-bolt' : 'fa-file-alt'),
+              alias:       c.command,
+              category:    c.type === 'url' ? 'URL Shortcut' : c.type === 'builtin' ? 'Built-in' : (c.form_name || 'Form'),
+              description: c.description,
+              _type:       c.type,
+              _url:        c.url,
+              _action:     c.action,
+              _formId:     c.form_id,
+            }));
+          } catch {
+            // fallback: search published forms directly
+            const fRes = await searchForms(slashQuery.trim());
+            results = (fRes?.results || []).map(f => ({
+              id: f.id, name: f.name, slug: f.slug,
+              icon: f.icon, alias: f.alias, category: f.category,
+              description: f.description, _type: 'form',
+            }));
+          }
+        } else {
+          // Show all active slash commands; fall back to published forms list
+          try {
+            const cmdRes = await listActiveSlashCommands();
+            results = (cmdRes?.items || []).map(c => ({
+              id:          c.id,
+              name:        c.label,
+              slug:        c.form_slug || '',
+              icon:        c.icon || (c.type === 'url' ? 'fa-external-link-alt' : c.type === 'builtin' ? 'fa-bolt' : 'fa-file-alt'),
+              alias:       c.command,
+              category:    c.type === 'url' ? 'URL Shortcut' : c.type === 'builtin' ? 'Built-in' : (c.form_name || 'Form'),
+              description: c.description,
+              _type:       c.type,
+              _url:        c.url,
+              _action:     c.action,
+              _formId:     c.form_id,
+            }));
+            // If no configured commands exist, fall back to published forms
+            if (results.length === 0) {
+              const fRes = await listPublishedForms({ page: 1, limit: 8 });
+              results = (fRes?.items || []).map(f => ({
+                id: f.id, name: f.name, slug: f.slug,
+                icon: f.icon, alias: f.alias, category: f.category,
+                description: f.description, _type: 'form',
+              }));
+            }
+          } catch {
+            // fallback
+            const fRes = await listPublishedForms({ page: 1, limit: 8 });
+            results = (fRes?.items || []).map(f => ({
+              id: f.id, name: f.name, slug: f.slug,
+              icon: f.icon, alias: f.alias, category: f.category,
+              description: f.description, _type: 'form',
+            }));
+          }
+        }
+        setSlashResults(results.slice(0, 8));
+        setSlashHighlight(0);
+      } catch {
+        setSlashResults([]);
+      }
+    }, 200);
+    return () => { if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current); };
+  }, [slashQuery, slashActive]);
+
+  const closeSlashMenu = () => {
+    setSlashActive(false);
+    setSlashResults([]);
+    setSlashQuery('');
+    setSlashHighlight(0);
+  };
+
+  const selectSlashForm = (form) => {
+    closeSlashMenu();
+    setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    // URL-type commands open the URL in a new tab
+    if (form._type === 'url' && form._url) {
+      window.open(form._url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    // Built-in commands trigger the corresponding drawer/panel
+    if (form._type === 'builtin') {
+      if (form._action === 'parking')    { onOpenParkingDrawer?.(); return; }
+      if (form._action === 'escalation') { onOpenEscalation?.();    return; }
+      return;
+    }
+    // Form commands open the form panel; fall back to FormsDrawer search
+    if (onOpenFormPanel) {
+      onOpenFormPanel(form);
+    } else {
+      onOpenFormsDrawer?.(form.name);
+    }
+  };
+
   const handleInput = (e) => {
     const raw = e.target.value;
+
+    // Slash-command detection: starts with "/"
+    if (raw.startsWith('/')) {
+      const query = raw.slice(1); // everything after "/"
+      setSlashQuery(query);
+      setSlashActive(true);
+      setInput(raw);
+      // Resize
+      const el = e.target;
+      el.style.height = 'auto';
+      const minH = parseInt(getComputedStyle(el).minHeight, 10) || 50;
+      el.style.height = `${Math.min(Math.max(el.scrollHeight, minH), 160)}px`;
+      return;
+    }
+
+    // Dismiss slash menu if user cleared the "/"
+    if (slashActive) closeSlashMenu();
+
     const { corrected, didCorrect, original } = autocorrectLastWord(raw);
     setInput(corrected);
     if (didCorrect) {
@@ -415,6 +553,32 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   };
 
   const handleKeyDown = (e) => {
+    // Slash-command menu keyboard navigation
+    if (slashActive && slashResults.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashHighlight(h => Math.min(h + 1, slashResults.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashHighlight(h => Math.max(h - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const form = slashResults[slashHighlight];
+        if (form) selectSlashForm(form);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSlashMenu();
+        setInput('');
+        return;
+      }
+    }
+
     if (e.key === 'Escape' && loading) {
       handleStop();
       return;
@@ -634,17 +798,114 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             </div>
           )}
 
+          {/* Slash-command form picker */}
+          {slashActive && (
+            <div
+              ref={slashMenuRef}
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 6px)',
+                left: 0,
+                right: 0,
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                overflow: 'hidden',
+                zIndex: 200,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                maxHeight: 320,
+                overflowY: 'auto',
+              }}
+            >
+              <div style={{
+                padding: '8px 12px 6px',
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                borderBottom: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}>
+                <i className="fas fa-search" />
+                {slashQuery
+                  ? `Forms matching "${slashQuery}"`
+                  : 'Type to search forms — or press ↑↓ to browse'}
+              </div>
+              {slashResults.length === 0 ? (
+                <div style={{ padding: '14px 16px', fontSize: 13, color: 'var(--text-muted)' }}>
+                  No published forms found
+                </div>
+              ) : (
+                slashResults.map((form, i) => (
+                  <div
+                    key={form.id}
+                    onMouseDown={() => selectSlashForm(form)}
+                    onMouseEnter={() => setSlashHighlight(i)}
+                    style={{
+                      padding: '10px 14px',
+                      cursor: 'pointer',
+                      background: i === slashHighlight ? 'var(--bg-card)' : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      transition: 'background 0.1s',
+                    }}
+                  >
+                    <div style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: 'var(--primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fff',
+                      fontSize: 13,
+                      flexShrink: 0,
+                    }}>
+                      <i className={`fas ${form.icon || 'fa-file-alt'}`} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {form.name}
+                      </div>
+                      {form.description && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {form.description}
+                        </div>
+                      )}
+                    </div>
+                    {form.alias && (
+                      <div style={{
+                        marginLeft: 'auto',
+                        fontSize: 11,
+                        color: 'var(--primary)',
+                        fontFamily: 'monospace',
+                        background: 'rgba(29,118,188,0.1)',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        flexShrink: 0,
+                      }}>
+                        /{form.alias}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             className="chat-textarea"
-            placeholder={labels.inputPlaceholder}
+            placeholder={slashActive ? `Search forms… (Esc to cancel)` : labels.inputPlaceholder}
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             rows={1}
             aria-label="Message input"
-            spellCheck={true}
-            autoCorrect="on"
+            spellCheck={!slashActive}
+            autoCorrect={slashActive ? 'off' : 'on'}
             autoCapitalize="sentences"
           />
           {correctionFlash && (
