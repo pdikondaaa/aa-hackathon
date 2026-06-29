@@ -269,33 +269,21 @@ const RightPanel = ({ config, onClose, onSendMessage, onNavigate, user }) => {
               return toDateInTimeZone(eventDate, displayTimeZone);
             };
 
+            const dayAfterTomorrowStart = new Date(tomorrowStart);
+            dayAfterTomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
             const getBucket = (evt) => {
               const dDay = toLocalDay(evt);
               if (!dDay) return null;
-              if (dDay < todayStart) return null;        // past
-              if (dDay >= nextWeekCutoff) return null;   // beyond 3 days into next week
+              if (dDay < todayStart) return null;                    // past
+              if (dDay >= dayAfterTomorrowStart) return null;        // beyond tomorrow
               if (dDay.getTime() === todayStart.getTime()) return 'Today';
               if (dDay.getTime() === tomorrowStart.getTime()) return 'Tomorrow';
-              if (dDay >= nextMonday) return formatNextWeekLabel(dDay); // next week days
-              return dDay.toLocaleDateString(undefined, { weekday: 'long' });
+              return null;
             };
 
-            // Build ordered buckets: Today → Tomorrow → this week days → next week days (Mon–Wed)
+            // Only Today and Tomorrow buckets
             const BUCKET_ORDER = ['Today', 'Tomorrow'];
-            for (let i = 2; i <= daysToSunday; i++) {
-              const d = new Date(todayStart);
-              d.setDate(todayStart.getDate() + i);
-              const name = d.toLocaleDateString(undefined, { weekday: 'long' });
-              if (!BUCKET_ORDER.includes(name)) BUCKET_ORDER.push(name);
-            }
-            for (let i = 0; i < 3; i++) {
-              const d = new Date(nextMonday);
-              d.setDate(nextMonday.getDate() + i);
-              // Skip if already covered by Today/Tomorrow buckets
-              if (d.getTime() !== todayStart.getTime() && d.getTime() !== tomorrowStart.getTime()) {
-                BUCKET_ORDER.push(formatNextWeekLabel(d));
-              }
-            }
 
             const groups = {};
             calEvents.forEach((evt) => {

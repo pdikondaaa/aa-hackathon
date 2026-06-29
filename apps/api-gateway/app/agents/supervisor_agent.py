@@ -714,6 +714,28 @@ class MasterAgent:
         # Keyword routing — fast, no LLM call needed
         return self._route_keywords(query)
 
+    def _build_correction_note(self, query: str) -> str:
+        """Fetch relevant past negative-feedback corrections and format as a system note."""
+        try:
+            from app.api.services.feedback_service import FeedbackService
+            corrections = FeedbackService().get_corrections_for_query(query, limit=3)
+            if not corrections:
+                return ""
+            lines = []
+            for c in corrections:
+                q = (c.get("user_question") or "")[:200]
+                note = (c.get("correction") or "")[:200]
+                lines.append(f'- Past question: "{q}" → User feedback: "{note}"')
+            block = "\n".join(lines)
+            print(f"[MasterAgent] Injecting {len(corrections)} feedback correction(s) into context")
+            return (
+                f"\n\n[FEEDBACK CORRECTIONS — similar past questions received negative feedback. "
+                f"Adjust your response to avoid repeating these issues:]\n{block}"
+            )
+        except Exception as exc:
+            print(f"[MasterAgent] Correction injection error: {exc}")
+            return ""
+
     def _run_agent(
         self,
         domain: str,
@@ -727,6 +749,13 @@ class MasterAgent:
         if not agent:
             return None, []
         try:
+            # Inject real-time feedback corrections for knowledge-base domains
+            augmented_query = query
+            if domain in ('hr', 'it', 'admin', 'pmo', 'finance', 'org', 'general'):
+                note = self._build_correction_note(query)
+                if note:
+                    augmented_query = query + note
+
             if domain == 'document':
                 resp = agent.process_query(query, user_email=user_email, user_id=user_id)
             elif domain == 'employee':
@@ -736,7 +765,7 @@ class MasterAgent:
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
             else:
-                resp = agent.process_query(query, conversation_history=conversation_history or [])
+                resp = agent.process_query(augmented_query, conversation_history=conversation_history or [])
             sources = getattr(agent, 'last_sources', [])
             return resp, [s for s in sources if s]
         except Exception as exc:

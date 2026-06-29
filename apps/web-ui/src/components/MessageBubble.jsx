@@ -93,6 +93,61 @@ const EmailDraftCard = ({ draft }) => {
 const getInitials = (name = '') =>
   name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
+const FeedbackModal = ({ onSubmit, onClose }) => {
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    await onSubmit(comment.trim());
+    setSubmitting(false);
+  };
+
+  const handleOverlayKey = (e) => { if (e.key === 'Escape') onClose(); };
+
+  return (
+    <div
+      className="feedback-modal-overlay"
+      onClick={onClose}
+      onKeyDown={handleOverlayKey}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Feedback"
+    >
+      <div className="feedback-modal" onClick={e => e.stopPropagation()}>
+        <button className="feedback-modal-close" onClick={onClose} aria-label="Close">
+          <i className="fas fa-times" />
+        </button>
+        <div className="feedback-modal-icon">
+          <i className="fas fa-thumbs-down" />
+        </div>
+        <h3 className="feedback-modal-title">Help us improve</h3>
+        <p className="feedback-modal-subtitle">
+          Our model will train from your valuable feedback. Thank you for helping us get better!
+        </p>
+        <textarea
+          className="feedback-modal-textarea"
+          placeholder="Tell us what went wrong (optional)…"
+          value={comment}
+          onChange={e => setComment(e.target.value)}
+          rows={4}
+          autoFocus
+        />
+        <div className="feedback-modal-actions">
+          <button className="feedback-modal-cancel" onClick={onClose}>Cancel</button>
+          <button
+            className="feedback-modal-submit"
+            onClick={handleSubmit}
+            disabled={submitting}
+          >
+            {submitting ? <><i className="fas fa-spinner fa-spin" /> Submitting…</> : 'Submit Feedback'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation, onOpenParkingDrawer }) => {
   const [feedback, setFeedback] = useState(message.initialFeedback?.rating ?? null);
   const [feedbackId, setFeedbackId] = useState(message.initialFeedback?.id ?? null);
@@ -100,22 +155,23 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded]   = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
   const isUser     = message.role === 'user';
   const isDocument = !isUser && isDocumentMessage(message.content);
 
-  const handleFeedback = async (type) => {
+  const handleFeedback = async (type, comment) => {
     if (submitting || !message.backendId) return;
     setSubmitting(true);
     try {
-      if (feedback === type) {
+      if (feedback === type && !comment) {
         // Same button clicked again — toggle off
         if (feedbackId) await deleteFeedback(feedbackId);
         setFeedback(null);
         setFeedbackId(null);
       } else {
-        // New vote or change vote — upsert
-        const result = await submitFeedback(message.backendId, type);
+        // New vote or change vote — upsert, forwarding optional comment
+        const result = await submitFeedback(message.backendId, type, null, comment || null);
         setFeedback(type);
         setFeedbackId(result.id);
       }
@@ -242,7 +298,7 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
               </button>
               <button
                 className={`feedback-btn${feedback === 'down' ? ' active-down' : ''}`}
-                onClick={() => handleFeedback('down')}
+                onClick={() => feedback === 'down' ? handleFeedback('down') : setShowFeedbackModal(true)}
                 disabled={submitting}
                 title="Not helpful"
                 aria-pressed={feedback === 'down'}
@@ -298,6 +354,16 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
         <div className="avatar user-avatar" aria-hidden="true">
           {getInitials(user?.name) || config.user?.initials}
         </div>
+      )}
+
+      {showFeedbackModal && (
+        <FeedbackModal
+          onSubmit={async (comment) => {
+            await handleFeedback('down', comment);
+            setShowFeedbackModal(false);
+          }}
+          onClose={() => setShowFeedbackModal(false)}
+        />
       )}
     </div>
   );

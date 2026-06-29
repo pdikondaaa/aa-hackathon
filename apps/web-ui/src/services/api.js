@@ -83,6 +83,14 @@ class HTTPClient {
     });
   }
 
+  patch(endpoint, data, options = {}) {
+    return this.request(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   delete(endpoint, options = {}) {
     return this.request(endpoint, { ...options, method: 'DELETE' });
   }
@@ -358,6 +366,16 @@ export async function createMicrosoftForm(payload) {
 
 export async function getTodaysAnniversaries() {
   return httpClient.get('/api/users/anniversaries/today');
+}
+
+// ── Graph — Shared Mailbox Calendar ───────────────────────────────────────
+
+export async function getSharedCalendarEvents() {
+  try {
+    return await httpClient.get('/api/communications/shared-calendar');
+  } catch (_) {
+    return [];
+  }
 }
 
 // ── Communications — Announcements ─────────────────────────────────────────

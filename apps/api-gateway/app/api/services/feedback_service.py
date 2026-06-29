@@ -5,6 +5,14 @@ from typing import Optional
 from app.api.config.db_config import get_db_connection
 
 
+def _keyword_score(query: str, text: str) -> int:
+    """Count overlapping meaningful words between query and text."""
+    stopwords = {'the', 'a', 'an', 'is', 'are', 'was', 'my', 'i', 'what', 'how', 'can', 'me', 'for', 'of', 'in'}
+    q_words = {w for w in query.lower().split() if len(w) > 2 and w not in stopwords}
+    t_words = {w for w in text.lower().split() if len(w) > 2 and w not in stopwords}
+    return len(q_words & t_words)
+
+
 class FeedbackService:
 
     # ------------------------------------------------------------------ #
@@ -191,3 +199,65 @@ class FeedbackService:
                 total = cur.fetchone()["count"]
 
         return {"data": rows, "total": total, "page": page, "limit": limit}
+
+    # ------------------------------------------------------------------ #
+    # Real-time correction retrieval                                       #
+    # Fetches negative-feedback Q&A pairs relevant to the current query.  #
+    # Used by the supervisor to inject corrections into the LLM context.  #
+    # ------------------------------------------------------------------ #
+    def get_corrections_for_query(self, query: str, limit: int = 3) -> list:
+        """
+        Return up to `limit` past negative-feedback correction pairs that are
+        relevant to `query`, ranked by keyword overlap.
+
+        Each item: {user_question, bad_answer, correction}
+        """
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        f.comment          AS correction,
+                        m.content          AS bad_answer,
+                        m.conversation_id  AS conv_id,
+                        m.id               AS msg_id
+                    FROM feedback f
+                    JOIN messages m ON m.id = f.message_id
+                    WHERE f.rating = 'down'
+                      AND f.comment IS NOT NULL
+                      AND f.comment <> ''
+                      AND m.role = 'assistant'
+                    ORDER BY f.created_at DESC
+                    LIMIT 100
+                    """,
+                )
+                rows = [dict(r) for r in cur.fetchall()]
+
+                # For each bad assistant message, fetch the preceding user message
+                result = []
+                for row in rows:
+                    cur.execute(
+                        """
+                        SELECT content FROM messages
+                        WHERE conversation_id = %s
+                          AND role = 'user'
+                          AND id < %s
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (row["conv_id"], row["msg_id"]),
+                    )
+                    prev = cur.fetchone()
+                    row["user_question"] = prev["content"] if prev else ""
+                    result.append(row)
+
+        # Rank by keyword overlap against the current query
+        scored = [
+            (_keyword_score(query, row["user_question"]), row)
+            for row in result
+            if row["user_question"]
+        ]
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # Only return results with at least one overlapping keyword
+        return [row for score, row in scored if score > 0][:limit]

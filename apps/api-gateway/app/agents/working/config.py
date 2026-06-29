@@ -32,6 +32,7 @@ def create_llm(temperature=None, max_tokens=None, num_ctx=None, cfg=None):
     temp = temperature if temperature is not None else cfg.temperature
     tokens = max_tokens if max_tokens is not None else cfg.max_tokens
     if _use_claude():
+        print(f"[LLM] Using Claude ({cfg.claude_model})")
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(
             model=cfg.claude_model,
@@ -40,9 +41,11 @@ def create_llm(temperature=None, max_tokens=None, num_ctx=None, cfg=None):
             max_tokens=tokens,
         )
     elif _use_groq():
+        print(f"[LLM] Using Groq ({cfg.groq_model})")
         from langchain_groq import ChatGroq
         return ChatGroq(model=cfg.groq_model, temperature=temp, max_tokens=tokens)
     else:
+        print(f"[LLM] Using Ollama ({cfg.model} @ {cfg.base_url})")
         from langchain_ollama import ChatOllama
         return ChatOllama(
             base_url=cfg.base_url,

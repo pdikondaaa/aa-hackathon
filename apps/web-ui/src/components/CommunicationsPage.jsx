@@ -4,6 +4,7 @@ import {
   dismissAnnouncement,
   listPublicEvents,
   submitEventRsvp,
+  getSharedCalendarEvents,
 } from '../services/api';
 
 // ── Priority config ────────────────────────────────────────────────────────
@@ -39,9 +40,11 @@ export default function CommunicationsPage({ user }) {
   const [tab,              setTab]              = useState('events');
   const [announcements,    setAnnouncements]    = useState([]);
   const [events,           setEvents]           = useState([]);
+  const [graphEvents,      setGraphEvents]      = useState([]);
   const [eventFilter,      setEventFilter]      = useState('All');
   const [annLoading,       setAnnLoading]       = useState(true);
   const [evtLoading,       setEvtLoading]       = useState(true);
+  const [graphLoading,     setGraphLoading]     = useState(true);
   const [rsvpLoading,      setRsvpLoading]      = useState({});
   const [dismissing,       setDismissing]       = useState({});
 
@@ -70,7 +73,19 @@ export default function CommunicationsPage({ user }) {
     }
   }, []);
 
-  useEffect(() => { loadAnnouncements(); loadEvents('All'); }, [loadAnnouncements, loadEvents]);
+  const loadGraphEvents = useCallback(async () => {
+    setGraphLoading(true);
+    try {
+      const data = await getSharedCalendarEvents();
+      setGraphEvents(data || []);
+    } catch (_) {
+      setGraphEvents([]);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadAnnouncements(); loadEvents('All'); loadGraphEvents(); }, [loadAnnouncements, loadEvents, loadGraphEvents]);
 
   const handleFilterChange = (f) => {
     setEventFilter(f);
@@ -113,9 +128,11 @@ export default function CommunicationsPage({ user }) {
     return new Date(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const filteredEvents = eventFilter === 'All'
-    ? events
-    : events.filter(e => e.status === eventFilter.toLowerCase());
+  const allEvents = [...events, ...graphEvents];
+  const filteredEvents = (eventFilter === 'All'
+    ? allEvents
+    : allEvents.filter(e => e.status === eventFilter.toLowerCase())
+  ).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', minHeight: 0 }}>
@@ -203,7 +220,7 @@ export default function CommunicationsPage({ user }) {
               ))}
             </div>
 
-            {evtLoading ? (
+            {(evtLoading || graphLoading) ? (
               <LoadingState label="Loading events…" />
             ) : filteredEvents.length === 0 ? (
               <EmptyState icon="fa-calendar-xmark" label="No events found" sub="Check back later for upcoming events" />
@@ -316,7 +333,7 @@ function EventCard({ event, user, onRsvp, rsvpLoading, formatDate, formatTime })
 
       <div style={{ padding: '16px 18px' }}>
         {/* Event type chip */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
           <span style={{
             background:    'var(--bg-elevated)',
             border:        '1px solid var(--border)',
@@ -331,6 +348,20 @@ function EventCard({ event, user, onRsvp, rsvpLoading, formatDate, formatTime })
             <i className={`fas ${typeIcon}`} style={{ marginRight: 4, fontSize: 9 }} />
             {event.event_type.replace(/_/g, ' ')}
           </span>
+          {event.source === 'graph' && (
+            <span style={{
+              background:    'rgba(167,139,250,0.15)',
+              border:        '1px solid rgba(167,139,250,0.35)',
+              color:         '#a78bfa',
+              borderRadius:  4,
+              padding:       '2px 8px',
+              fontSize:      10,
+              fontWeight:    600,
+              letterSpacing: '0.06em',
+            }}>
+              <i className="fas fa-envelope" style={{ marginRight: 4, fontSize: 9 }} /> MAILBOX
+            </span>
+          )}
           {event.is_virtual && (
             <span style={{
               background:    'rgba(96,165,250,0.15)',

@@ -81,8 +81,6 @@ export const chatConfig = {
     { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
     //{ id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
       { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap',         active: false },
-      { id: 'skillRadar',      label: 'Skill Radar',      icon: 'fa-brain',           active: false },
-      { id: 'pmoHub',          label: 'Project Hub',      icon: 'fa-diagram-project', active: false },
       { id: 'communications',  label: 'Communications',   icon: 'fa-bullhorn',        active: false },
       { id: 'feedback',        label: 'Feedback',         icon: 'fa-comment-dots',    active: false },
 
@@ -95,6 +93,8 @@ export const chatConfig = {
         { id: 'adminSettings',        label: 'Settings',           icon: 'fa-sliders'       },
         { id: 'adminCommunications',  label: 'Communications',     icon: 'fa-bullhorn'      },
         { id: 'adminQuickLinks',      label: 'Quick Links Setup',  icon: 'fa-th'            },
+        { id: 'adminFormBuilder',     label: 'Form Builder',       icon: 'fa-wpforms'       },
+        { id: 'adminSlashCommands',   label: 'Slash Commands',     icon: 'fa-bolt'          },
         { id: 'adminFeedback',        label: 'Feedback',           icon: 'fa-comment-dots'  },
       ],
     },

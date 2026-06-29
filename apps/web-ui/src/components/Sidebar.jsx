@@ -23,6 +23,15 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
     return initial;
   });
 
+  // Auto-expand parent when activeNav changes to one of its children
+  useEffect(() => {
+    navigation.forEach(item => {
+      if (item.children?.some(c => c.id === activeNav)) {
+        setExpandedParents(prev => new Set([...prev, item.id]));
+      }
+    });
+  }, [activeNav]);
+
   const toggleParent = (id) => {
     setExpandedParents(prev => {
       const next = new Set(prev);
@@ -32,8 +41,9 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
   };
 
   const handleParentClick = (item) => {
+    const isCurrentlyExpanded = expandedParents.has(item.id);
     toggleParent(item.id);
-    if (item.children?.length) onNavChange(item.children[0].id);
+    if (!isCurrentlyExpanded && item.children?.length) onNavChange(item.children[0].id);
   };
 
   const [conversations, setConversations] = useState([]);
@@ -139,7 +149,7 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
         <p className="sidebar-section-label">{labels.features}</p>
         {visibleNav.map((item) => {
           if (item.children) {
-            const isExpanded = expandedParents.has(item.id) || item.children.some(c => c.id === activeNav);
+            const isExpanded = expandedParents.has(item.id);
             return (
               <div key={item.id}>
                 <div
