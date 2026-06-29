@@ -5338,6 +5338,60 @@ button, a, [role="button"] {
   margin: 0;
 }
 
+.esc-email-edit-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(39, 170, 225, 0.25);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 12px;
+  color: var(--text, #e2e8f0);
+  outline: none;
+  min-width: 0;
+}
+.esc-email-edit-input:focus {
+  border-color: var(--secondary, #27aae1);
+}
+
+.esc-email-edit-body {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(39, 170, 225, 0.25);
+  border-radius: 5px;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #94a3b8);
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.esc-email-edit-body:focus {
+  border-color: var(--secondary, #27aae1);
+  color: var(--text, #e2e8f0);
+}
+
+.esc-email-draft-error {
+  font-size: 12px;
+  color: #f05252;
+  margin: 4px 0 0;
+}
+.esc-email-sent-msg {
+  font-size: 13px;
+  color: #4ed44e;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  margin: 0;
+}
+.esc-outlook-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .esc-outlook-btn {
   display: flex;
   align-items: center;

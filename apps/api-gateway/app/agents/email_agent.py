@@ -83,75 +83,47 @@ def _parse_from_chat_response(text: str) -> dict:
     }
 
 
-def _get_graph_token() -> str:
-    """Obtain an app-only access token for Microsoft Graph using client credentials."""
-    import requests
-    tenant_id     = os.environ.get("AZURE_TENANT_ID", "")
-    client_id     = os.environ.get("AZURE_CLIENT_ID", "")
-    client_secret = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
-
-    if not (tenant_id and client_id and client_secret):
-        raise RuntimeError("Azure credentials not configured (AZURE_TENANT_ID / AZURE_CLIENT_ID / SHAREPOINT_CLIENT_SECRET).")
-
-    url  = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-    data = {
-        "grant_type":    "client_credentials",
-        "client_id":     client_id,
-        "client_secret": client_secret,
-        "scope":         "https://graph.microsoft.com/.default",
-    }
-    resp = requests.post(url, data=data, timeout=15)
-    if not resp.ok:
-        raise RuntimeError(f"Failed to get Graph token: {resp.status_code} {resp.text}")
-    return resp.json()["access_token"]
-
-
 def send_email(to: str, subject: str, body: str, sender: str = "") -> None:
     """
-    Sends an email via Microsoft Graph API (HTTPS) using the Azure AD app credentials.
-    `sender` should be the logged-in user's email (used as the From address).
-    Requires the app to have the Mail.Send application permission in Azure AD.
-    Raises RuntimeError on failure.
+    Sends an email via SMTP (Office 365 / smtp.office365.com) using the
+    service account (SMTP_USER / SMTP_PASSWORD). Sends as SMTP_FROM_EMAIL.
+    If `sender` is provided it is added as Reply-To so replies go to them.
     """
-    import requests
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
 
-    sender    = sender or os.environ.get("SMTP_USER", "")
-    from_name = os.environ.get("SMTP_FROM_NAME", "AURA Bot")
+    smtp_host     = os.environ.get("SMTP_HOST", "smtp.office365.com")
+    smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user     = os.environ.get("SMTP_USER", "")
+    smtp_password = os.environ.get("SMTP_PASSWORD", "")
 
-    if not sender:
-        raise RuntimeError("Sender email address is not available. Please ensure you are logged in.")
+    if not smtp_user or not smtp_password:
+        raise RuntimeError("SMTP credentials not configured (SMTP_USER / SMTP_PASSWORD).")
 
-    token = _get_graph_token()
+    from_name  = os.environ.get("SMTP_FROM_NAME", "AURA Bot")
+    from_email = os.environ.get("SMTP_FROM_EMAIL", smtp_user)
 
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": {
-                "contentType": "Text",
-                "content": body,
-            },
-            "toRecipients": [{"emailAddress": {"address": to}}],
-            "from": {"emailAddress": {"name": from_name, "address": sender}},
-        },
-        "saveToSentItems": "true",
-    }
-
-    url  = f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
-    resp = requests.post(
-        url,
-        json=payload,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        timeout=15,
-    )
-
-    if resp.status_code == 202:
-        return  # success — Graph returns 202 Accepted with no body
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{from_name} <{from_email}>"
+    msg["To"]      = to
+    if sender and sender.strip():
+        msg["Reply-To"] = sender.strip()
+    msg.attach(MIMEText(body, "plain", "utf-8"))
 
     try:
-        detail = resp.json().get("error", {}).get("message", resp.text)
-    except Exception:
-        detail = resp.text
-    raise RuntimeError(f"Graph API error {resp.status_code}: {detail}")
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(from_email, [to], msg.as_string())
+    except smtplib.SMTPAuthenticationError as exc:
+        raise RuntimeError(f"SMTP authentication failed: {exc}") from exc
+    except smtplib.SMTPException as exc:
+        raise RuntimeError(f"SMTP error: {exc}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Network error connecting to SMTP server: {exc}") from exc
 
 
 def draft_email_from_chat(message: str) -> dict:

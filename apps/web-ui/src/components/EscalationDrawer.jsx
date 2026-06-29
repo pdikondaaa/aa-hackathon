@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { submitEscalation, refineEmail } from '../services/api';
+import { sendEmailViaGraph } from '../utils/authService';
 
 const ESCALATION_RECIPIENTS = {
   IT:           import.meta.env.VITE_ESCALATION_EMAIL_IT   || 'it.support@alignedautomation.com',
@@ -49,6 +50,9 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
   const [error, setError]           = useState(null);
   const [emailDraft, setEmailDraft] = useState(null);
   const [emailLoading, setEmailLoading] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+  const [emailError, setEmailError] = useState(null);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -121,7 +125,29 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
     setForm(INITIAL_FORM);
     setEmailDraft(null);
     setEmailLoading(false);
+    setEmailSending(false);
+    setEmailSent(false);
+    setEmailError(null);
     onClose();
+  };
+
+  const handleEmailDraftChange = (field, value) => {
+    setEmailDraft(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSendEmail = async () => {
+    if (!emailDraft) return;
+    setEmailSending(true);
+    setEmailError(null);
+    try {
+      await sendEmailViaGraph(emailDraft.to, emailDraft.subject, emailDraft.body);
+      setEmailSent(true);
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err?.message || 'Failed to send email. Please try again.';
+      setEmailError(detail);
+    } finally {
+      setEmailSending(false);
+    }
   };
 
   const handleOpenOutlook = () => {
@@ -190,19 +216,48 @@ const EscalationDrawer = ({ isOpen, onClose, user, conversationId, messageId }) 
                 <>
                   <div className="esc-email-draft-preview">
                     <div className="esc-email-draft-row">
+                      <span className="esc-email-draft-lbl">From</span>
+                      <span className="esc-email-draft-val">{user?.email || '—'}</span>
+                    </div>
+                    <div className="esc-email-draft-row">
                       <span className="esc-email-draft-lbl">To</span>
-                      <span className="esc-email-draft-val">{emailDraft.to}</span>
+                      <input
+                        className="esc-email-edit-input"
+                        type="text"
+                        value={emailDraft.to}
+                        onChange={e => handleEmailDraftChange('to', e.target.value)}
+                      />
                     </div>
                     <div className="esc-email-draft-row">
                       <span className="esc-email-draft-lbl">Subject</span>
-                      <span className="esc-email-draft-val">{emailDraft.subject}</span>
+                      <input
+                        className="esc-email-edit-input"
+                        type="text"
+                        value={emailDraft.subject}
+                        onChange={e => handleEmailDraftChange('subject', e.target.value)}
+                      />
                     </div>
-                    <div className="esc-email-draft-body">{renderEmailBody(emailDraft.body)}</div>
+                    <textarea
+                      className="esc-email-edit-body"
+                      value={emailDraft.body}
+                      onChange={e => handleEmailDraftChange('body', e.target.value)}
+                      rows={8}
+                    />
                   </div>
-                  <button className="esc-outlook-btn" onClick={handleOpenOutlook}>
-                    <i className="fab fa-microsoft" />
-                    Open in Outlook and Send Notification
-                  </button>
+                  {emailError && <p className="esc-email-draft-error">{emailError}</p>}
+                  {emailSent ? (
+                    <p className="esc-email-sent-msg">
+                      <i className="fas fa-check-circle" /> Email sent successfully!
+                    </p>
+                  ) : (
+                    <button className="esc-outlook-btn" onClick={handleSendEmail} disabled={emailSending}>
+                      {emailSending ? (
+                        <><i className="fas fa-spinner fa-spin" /> Sending…</>
+                      ) : (
+                        <><i className="fas fa-paper-plane" /> Send Email Notification</>
+                      )}
+                    </button>
+                  )}
                 </>
               )}
 

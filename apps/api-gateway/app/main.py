@@ -1,5 +1,5 @@
-from dotenv import load_dotenv
-load_dotenv()  # must run before any module that reads os.environ
+from dotenv import find_dotenv, load_dotenv
+load_dotenv(find_dotenv(usecwd=True))  # walks up to find .env; must run before any module that reads os.environ
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
