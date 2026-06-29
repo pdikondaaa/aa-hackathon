@@ -114,6 +114,6 @@ dmypy.json
 /.vs
 
 
-# .env
-# *.env
+ .env
+ *.env
 .venv
