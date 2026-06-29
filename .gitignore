@@ -117,3 +117,4 @@ dmypy.json
  .env
  *.env
 .venv
+/.env
