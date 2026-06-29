@@ -309,14 +309,26 @@ function MyTeamView() {
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
             {data?.manager_name}'s Team &nbsp;<span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>({data?.team_size} members)</span>
           </span>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 12px' }}>
-            <i className="fas fa-search" style={{ color: 'var(--text-muted)', fontSize: 12 }} />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search name or dept…"
-              style={{ border: 'none', background: 'transparent', outline: 'none', color: 'var(--text)', fontSize: 12, width: 160 }}
-            />
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            {/* Legend */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {Object.values(STATUS_CONFIG).map(cfg => (
+                <span key={cfg.label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-secondary)' }}>
+                  <span style={{ width: 10, height: 18, borderRadius: 3, background: cfg.color, opacity: 0.85, display: 'inline-block', flexShrink: 0 }} />
+                  {cfg.label}
+                </span>
+              ))}
+            </div>
+            {/* Search */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 12px' }}>
+              <i className="fas fa-search" style={{ color: 'var(--text-muted)', fontSize: 12 }} />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search name or dept…"
+                style={{ border: 'none', background: 'transparent', outline: 'none', color: 'var(--text)', fontSize: 12, width: 160 }}
+              />
+            </div>
           </div>
         </div>
 

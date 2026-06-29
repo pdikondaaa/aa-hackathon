@@ -56,35 +56,21 @@ export const authorizedUsers = {
   'prashant.dikonda@alignedautomation.com': ROLES.ADMIN,
   'yogeshbrijlal.chandan@alignedautomation.com': ROLES.ADMIN,
   'namita.bandal@alignedautomation.com': ROLES.ADMIN,
-
+  'hr@alignedautomation.com': ROLES.ADMIN,
   // HR Department
-  'hr.manager@alignedautomation.com': ROLES.HR,
-  'sarah.smith@alignedautomation.com': ROLES.HR,
-  'hr.specialist@alignedautomation.com': ROLES.HR,
-  
-  // IT Department
-  'it.manager@alignedautomation.com': ROLES.IT,
-  'tech.lead@alignedautomation.com': ROLES.IT,
-  'it.support@alignedautomation.com': ROLES.IT,
-  
-  // Organization / Management
-  'org.manager@alignedautomation.com': ROLES.ORG,
-  'operations@alignedautomation.com': ROLES.ORG,
-  
-  // Regular Users (can access chat but limited agent access)
-  'jane.wilson@alignedautomation.com': ROLES.USER,
-  'mike.johnson@alignedautomation.com': ROLES.USER,
 };
 
 // ─── User Access Control Functions ────────────────────────────────────────────
 
 /**
- * Check if a user is authorized to access the application
+ * Check if a user is authorized to access the application.
+ * All authenticated Azure AD users are allowed; role defaults to ROLES.USER
+ * for anyone not listed in authorizedUsers.
  * @param {string} userEmail - User's email/UPN from Azure AD
- * @returns {boolean} True if user is authorized
+ * @returns {boolean} Always true — access is open to all org members
  */
 export function isUserAuthorized(userEmail) {
-  return userEmail in authorizedUsers;
+  return true;
 }
 
 /**

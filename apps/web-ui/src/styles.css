@@ -751,6 +751,24 @@ button, a, [role="button"] {
 
 .feedback-thanks { font-size: 11px; color: var(--text-muted); font-style: italic; margin-left: 2px; animation: msg-in 0.2s ease; }
 
+/* -- Feedback modal -- */
+.feedback-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 600; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); animation: msg-in 0.18s ease; }
+.feedback-modal { background: var(--bg-secondary); border: 1px solid var(--border); border-top: 3px solid var(--primary); border-radius: 14px; width: min(420px, 92vw); padding: 1.5rem 1.5rem 1.25rem; display: flex; flex-direction: column; align-items: center; gap: 0.55rem; box-shadow: 0 20px 60px rgba(0,0,0,0.25); position: relative; }
+.feedback-modal-close { position: absolute; top: 0.6rem; right: 0.6rem; background: none; border: none; color: var(--text-muted); font-size: 0.85rem; cursor: pointer; padding: 3px 5px; border-radius: 6px; transition: color 0.15s, background 0.15s; }
+.feedback-modal-close:hover { color: var(--text-primary); background: var(--bg-card); }
+.feedback-modal-icon { width: 38px; height: 38px; border-radius: 50%; background: rgba(29,118,188,0.15); color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+.feedback-modal-title { font-size: 0.92rem; font-weight: 700; color: var(--text-primary); margin: 0; }
+.feedback-modal-subtitle { font-size: 0.78rem; color: var(--text-secondary); text-align: center; margin: 0; line-height: 1.45; }
+.feedback-modal-textarea { width: 100%; box-sizing: border-box; background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px; color: var(--text-primary); font-size: 0.8rem; padding: 0.5rem 0.65rem; resize: vertical; font-family: inherit; outline: none; transition: border-color 0.15s; min-height: 68px; }
+.feedback-modal-textarea:focus { border-color: var(--primary); }
+.feedback-modal-textarea::placeholder { color: var(--text-muted); }
+.feedback-modal-actions { display: flex; gap: 0.5rem; width: 100%; justify-content: flex-end; margin-top: 0.15rem; }
+.feedback-modal-cancel { background: none; border: 1px solid var(--border); color: var(--text-secondary); border-radius: 7px; padding: 0.35rem 0.85rem; font-size: 0.8rem; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.feedback-modal-cancel:hover { background: var(--bg-card); color: var(--text-primary); }
+.feedback-modal-submit { background: var(--primary); color: #fff; border: none; border-radius: 7px; padding: 0.35rem 0.95rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.15s; display: flex; align-items: center; gap: 0.35rem; }
+.feedback-modal-submit:hover:not(:disabled) { background: var(--primary-hover); }
+.feedback-modal-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
 /* -- Source citations -- */
 .sources-section { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-card); border: 1px solid var(--border-light); font-size: 11.5px; }
 .sources-header { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; font-size: 11px; letter-spacing: 0.03em; }
@@ -770,7 +788,8 @@ button, a, [role="button"] {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 .chat-input-wrap:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(29,118,188,0.14); }
