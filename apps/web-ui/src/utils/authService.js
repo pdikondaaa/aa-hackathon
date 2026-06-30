@@ -33,7 +33,7 @@ export async function loginWithRedirect() {
 
 export async function logout() {
   const account = msalInstance.getActiveAccount();
-  await msalInstance.logoutRedirect({ account, postLogoutRedirectUri: window.location.origin });
+  await msalInstance.logoutRedirect({ account, postLogoutRedirectUri: window.location.origin + '/project-aura/' });
 }
 
 // Build user from MSAL ID token claims — always works, no admin consent required.

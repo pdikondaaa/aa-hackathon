@@ -946,7 +946,21 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
               )}
             </div>
             <div className="chat-input-right">
-              <span className="chat-input-hint">Shift+Enter for new line</span>
+              <span className="chat-input-hint">
+                Shift+Enter for new line&ensp;·&ensp;
+                <button
+                  className="chat-input-hint-slash"
+                  onClick={() => {
+                    setInput('/');
+                    setSlashQuery('');
+                    setSlashActive(true);
+                    textareaRef.current?.focus();
+                  }}
+                  title="Quick shortcuts"
+                >
+                  <kbd>/</kbd> for shortcuts
+                </button>
+              </span>
               {loading ? (
                 <button
                   className="send-btn stop-btn"

@@ -825,6 +825,18 @@ button, a, [role="button"] {
 .chat-input-left    { display: flex; align-items: center; gap: 4px; }
 .chat-input-right   { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .chat-input-hint    { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.chat-input-hint-slash {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 11px; color: var(--text-muted);
+  transition: color var(--transition);
+}
+.chat-input-hint-slash:hover { color: var(--text-secondary); }
+.chat-input-hint-slash kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 4px; border: 1px solid var(--border-color);
+  border-radius: 3px; font-size: 10px; font-family: inherit;
+  background: var(--bg-card); line-height: 16px;
+}
 
 .chat-input-icon-btn {
   width: 30px; height: 30px;

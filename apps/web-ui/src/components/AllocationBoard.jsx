@@ -1061,10 +1061,10 @@ function AskAuraPanel({ onClose, role }) {
 // ── Root component ────────────────────────────────────────────────────────────
 
 const ROLE_LABEL = {
-  executive:     'Executive',
-  business_lead: 'Business Lead',
-  team_lead:     'Team Lead',
-  employee:      'Employee',
+  executive:     '',
+  business_lead: '',
+  team_lead:     '',
+  employee:      '',
 };
 
 const ROLE_SUBTITLE = {
