@@ -45,6 +45,7 @@ class ReporteeSummary(BaseModel):
     email: str
     department: str
     designation: str
+    report_level: str  # "direct" | "indirect"
     this_month: MonthSummary
     last_month: MonthSummary
     total_days_combined: int
@@ -53,8 +54,10 @@ class ReporteeSummary(BaseModel):
 
 
 class TeamAttendanceOut(BaseModel):
-    """Attendance for all direct reports of the logged-in manager."""
+    """Attendance for all direct + indirect reports of the logged-in manager."""
     manager_name: str
     manager_email: str
-    team_size: int
+    team_size: int       # total (direct + indirect)
+    direct_count: int
+    indirect_count: int
     reportees: list[ReporteeSummary]

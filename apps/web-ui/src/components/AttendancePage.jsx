@@ -214,16 +214,22 @@ function AttendanceBar({ records }) {
 function ReporteeRow({ reportee }) {
   const [expanded, setExpanded] = useState(false);
   const color = avatarColor(reportee.name);
+  const isIndirect = reportee.report_level === 'indirect';
 
   return (
     <div style={{ borderBottom: '1px solid var(--border-light)' }}>
       {/* Summary row */}
       <div
         onClick={() => setExpanded(x => !x)}
-        style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', cursor: 'pointer', transition: 'background 0.15s' }}
+        style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', cursor: 'pointer', transition: 'background 0.15s', paddingLeft: isIndirect ? 36 : 20 }}
         onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
       >
+        {/* Indent line for indirect */}
+        {isIndirect && (
+          <div style={{ width: 2, height: 36, background: 'var(--border)', borderRadius: 2, flexShrink: 0 }} />
+        )}
+
         {/* Avatar */}
         <div style={{ width: 36, height: 36, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: '#fff' }}>
           {getInitials(reportee.name)}
@@ -258,10 +264,25 @@ function ReporteeRow({ reportee }) {
 
       {/* Expanded detail */}
       {expanded && (
-        <div style={{ padding: '4px 20px 20px', background: 'var(--bg)' }}>
+        <div style={{ padding: '4px 20px 20px', background: 'var(--bg)', paddingLeft: isIndirect ? 36 : 20 }}>
           <MonthPanel thisMonth={reportee.this_month} lastMonth={reportee.last_month} />
         </div>
       )}
+    </div>
+  );
+}
+
+function SectionHeader({ icon, label, count, color }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '8px 20px', background: 'var(--bg-elevated)',
+      borderBottom: '1px solid var(--border)',
+      borderTop: '1px solid var(--border)',
+    }}>
+      <i className={`fas ${icon}`} style={{ color, fontSize: 12 }} />
+      <span style={{ fontSize: 11, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>({count})</span>
     </div>
   );
 }
@@ -271,6 +292,7 @@ function MyTeamView() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
   const [search, setSearch]   = useState('');
+  const [showIndirect, setShowIndirect] = useState(true);
 
   const load = useCallback(() => {
     setLoading(true); setError(null);
@@ -285,31 +307,54 @@ function MyTeamView() {
   if (loading) return <Spinner text="Loading team attendance…" />;
   if (error)   return <ErrorBox error={error} onRetry={load} />;
 
-  const reportees = (data?.reportees || []).filter(r =>
+  const allReportees = data?.reportees || [];
+  const filtered = allReportees.filter(r =>
     !search || r.name.toLowerCase().includes(search.toLowerCase()) || r.department?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalDays  = (data?.reportees || []).reduce((s, r) => s + r.total_days_combined, 0);
-  const avgDays    = data?.team_size ? (totalDays / data.team_size).toFixed(1) : 0;
+  const directRows   = filtered.filter(r => r.report_level !== 'indirect');
+  const indirectRows = filtered.filter(r => r.report_level === 'indirect');
+
+  const totalDays = allReportees.reduce((s, r) => s + r.total_days_combined, 0);
+  const avgDays   = data?.team_size ? (totalDays / data.team_size).toFixed(1) : 0;
 
   return (
     <div style={{ padding: '20px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Team summary cards */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <SummaryCard icon="fa-users"          label="Direct Reports"        value={data?.team_size ?? 0}  color="#1D76BC" />
-        <SummaryCard icon="fa-calendar-check" label="Avg Days Present"      value={avgDays}               color="#27AAE1" />
-        <SummaryCard icon="fa-circle-check"   label="Members with data"     value={(data?.reportees || []).filter(r => r.total_days_combined > 0).length} color="#4ED44E" />
+        <SummaryCard icon="fa-user-tie"       label="Direct Reports"    value={data?.direct_count ?? data?.team_size ?? 0}   color="#1D76BC" />
+        <SummaryCard icon="fa-users"          label="Indirect Reports"  value={data?.indirect_count ?? 0} color="#8b5cf6" />
+        <SummaryCard icon="fa-calendar-check" label="Avg Days Present"  value={avgDays}                   color="#27AAE1" />
+        <SummaryCard icon="fa-circle-check"   label="Members with data" value={allReportees.filter(r => r.total_days_combined > 0).length} color="#4ED44E" />
       </div>
 
       {/* Search + table */}
       <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
         {/* Header bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
-          <i className="fas fa-users" style={{ color: 'var(--primary)', fontSize: 14 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', flexWrap: 'wrap' }}>
+          <i className="fas fa-sitemap" style={{ color: 'var(--primary)', fontSize: 14 }} />
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-            {data?.manager_name}'s Team &nbsp;<span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>({data?.team_size} members)</span>
+            {data?.manager_name}'s Team
+            &nbsp;<span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>
+              ({data?.direct_count} direct · {data?.indirect_count} indirect)
+            </span>
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            {/* Indirect toggle */}
+            {data?.indirect_count > 0 && (
+              <button
+                onClick={() => setShowIndirect(v => !v)}
+                style={{
+                  padding: '5px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500,
+                  background: showIndirect ? 'rgba(139,92,246,0.12)' : 'var(--bg-card)',
+                  border: `1px solid ${showIndirect ? '#8b5cf6' : 'var(--border)'}`,
+                  color: showIndirect ? '#8b5cf6' : 'var(--text-muted)',
+                }}
+              >
+                <i className="fas fa-users" style={{ marginRight: 5 }} />
+                {showIndirect ? 'Hide' : 'Show'} Indirect ({data?.indirect_count})
+              </button>
+            )}
             {/* Legend */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               {Object.values(STATUS_CONFIG).map(cfg => (
@@ -344,14 +389,35 @@ function MyTeamView() {
           <div style={{ width: 20, flexShrink: 0 }} />
         </div>
 
-        {/* Rows */}
-        {reportees.length === 0 ? (
+        {/* Rows — Direct */}
+        {directRows.length === 0 && !search ? (
           <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontSize: 13 }}>
             <i className="fas fa-user-slash" style={{ fontSize: 26, marginBottom: 8, display: 'block' }} />
-            {search ? 'No match found.' : 'No direct reports found.'}
+            No reports found.
           </div>
         ) : (
-          reportees.map(r => <ReporteeRow key={r.email} reportee={r} />)
+          <>
+            {directRows.length > 0 && (
+              <>
+                <SectionHeader icon="fa-user-tie" label="Direct Reports" count={directRows.length} color="#1D76BC" />
+                {directRows.map(r => <ReporteeRow key={r.email} reportee={r} />)}
+              </>
+            )}
+
+            {showIndirect && indirectRows.length > 0 && (
+              <>
+                <SectionHeader icon="fa-users" label="Indirect Reports" count={indirectRows.length} color="#8b5cf6" />
+                {indirectRows.map(r => <ReporteeRow key={r.email} reportee={r} />)}
+              </>
+            )}
+
+            {filtered.length === 0 && search && (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontSize: 13 }}>
+                <i className="fas fa-search" style={{ fontSize: 22, marginBottom: 8, display: 'block' }} />
+                No match for "{search}"
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

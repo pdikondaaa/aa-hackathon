@@ -154,8 +154,11 @@ def _build_month_summary(rows: list, year: int, month: int) -> MonthSummary:
             status=_attendance_status(mins, bool(co)),
         ))
 
-    # Sort records chronologically descending (already deduped)
-    records.sort(key=lambda r: r.date, reverse=True)
+    # Sort records chronologically descending by parsed date (not the display string)
+    records.sort(
+        key=lambda r: datetime.datetime.strptime(r.date, "%d %b %Y").date(),
+        reverse=True,
+    )
 
     return MonthSummary(
         month_label=f"{_MONTH_NAMES[month]} {year}",
@@ -355,8 +358,9 @@ class AttendanceService:
             try:
                 return self._fetch_from_essl(username, date_from, date_to)
             except Exception as exc:
-                logger.warning(
-                    "eSSL SQL Server unavailable (%s). Falling back to PostgreSQL.", exc
+                logger.error(
+                    "eSSL fetch failed for '%s' [%s→%s]: %s — %s. Falling back to PostgreSQL.",
+                    username, date_from, date_to, type(exc).__name__, exc,
                 )
 
         return self._fetch_from_postgres(username, date_from, date_to)
@@ -373,6 +377,10 @@ class AttendanceService:
         except ImportError:
             raise RuntimeError("pymssql not installed — run: pip install pymssql")
 
+        logger.info(
+            "eSSL connect: server=%s db=%s user=%s view=%s",
+            _ESSL_DB_HOST, _ESSL_DB_NAME, _ESSL_DB_USER, _ESSL_VIEW,
+        )
         conn = pymssql.connect(
             server=_ESSL_DB_HOST,
             user=_ESSL_DB_USER,
@@ -439,12 +447,14 @@ class AttendanceService:
         last  = str(manager_profile.get("LastName") or "").strip()
         manager_name = f"{first} {last}".strip()
 
-        reportee_profiles = self._fetch_reportee_profiles(manager_name)
-        if not reportee_profiles:
+        all_profiles = self._fetch_all_team_profiles(manager_name)
+        if not all_profiles:
             return TeamAttendanceOut(
                 manager_name=manager_name,
                 manager_email=manager_email,
                 team_size=0,
+                direct_count=0,
+                indirect_count=0,
                 reportees=[],
             )
 
@@ -455,15 +465,18 @@ class AttendanceService:
 
         names = [
             f"{p.get('FirstName','')} {p.get('LastName','')}".strip()
-            for p in reportee_profiles
+            for p in all_profiles
         ]
 
-        # Single batch fetch for all team members
+        # Single batch fetch for all team members (direct + indirect)
         all_rows = self._fetch_team_batch(names, last_month_start, today)
 
         reportees: list[ReporteeSummary] = []
-        for profile, emp_name in zip(reportee_profiles, names):
-            rows = _dedup_by_date([r for r in all_rows if emp_name.lower() in str(r.get("username", "")).lower()])
+        for profile, emp_name in zip(all_profiles, names):
+            rows = _dedup_by_date([
+                r for r in all_rows
+                if emp_name.lower() in str(r.get("username", "")).lower()
+            ])
             this_month = _build_month_summary(rows, today.year, today.month)
             last_month = _build_month_summary(rows, last_month_end.year, last_month_end.month)
             total_mins = this_month.total_minutes + last_month.total_minutes
@@ -472,6 +485,7 @@ class AttendanceService:
                 email=profile.get("EmailId", ""),
                 department=profile.get("Department", ""),
                 designation=profile.get("Designation", ""),
+                report_level=profile.get("_report_level", "direct"),
                 this_month=this_month,
                 last_month=last_month,
                 total_days_combined=this_month.total_days + last_month.total_days,
@@ -479,18 +493,20 @@ class AttendanceService:
                 total_hours_combined=_minutes_to_label(total_mins),
             ))
 
+        direct_count   = sum(1 for r in reportees if r.report_level == "direct")
+        indirect_count = sum(1 for r in reportees if r.report_level == "indirect")
+
         return TeamAttendanceOut(
             manager_name=manager_name,
             manager_email=manager_email,
             team_size=len(reportees),
+            direct_count=direct_count,
+            indirect_count=indirect_count,
             reportees=reportees,
         )
 
     def _fetch_reportee_profiles(self, manager_full_name: str) -> list[dict]:
-        """Return profile rows (name, email, dept, designation) for all active direct reports.
-
-        ReportingManager is stored as 'Full Name AASPL-XXXX' so we use a LIKE wildcard.
-        """
+        """Return profile rows for all active direct reports of manager_full_name."""
         conn = None
         try:
             conn = psycopg2.connect(
@@ -523,6 +539,34 @@ class AttendanceService:
                 except Exception:
                     pass
 
+    def _fetch_all_team_profiles(self, manager_full_name: str, max_depth: int = 2) -> list[dict]:
+        """
+        BFS traversal of the org tree under manager_full_name.
+        Returns all profiles tagged with '_report_level': 'direct' | 'indirect'.
+        max_depth=2 covers direct reports (depth 1) and their direct reports (depth 2).
+        """
+        visited_emails: set[str] = set()
+        result: list[dict] = []
+        queue: list[tuple[str, int]] = [(manager_full_name, 0)]
+
+        while queue:
+            name, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            profiles = self._fetch_reportee_profiles(name)
+            for p in profiles:
+                email = (p.get("EmailId") or "").strip().lower()
+                if not email or email in visited_emails:
+                    continue
+                visited_emails.add(email)
+                p["_report_level"] = "direct" if depth == 0 else "indirect"
+                result.append(p)
+                emp_name = f"{p.get('FirstName','')} {p.get('LastName','')}".strip()
+                if emp_name:
+                    queue.append((emp_name, depth + 1))
+
+        return result
+
     def _fetch_team_batch(
         self,
         names: list[str],
@@ -552,7 +596,10 @@ class AttendanceService:
         except ImportError:
             raise RuntimeError("pymssql not installed")
 
-        placeholders = ", ".join(["%s"] * len(names))
+        # Use LIKE OR conditions (not IN) so minor name-format differences still match
+        like_clauses = " OR ".join([f"[{_ESSL_USER_COL}] LIKE %s"] * len(names))
+        like_params  = [f"%{n}%" for n in names]
+
         conn = pymssql.connect(
             server=_ESSL_DB_HOST, user=_ESSL_DB_USER, password=_ESSL_DB_PWD,
             database=_ESSL_DB_NAME, timeout=30, login_timeout=10,
@@ -562,10 +609,10 @@ class AttendanceService:
                 sql = f"""
                     SELECT * FROM {_ESSL_VIEW}
                     WHERE CAST([{_ESSL_DATE_COL}] AS DATE) BETWEEN %s AND %s
-                      AND [{_ESSL_USER_COL}] IN ({placeholders})
+                      AND ({like_clauses})
                     ORDER BY [{_ESSL_USER_COL}], [{_ESSL_DATE_COL}] DESC
                 """
-                cur.execute(sql, (str(date_from), str(date_to), *names))
+                cur.execute(sql, (str(date_from), str(date_to), *like_params))
                 raw_rows = cur.fetchall()
         finally:
             conn.close()

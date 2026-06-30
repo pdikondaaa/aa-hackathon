@@ -1,3 +1,4 @@
+import os
 import re
 import logging
 import calendar
@@ -10,6 +11,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[5] / ".env")
+
+_ESSL_DB_HOST = os.getenv("ESSL_DB_HOST", "")
+_ESSL_DB_USER = os.getenv("ESSL_DB_USER", "")
+_ESSL_DB_PWD  = os.getenv("ESSL_DB_PWD", "")
+_ESSL_DB_NAME = os.getenv("ESSL_DB_NAME", "eSSL")
+_ESSL_VIEW    = os.getenv("ESSL_ATTENDANCE_VIEW", "[dbo].[vbUserTimeEntryLog]")
+_ESSL_DATE_COL = os.getenv("ESSL_DATE_COLUMN", "CHECKDATE")
+_ESSL_USER_COL = os.getenv("ESSL_USER_COLUMN", "UserName")
 
 from app.agents.employee.config import (
     EMPLOYEE_VIEW,
@@ -101,6 +110,82 @@ def _run_aura(sql: str, params: tuple = ()) -> List[Dict]:
         return [dict(r) for r in cur.fetchall()]
     except Exception as exc:
         logger.error("Aura DB error: %s", exc)
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _normalize_essl_row(row: dict) -> dict:
+    r = {(k or '').lower().strip(): v for k, v in row.items()}
+    return {
+        'username':      r.get('username') or r.get('employeename') or r.get('empname') or '',
+        'checkdate':     r.get('checkdate'),
+        'checkintime':   r.get('firstin') or r.get('checkintime') or r.get('intime') or r.get('checkin'),
+        'checkouttime':  r.get('lastout') or r.get('checkouttime') or r.get('outtime') or r.get('checkout'),
+        'deptname':      r.get('deptname') or r.get('department') or r.get('dept') or '',
+        'timeinhours':   r.get('timeinhours') or r.get('duration') or '',
+        'timeinminutes': r.get('timeinminutes') or 0,
+    }
+
+
+def _run_essl(
+    username: Optional[str],
+    date_from: Optional[datetime.date] = None,
+    date_to: Optional[datetime.date] = None,
+    dept: Optional[str] = None,
+    limit: int = 200,
+) -> List[Dict]:
+    """Query eSSL SQL Server. Returns normalised rows or [] on failure."""
+    if not _ESSL_DB_HOST:
+        return []
+    try:
+        import pymssql
+    except ImportError:
+        logger.error("pymssql not installed — cannot query eSSL")
+        return []
+
+    conditions = []
+    params: list = []
+
+    if date_from and date_to:
+        conditions.append(f"CAST([{_ESSL_DATE_COL}] AS DATE) BETWEEN %s AND %s")
+        params += [str(date_from), str(date_to)]
+    elif date_from:
+        conditions.append(f"CAST([{_ESSL_DATE_COL}] AS DATE) >= %s")
+        params.append(str(date_from))
+
+    if username:
+        conditions.append(f"[{_ESSL_USER_COL}] LIKE %s")
+        params.append(f"%{username}%")
+    elif dept:
+        conditions.append("[DEPTNAME] LIKE %s")
+        params.append(f"%{dept}%")
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = (
+        f"SELECT TOP {limit} * FROM {_ESSL_VIEW} "
+        f"{where} "
+        f"ORDER BY [{_ESSL_DATE_COL}] DESC"
+    )
+
+    conn = None
+    try:
+        conn = pymssql.connect(
+            server=_ESSL_DB_HOST, user=_ESSL_DB_USER,
+            password=_ESSL_DB_PWD, database=_ESSL_DB_NAME,
+            timeout=15, login_timeout=10,
+        )
+        with conn.cursor(as_dict=True) as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        logger.info("eSSL agent: %d rows for username='%s'", len(rows), username)
+        return [_normalize_essl_row(r) for r in rows]
+    except Exception as exc:
+        logger.error("eSSL agent query failed: %s — %s", type(exc).__name__, exc)
         return []
     finally:
         if conn:
@@ -630,10 +715,35 @@ def attendance_agent(query: str, user_email: str = "") -> str:
             resolved_name = user_zoho_name
 
         # ══════════════════════════════════════════════════════════════════
-        # STEP 4 — Fetch attendance from Aura DB + format
+        # STEP 4 — Fetch attendance (eSSL primary, PostgreSQL fallback)
         # ══════════════════════════════════════════════════════════════════
         sql, params, intent = _build_attendance_query(query, resolved_name=resolved_name)
-        rows = _run_aura(sql, params)
+
+        # Build eSSL date range from the query
+        date_clause, date_params = _extract_date_filter(query.lower())
+        essl_date_from: Optional[datetime.date] = None
+        essl_date_to: Optional[datetime.date] = None
+        if len(date_params) == 2:
+            essl_date_from, essl_date_to = date_params[0], date_params[1]
+        elif len(date_params) == 1:
+            essl_date_from = date_params[0]
+            essl_date_to = datetime.date.today()
+
+        # Determine dept for dept-level queries
+        dept_m = re.search(r'\b([a-zA-Z &]+?)\s+(?:department|dept|team)\b', query.lower())
+        essl_dept = dept_m.group(1).strip() if dept_m and intent == 'attendance_dept' else None
+
+        rows = _run_essl(
+            username=resolved_name if intent in ('attendance_self', 'attendance_employee') else None,
+            date_from=essl_date_from,
+            date_to=essl_date_to,
+            dept=essl_dept,
+            limit=200,
+        )
+
+        # Fall back to PostgreSQL if eSSL returned nothing
+        if not rows:
+            rows = _run_aura(sql, params)
 
         if rows:
             if intent == 'attendance_employee':
