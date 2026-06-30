@@ -30,6 +30,7 @@ import CommunicationsAdmin from './components/CommunicationsAdmin';
 import QuickLinksAdmin from './components/QuickLinksAdmin';
 import { PMODashboard } from './modules/pmo-hub';
 import { FeedbackPage, FeedbackAdmin } from './modules/feedback';
+import FloorPlanPage from './components/FloorPlanPage';
 import AnnouncementBanner from './components/AnnouncementBanner';
 import AnnouncementOverlay from './components/AnnouncementOverlay';
 import CommunicationsWidget from './components/CommunicationsWidget';
@@ -346,6 +347,8 @@ export default function App() {
           <SlashCommandAdmin />
         ) : activeNav === 'adminFeedback' && user?.isAdmin ? (
           <FeedbackAdmin user={user} />
+        ) : activeNav === 'floorPlan' ? (
+          <FloorPlanPage user={user} />
         ) : activeNav === 'feedback' ? (
           <FeedbackPage user={user} />
         ) : activeNav === 'adminFormBuilder' && user?.isAdmin ? (

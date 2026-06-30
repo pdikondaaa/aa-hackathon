@@ -83,6 +83,7 @@ export const chatConfig = {
       { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap',         active: false },
       { id: 'communications',  label: 'Communications',   icon: 'fa-bullhorn',        active: false },
       { id: 'feedback',        label: 'Feedback',         icon: 'fa-comment-dots',    active: false },
+    { id: 'floorPlan',      label: 'Floor Plan',       icon: 'fa-map-location-dot', active: false },
 
     //{ id: 'cooAnalytics',   label: 'COO Analytics',   icon: 'fa-gauge-high',   active: false },
     //{ id: 'myNotes',         label: 'My Notes',         icon: 'fa-sticky-note',  active: false },

@@ -8,6 +8,7 @@ import {
   searchForms, listPublishedForms,
   searchSlashCommands, listActiveSlashCommands,
 } from '../modules/form-builder/services/formBuilderApi';
+import floorPlanImg from '../assets/aa-T2-10th.png';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -112,6 +113,18 @@ const PARKING_INTENT_PATTERNS = [
 
 const detectParkingIntent = (text) =>
   PARKING_INTENT_PATTERNS.some((re) => re.test(text));
+
+// ── Floor plan intent detection ───────────────────────────────────────────────
+const FLOOR_PLAN_INTENT_PATTERNS = [
+  /\b(floor\s*plan|floorplan|floor\s*map|office\s*map|office\s*layout|office\s*floor)\b/i,
+  /\b(show|display|see|view|get|share|send)\b.{0,30}\b(floor|map|layout|plan)\b/i,
+  /\bwhere\s+(is|are|can\s+i\s+find)\b.{0,50}\b(cabin|cafeteria|conference|reception|pantry|elevator|staircase|bathroom|toilet|recreation|parking|exit|entrance)\b/i,
+  /\b(building|office)\s+(map|layout|plan|floor|diagram)\b/i,
+  /\b(10th\s+floor|tenth\s+floor|tower\s*2)\b/i,
+];
+
+const detectFloorPlanIntent = (text) =>
+  FLOOR_PLAN_INTENT_PATTERNS.some((re) => re.test(text));
 
 // ── Microsoft Forms intent detection ──────────────────────────────────────────
 const FORMS_INTENT_PATTERNS = [
@@ -437,6 +450,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     const isFormsRequest      = detectFormsIntent(trimmed);
     const isParkingCostQuery  = detectParkingCostIntent(trimmed);
     const isParkingRequest    = !isParkingCostQuery && detectParkingIntent(trimmed);
+    const isFloorPlanRequest  = detectFloorPlanIntent(trimmed);
 
     // Parking cost/charges question — check for existing request, then respond with live pricing card
     if (isParkingCostQuery) {
@@ -448,6 +462,21 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
       setMessages(prev => [
         ...prev,
         { id: nextId + 1, role: 'assistant', content: buildParkingHtml(hasRequest), timestamp: now },
+      ]);
+      setLoading(false);
+      return;
+    }
+
+    // Floor plan — respond directly with the floor plan image
+    if (isFloorPlanRequest) {
+      const content = `<div style="max-width:100%;">
+<p style="margin:0 0 10px;font-size:14px;">Here's the office floor plan for <strong>Aligned Automation — Fountainhead Tower 2, 10th Floor</strong>:</p>
+<img src="${floorPlanImg}" alt="Office Floor Plan — 10th Floor" style="width:100%;max-width:820px;border-radius:8px;display:block;border:1px solid rgba(29,118,188,0.3);" />
+<p style="margin:10px 0 0;font-size:12px;color:var(--text-muted,#5e7a9a);">You can also view the full interactive floor plan in the <strong>Floor Plan</strong> tab in the sidebar.</p>
+</div>`;
+      setMessages(prev => [
+        ...prev,
+        { id: nextId + 1, role: 'assistant', content, timestamp: now },
       ]);
       setLoading(false);
       return;
