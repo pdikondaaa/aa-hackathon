@@ -12,6 +12,7 @@ const TopBar = ({
   isDark,         onThemeToggle,
   onLogout,
   onGoHome,
+  feedbackOpen,   onFeedbackToggle,
 }) => {
   const displayUser = user || config.user;
   const logo = isDark ? alignedDarkLogo : alignedLightLogo;
@@ -171,6 +172,17 @@ const TopBar = ({
           title={rightPanelOpen ? 'Hide overview panel' : 'Show overview panel'}
         >
           <i className="fas fa-table-columns" />
+        </button>
+
+        {/* Feedback button */}
+        <button
+          className={`topbar-icon-btn${feedbackOpen ? ' panel-active' : ''}`}
+          onClick={onFeedbackToggle}
+          title="Share Feedback"
+          aria-label="Share Feedback"
+          aria-expanded={feedbackOpen}
+        >
+          <i className="fas fa-comment-dots" />
         </button>
 
         {/* Theme toggle switch — beside profile */}

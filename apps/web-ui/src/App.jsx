@@ -17,6 +17,7 @@ import LoginPage       from './components/LoginPage';
 import EscalationDrawer from './components/EscalationDrawer';
 import FormsDrawer from './components/FormsDrawer';
 import ParkingDrawer from './components/ParkingDrawer';
+import FeedbackDrawer from './components/FeedbackDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
 import { SkillRadarDashboard }   from './modules/skill-hub';
 import { getAllocationRole } from './services/api';
@@ -81,6 +82,7 @@ export default function App() {
   const [formsDrawerOpen,       setFormsDrawerOpen]       = useState(false);
   const [formsDrawerQuery,      setFormsDrawerQuery]      = useState('');
   const [parkingDrawerOpen,     setParkingDrawerOpen]     = useState(false);
+  const [feedbackOpen,          setFeedbackOpen]          = useState(false);
 
   const [user,           setUser]           = useState(null);
   const [authLoading,    setAuthLoading]    = useState(true);
@@ -273,6 +275,8 @@ export default function App() {
         onSidebarToggle={() => setSidebarOpen((o) => !o)}
         rightPanelOpen={rightPanelOpen}
         onRightPanelToggle={() => setRightPanelOpen((o) => !o)}
+        feedbackOpen={feedbackOpen}
+        onFeedbackToggle={() => setFeedbackOpen((o) => !o)}
         isDark={isDark}
         onThemeToggle={() => setIsDark((d) => !d)}
         onLogout={handleLogout}
@@ -335,8 +339,6 @@ export default function App() {
           <QuickLinksAdmin user={user} />
         ) : activeNav === 'adminFeedback' && user?.isAdmin ? (
           <FeedbackAdmin user={user} />
-        ) : activeNav === 'feedback' ? (
-          <FeedbackPage user={user} />
         ) : (
           <main className="main-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <CommunicationsWidget user={user} onNavigate={setActiveNav} closed={widgetClosed} onClose={() => setWidgetClosed(true)} />
@@ -392,6 +394,11 @@ export default function App() {
       <ParkingDrawer
         isOpen={parkingDrawerOpen}
         onClose={() => setParkingDrawerOpen(false)}
+        user={user}
+      />
+      <FeedbackDrawer
+        isOpen={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
         user={user}
       />
     </div>
