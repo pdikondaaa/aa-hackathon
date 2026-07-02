@@ -10,7 +10,7 @@ Skills are the atomic unit of platform capability. Every feature exposed to user
 
 ## 2. Business Context
 
-The platform serves Aligned Automation employees across five domains: HR, IT, Admin, Organization, and Productivity. Each domain exposes multiple skills. Skills are discovered by the MasterAgent routing engine and executed by domain agents backed by pgvector RAG, Zoho People DB, Microsoft Graph API, and Ollama LLM.
+The platform serves Aligned Automation employees across five domains: HR, IT, Admin, Organization, and Productivity. (The platform's actual feature surface is broader than this — it also includes parking request management, org communications, skills analytics, a no-code form/workflow builder, COO analytics, and AI tool license tracking; those are covered in their own specs rather than in this skills catalog.) Each domain exposes multiple skills. Skills are discovered by the MasterAgent routing engine and executed by domain agents backed by pgvector RAG, Zoho People DB, Microsoft Graph API, and a configurable LLM (Anthropic Claude → Groq → Ollama, in priority order — Ollama is the default/fallback, not the exclusive provider).
 
 ---
 
@@ -43,7 +43,7 @@ Every skill registered on the platform must document all fields below.
 | **Inputs** | object[] | Parameters: name, type, required, source (user/context/system), description |
 | **Outputs** | object | Response structure: format (HTML/JSON/SSE), fields, examples |
 | **Owning Agent** | string | Agent class responsible for executing this skill |
-| **Dependencies** | string[] | External systems: `pgvector \| FAISS \| ZohoDB \| GraphAPI \| Ollama \| Tavily \| EscalationsDB` |
+| **Dependencies** | string[] | External systems: `pgvector \| FAISS \| ZohoDB \| GraphAPI \| Claude/Groq/Ollama \| Tavily \| EscalationsDB` |
 | **Tools Used** | string[] | Internal tools invoked during execution |
 | **Prompt Reference** | string | Reference to personality/prompt in `personalities.py` |
 | **Retrieval Strategy** | string | How context is fetched (pgvector query, Zoho query, static, etc.) |
@@ -109,13 +109,13 @@ Every skill registered on the platform must document all fields below.
 
 ```
 MasterAgent (supervisor_agent.py)
-├── _FAST_PATH_RULES[]          ← Tier 1: compiled regex → skill_id
-├── _LLM_ROUTING_PROMPT         ← Tier 2: Ollama intent classification
-├── DOMAIN_KEYWORDS{}           ← Tier 3: keyword scoring
+├── _FAST_PATH_RULES[]          ← Live Tier 1: compiled regex → skill_id
+├── _route_llm()                ← Defined for LLM intent classification, but never called anywhere — dead code, not part of the live routing path
+├── DOMAIN_KEYWORDS{}           ← Live Tier 2: keyword scoring fallback
 └── _AGENT_REGISTRY{}           ← skill_id → agent_class mapping
 ```
 
-Skills are registered by populating:
+In practice there are two live routing tiers — regex fast-paths, then keyword scoring against `DOMAIN_KEYWORDS` — not three. Skills are registered by populating:
 1. `_FAST_PATH_RULES` — regex + target for deterministic routing
 2. `DOMAIN_KEYWORDS` — keyword sets per domain for fallback scoring
 3. `_AGENT_REGISTRY` — maps domain/skill names to agent classes
@@ -128,15 +128,14 @@ Skills are registered by populating:
 flowchart TD
     Q[User Query] --> FP{Fast-Path Match?}
     FP -- Yes --> SK1[Execute Skill Direct]
-    FP -- No --> LLM{LLM Routing Available?}
-    LLM -- Yes --> LR[Ollama Intent Classification]
-    LR --> SK2[Execute Routed Skill]
-    LLM -- No/Timeout --> KW[Keyword Scoring]
-    KW --> SK3[Execute Highest-Score Skill]
-    SK1 & SK2 & SK3 --> EX[Agent Execution]
+    FP -- No --> KW[Keyword Scoring against DOMAIN_KEYWORDS]
+    KW --> SK3[Execute Highest-Score Skill / QuickAgent if no match]
+    SK1 & SK3 --> EX[Agent Execution]
     EX --> RS[Response + Sources]
     RS --> DB[(audit_logs)]
 ```
+
+Note: an `_route_llm()` method for LLM-based intent classification exists in `supervisor_agent.py` but is never called in the live request path — it is not part of this flow today.
 
 ---
 
@@ -149,7 +148,7 @@ sequenceDiagram
     participant MA as MasterAgent
     participant AG as Domain Agent
     participant VDB as pgvector
-    participant LLM as Ollama
+    participant LLM as Configured LLM (Claude/Groq/Ollama)
     participant DB as PostgreSQL
 
     U->>GW: POST /api/chat {message}
@@ -159,8 +158,8 @@ sequenceDiagram
     alt Fast-path match
         MA->>AG: invoke directly
     else No fast-path
-        MA->>LLM: route(message) → domain
-        MA->>AG: invoke(domain)
+        MA->>MA: keyword score against DOMAIN_KEYWORDS
+        MA->>AG: invoke(highest-scoring domain, or QuickAgent)
     end
     AG->>VDB: embed + cosine search (top_k=10)
     AG->>LLM: generate(personality + context + query)
@@ -182,7 +181,7 @@ sequenceDiagram
 | RAG skill (pgvector) | < 3s | < 5s | < 1s |
 | Zoho DB skill | < 2s | < 4s | < 800ms |
 | Document generation | < 8s | < 15s | < 1s |
-| LLM routing overhead | < 500ms | < 1s | N/A |
+| LLM routing overhead | N/A — `_route_llm()` exists but is not invoked in the live routing path | N/A | N/A |
 
 ---
 

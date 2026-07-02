@@ -34,12 +34,12 @@ The following capabilities are implemented and active in the current platform re
 - Attendance records: clock-in/out history and monthly summary via AttendanceAgent
 
 ### 1.4 HR Document Generation
-- 11 document types generated on-demand: Loan Proof, Employment Verification, Experience Letter, Offer Letter, Relieving Letter, NOC Certificate, Bonafide Certificate, Promotion Letter, Address Proof, Internship Certificate, Confirmation Letter, ID Card Request
+- 12 document types generated on-demand: Loan Proof, Employment Verification, Experience Letter, Offer Letter, Relieving Letter, NOC Certificate, Bonafide Certificate, Promotion Letter, Address Proof, Internship Certificate, Confirmation Letter, ID Card Request
 - Multi-turn guided collection of required fields via DocumentAgent
 - Document management and listing via DocumentsPage and `GET /api/documents`
 
 ### 1.5 Email Drafting
-- Structured email composition and refinement using Ollama LLM via EmailAgent
+- Structured email composition and refinement using the configured LLM (Ollama by default; Claude/Groq if configured) via EmailAgent
 - Initiated from chat context (`POST /api/email-agent/from-chat`) or standalone EmailAgentPage
 
 ### 1.6 Escalation Management
@@ -56,18 +56,21 @@ The following capabilities are implemented and active in the current platform re
 - Delivered via OnboardingGuidancePage
 
 ### 1.9 Analytics
-- Usage analytics dashboard for platform operators: active users, daily queries, peak hours, query category distribution, top queries, success/failure rates
-- COO-level metrics dashboard (COODashboard)
-- All data served from `GET /api/analytics/overview`
+- Usage analytics dashboard for platform operators: active users, daily queries, peak hours, query category distribution, top queries, success/failure rates — **accuracy note:** this dashboard (`modules/analytics/`) currently renders hardcoded/mock data and is not yet wired to a backend endpoint
+- COO-level metrics dashboard (COODashboard) — real, backend-driven data
+- Live data (for COODashboard) served from `GET /api/analytics/overview`
 
 ### 1.10 Knowledge Ingestion (Operational Job)
-- SharePoint document ingestion: PDF, DOCX, XLSX, PPTX — hash-based change detection, TextExtractor, chunking (500 tokens, 50 overlap), HuggingFace embedding, pgvector storage
+- SharePoint document ingestion: PDF, DOCX, XLSX, PPTX — hash-based change detection, TextExtractor, chunking (1000 characters, 200-character overlap), HuggingFace embedding, pgvector storage
 - Optional SharePoint site page and list scraping (controlled by feature flags)
 
 ### 1.11 Guardrails and PII
 - Tier 1 static rejection: jailbreak, harmful content, security threats
 - Tier 2 LLM-assisted handling: employee distress signals (empathetic response), scope violations (redirect)
 - PII detection and redaction tracked in `pii_redactions` and `pii_events` tables
+
+### 1.12 Additional Feature Areas (Beyond the Original HR/IT/Admin/PMO/Finance/Org Domain Set)
+The domain sections above (1.2–1.11) describe the original problem scope. The platform has since grown further first-class, in-scope feature areas that are not domain-agent chat features: parking request management, org-wide communications (announcements, events, RSVP, shared calendar), skills analytics, a no-code form/workflow builder (the single largest subsystem in the codebase), COO analytics, and AI tool license tracking. These are documented in full in `README.md` and `10-reference/` rather than restated here — this document's domain-boundary language (Sections 3–4) should not be read as an exhaustive description of everything the platform now does.
 
 ---
 
@@ -88,7 +91,7 @@ The following capabilities are explicitly excluded from this platform.
 | Medical, legal, or compliance advice | Domain agents provide documented policy summaries; no regulated professional advice |
 | Biometric or physical access control | Out of IT domain scope |
 | Direct database mutation by end users | All user-facing writes go through defined API endpoints with audit logging |
-| Third-party SaaS integrations beyond listed stack | Only Azure AD, Zoho, SharePoint, Graph API, Ollama, Tavily are integrated |
+| Third-party SaaS integrations beyond listed stack | Only Azure AD, Zoho, SharePoint, Graph API, Tavily, and the configurable LLM providers (Anthropic Claude, Groq, self-hosted Ollama) are integrated |
 | Mobile native application | Web application only (React 18 + Vite); no iOS/Android native app |
 
 ---
@@ -146,7 +149,7 @@ Each domain agent owns a distinct slice of enterprise knowledge and intent space
 **Routing triggers:** Fast-path regex — attendance, clock-in, clock-out, present, absent
 
 ### 3.9 Document Domain (DocumentAgent)
-**Starts at:** Request and generation of 11 HR document types
+**Starts at:** Request and generation of 12 HR document types
 **Ends at:** Digital signing, official HR approval, archival in document management systems
 **Data source:** Template-driven generation via LLM; no retrieval required
 **Routing triggers:** Fast-path regex — "generate letter", "employment verification", "experience letter"
@@ -181,12 +184,14 @@ Each domain agent owns a distinct slice of enterprise knowledge and intent space
 - **Not in scope:** Graph write to mailbox, calendar write, Teams messaging, SharePoint write
 - **Credentials:** AZURE_TENANT_ID, AZURE_CLIENT_ID
 
-### 4.4 Ollama / LLM (Self-Hosted)
-- **Endpoint:** http://ml01.alignedautomation.com:11434
-- **Model:** gpt-oss (custom model)
-- **Uses:** Intent classification, answer generation, email drafting, document generation, guardrail Tier 2
-- **Not in scope:** External LLM APIs (OpenAI, Anthropic direct), model fine-tuning, model management
-- **Parameters:** temperature 0.1, num_predict 800, num_ctx 2048
+### 4.4 LLM Layer (Configurable: Claude / Groq / Ollama)
+- **Provider selection:** `create_llm()` in `app/agents/working/config.py` selects the active provider by priority — Anthropic Claude, then Groq, then self-hosted Ollama as the default/fallback — controlled by environment flags (`USE_Claude_API_Key`, `USE_Groq_API_Key`, `Use_Ollama_LLM`). This is in scope and implemented today, not a future capability.
+- **Ollama (default/fallback):** Endpoint `http://ml01.alignedautomation.com:11434`, model `gpt-oss` (custom model), parameters temperature 0.1, num_predict 800, num_ctx 2048.
+- **Anthropic Claude (cloud, optional):** default model `claude-sonnet-4-6`.
+- **Groq (cloud, optional):** default model `llama3-70b-8192`.
+- **Uses:** Answer generation, email drafting, document generation, guardrail Tier 2 empathetic/redirect responses. (Note: intent/routing classification is not one of these uses in the current build — see 7.4.)
+- **Not in scope:** Model fine-tuning, model management, and any LLM provider other than Anthropic Claude, Groq, or Ollama.
+- **Boundary implication:** Because the cloud providers are genuinely available via configuration, "self-hosted only" / "no external LLM calls" is a deployment-policy commitment (achieved by leaving `USE_Claude_API_Key` and `USE_Groq_API_Key` disabled), not an inherent guarantee of the platform architecture.
 
 ### 4.5 Tavily (Optional Web Search)
 - **Condition:** Only active when TAVILY_API_KEY environment variable is present
@@ -226,8 +231,8 @@ Each domain agent owns a distinct slice of enterprise knowledge and intent space
 - Audit logs are append-only; no update or delete endpoint exists for `audit_logs`
 
 ### 5.4 Embedding Data Boundaries
-- Embeddings are 384-dimensional vectors (all-MiniLM-L6-v2)
-- Stored in `document_chunks.embedding` column (pgvector vector[384])
+- Embeddings are 768-dimensional vectors (nomic-embed-text-v1.5)
+- Stored in `document_chunks.embedding` column (pgvector vector[768])
 - Cosine similarity threshold: 0.10 (permissive; top 3 returned)
 - FAISS index used as local fallback if pgvector unavailable
 
@@ -277,8 +282,8 @@ Roles and permissions are defined in `frontend/src/config/userConfig.js`.
 
 ### 7.4 AI Routing Boundary (Supervisor Agent)
 - Fast-path regex (no LLM cost) handles: escalations, forms, email, greetings, attendance, employee lookup, document generation
-- LLM-based routing used only when fast-path does not match; timeout fallback to keyword scoring
-- DOMAIN_KEYWORDS dict scoring used as final fallback — no LLM call required
+- When fast-path does not match, routing falls back to `DOMAIN_KEYWORDS` dict scoring — no LLM call required. This is the current final fallback in production.
+- A `_route_llm()` method for LLM-based intent classification exists in `supervisor_agent.py` but is not called anywhere in the live routing path — it is present in the codebase but out of scope for current-state routing behavior. Wiring it in (with a timeout fallback to keyword scoring) is a candidate near-term enhancement, not a shipped boundary today.
 
 ---
 
@@ -334,7 +339,7 @@ graph TD
         SP[SharePoint - Read-only Ingestion]
         ZOHO[Zoho People - Read-only DB]
         AAD[Azure AD - Auth + Graph]
-        OLLAMA[Ollama LLM - ml01]
+        OLLAMA[Configurable LLM - Claude/Groq/Ollama-ml01]
         TAVILY[Tavily Web Search - Optional]
     end
 
@@ -382,7 +387,7 @@ graph TD
 | BD-002 | EmailAgent drafts but does not send | Mail.Send Graph scope introduces significant security and compliance risk; deferred to Phase 2 with explicit approval workflow | 2026-06-07 |
 | BD-003 | Similarity threshold set at 0.10 (permissive) | Initial knowledge base has variable document quality; permissive threshold ensures users receive best available answer rather than "no results" | 2026-06-07 |
 | BD-004 | Tavily web search is optional (feature-flag by env var) | Public internet content may contradict internal policy; made opt-in to prevent uncontrolled knowledge injection | 2026-06-07 |
-| BD-005 | Fast-path regex routing for high-frequency intents | Eliminates LLM cost and latency for deterministic intents (attendance, greetings, document requests); LLM routing reserved for ambiguous queries | 2026-06-07 |
+| BD-005 | Fast-path regex routing for high-frequency intents | Eliminates LLM cost and latency for deterministic intents (attendance, greetings, document requests); ambiguous queries fall back to keyword scoring today. An LLM-based classification method exists in code for ambiguous queries but is not currently invoked from the routing path. | 2026-06-07 |
 | BD-006 | num_ctx capped at 2048, num_predict at 800 | Hardware constraint on ml01; context window and response length are traded off to support concurrent users | 2026-06-07 |
 | BD-007 | Soft-delete only across all platform tables | Regulatory and audit requirements; data destruction requires separate governance-approved process | 2026-06-07 |
 | BD-008 | SharePoint ingestion is batch job, not real-time | Webhook subscription to SharePoint requires additional Azure app registration permissions; deferred to Phase 2 | 2026-06-07 |
@@ -396,7 +401,7 @@ graph TD
 | R-001 | AI / Knowledge | LLM generates plausible but incorrect answer when knowledge base lacks relevant chunks | Medium | High | Similarity threshold + adaptive retry + system prompt uncertainty instruction |
 | R-002 | Zoho / Data | Zoho read replica lag causes stale employee or attendance data | Low | Medium | Display data-as-of timestamp; document known lag to users |
 | R-003 | SharePoint / Ingestion | Outdated documents remain in pgvector after SharePoint deletion if ingestion job fails | Medium | Medium | Hash-based change detection flags DELETED; monitor ingestion job logs |
-| R-004 | Ollama / LLM | ml01 Ollama server unavailable causes all LLM-backed agents to fail | Low | High | Fast-path regex routes cover high-frequency intents without LLM; health check endpoint monitors status |
+| R-004 | LLM Provider | Configured LLM provider unavailable (ml01 Ollama server when Ollama is active; Anthropic/Groq outage when a cloud provider is configured) causes all LLM-backed agents to fail | Low | High | Fast-path regex routes cover high-frequency intents without LLM; health check endpoint monitors status |
 | R-005 | Azure AD / Auth | Token expiry not handled gracefully causes silent auth failures in long sessions | Low | Medium | MSAL browser handles token refresh; backend validates on every request |
 | R-006 | Guardrails / Scope | Adversarial prompts bypass Tier 1 static rules via indirect jailbreak | Low | High | Tier 2 LLM-assisted scope violation check; ongoing red-team testing |
 | R-007 | PII / Data | PII present in user queries stored in messages table before redaction | Medium | High | pii_controller intercepts and redacts before persistence; pii_events audit trail |

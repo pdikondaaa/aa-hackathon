@@ -9,11 +9,11 @@
 
 ## 1. Business Objectives Overview
 
-Aligned Automation is deploying a single, conversational AI assistant to serve every employee across HR, IT, Admin, PMO, Finance, and Organizational Knowledge domains. The platform replaces a fragmented landscape of intranet portals, email chains, and help-desk tickets with one natural-language interface that resolves queries instantly, generates documents on demand, and escalates unresolved issues with full context.
+Aligned Automation is deploying a single, conversational AI assistant to serve every employee across HR, IT, Admin, PMO, Finance, and Organizational Knowledge domains — the original domain set this business case was built around. The platform has since grown additional feature areas beyond this original scope (parking request management, org-wide communications, skills analytics, a no-code form/workflow builder, COO analytics, and AI tool license tracking; see `README.md` for the current inventory). The platform replaces a fragmented landscape of intranet portals, email chains, and help-desk tickets with one natural-language interface that resolves queries instantly, generates documents on demand, and escalates unresolved issues with full context.
 
 The core business objective is **to reduce the time employees spend searching for information and performing routine administrative tasks**, freeing that time for higher-value work and improving measurable satisfaction with internal services.
 
-The assistant operates entirely within Aligned Automation's security perimeter: authentication via Azure AD, data stored in on-premises PostgreSQL (hackathon.alignedautomation.com), and inference served by a self-hosted Ollama instance (ml01.alignedautomation.com). No employee data leaves the organizational boundary.
+The assistant operates within Aligned Automation's security perimeter: authentication via Azure AD and data stored in on-premises PostgreSQL (hackathon.alignedautomation.com). Inference is served by a configurable LLM layer — Anthropic Claude and Groq are supported cloud providers, with a self-hosted Ollama instance (ml01.alignedautomation.com) as the default/fallback when neither cloud provider is enabled. "No employee data leaves the organizational boundary" is accurate only in the Ollama-only configuration; if that guarantee is a business requirement, it must be enforced by deployment policy rather than assumed from the platform's default settings.
 
 ---
 
@@ -49,7 +49,7 @@ Reduce frustration caused by slow internal service responses. Target a 10-point 
 Establish a production-grade, multi-agent RAG platform that Aligned Automation can extend to new domains (PMO, Finance, external client portals) without rebuilding core infrastructure.
 
 **SG-6 — Data-Driven HR and IT Operations**
-The analytics dashboard (COO Dashboard, Analytics Overview) provides leadership with real-time visibility into query volumes, peak hours, domain distribution, and failure rates — enabling resource planning decisions grounded in actual demand data.
+The COO Dashboard provides leadership with real-time, backend-driven visibility into query volumes, peak hours, domain distribution, and failure rates — enabling resource planning decisions grounded in actual demand data. Note: the separate, general-purpose chatbot usage-analytics dashboard (distinct from the COO Dashboard) currently renders mock/hardcoded data rather than live figures, so it does not yet contribute real operational visibility — this is worth tracking as an implementation gap rather than treating both dashboards as equally live today.
 
 ---
 
@@ -57,7 +57,7 @@ The analytics dashboard (COO Dashboard, Analytics Overview) provides leadership 
 
 ### 4.1 HR Domain
 - Provide instant, accurate answers to leave policy, benefits, payroll, and compliance queries sourced from SharePoint-synced policy documents.
-- Automate generation of 11 HR document types (Employment Verification, Experience Letter, Offer Letter, Relieving Letter, NOC Certificate, Bonafide Certificate, Promotion Letter, Address Proof, Internship Certificate, Confirmation Letter, ID Card Request) without HR staff manual drafting.
+- Automate generation of 12 HR document types (Loan Proof, Employment Verification, Experience Letter, Offer Letter, Relieving Letter, NOC Certificate, Bonafide Certificate, Promotion Letter, Address Proof, Internship Certificate, Confirmation Letter, ID Card Request) without HR staff manual drafting.
 - Surface relevant Zoho People data (attendance, allocation) in response to employee self-service queries.
 - Guide new hires through the structured 8-step onboarding flow (Welcome → Profile → Team → IT Access → Documents → Policy → Induction → All Set).
 
@@ -89,7 +89,7 @@ The analytics dashboard (COO Dashboard, Analytics Overview) provides leadership 
 | OE-5 | Mean response time (P95) | Under 8 seconds end-to-end for non-streaming queries |
 | OE-6 | Streaming first-token latency (P95) | Under 2 seconds for SSE stream start |
 | OE-7 | Document generation time | Under 5 minutes per document from query to downloadable PDF |
-| OE-8 | pgvector retrieval latency | Under 300 ms for top-k chunk retrieval (k=3, 384-dim cosine) |
+| OE-8 | pgvector retrieval latency | Under 300 ms for top-k chunk retrieval (k=3, 768-dim cosine) |
 
 ---
 
@@ -128,8 +128,8 @@ Aligned Automation employees currently navigate multiple disconnected systems (S
 A multi-agent AI assistant deployed on Aligned Automation's internal infrastructure. Thirteen specialized agents (MasterAgent supervisor plus 12 domain agents) are orchestrated behind a single chat interface. Knowledge is ingested from SharePoint via a hash-based sync job, embedded into pgvector, and retrieved at query time with cosine similarity search. Authentication and authorization are handled by Azure AD/MSAL with RBAC role enforcement at the frontend.
 
 ### Investment Justification
-- Infrastructure cost is bounded: self-hosted Ollama on ml01, PostgreSQL on existing hackathon.alignedautomation.com, containerized deployment via Docker Compose.
-- No per-query API cost to external LLM providers (gpt-oss model served internally).
+- Infrastructure cost is bounded in the default configuration: self-hosted Ollama on ml01, PostgreSQL on existing hackathon.alignedautomation.com, containerized deployment via Docker Compose.
+- No per-query API cost to external LLM providers when Ollama (gpt-oss, served internally) is the active provider. Note the LLM layer is configurable — if Claude or Groq is enabled instead, per-query cloud API costs apply and should be factored into the cost model.
 - Development investment is a one-time cost amortized across all domain queries for the life of the platform.
 - Marginal cost of adding a new document type or domain agent is low (new agent class + SharePoint ingestion configuration).
 
@@ -141,7 +141,7 @@ A multi-agent AI assistant deployed on Aligned Automation's internal infrastruct
 | Component | Estimated Cost |
 |-----------|---------------|
 | Infrastructure (server, storage, PostgreSQL) | Absorbed by existing hackathon.alignedautomation.com infra |
-| Ollama self-hosted LLM (ml01 server) | Existing ML infrastructure, no incremental per-query cost |
+| LLM inference (Ollama self-hosted on ml01 server, the default configuration) | Existing ML infrastructure, no incremental per-query cost. If Claude or Groq is configured instead, per-query cloud API costs apply and are not reflected in this model. |
 | Engineering maintenance (0.5 FTE equivalent) | Allocated from existing engineering team |
 | SharePoint sync operational overhead | Automated job, near-zero manual effort |
 
@@ -150,7 +150,7 @@ A multi-agent AI assistant deployed on Aligned Automation's internal infrastruct
 |---------|-------------------|-----------------|
 | HR generalist time saved (policy queries) | 40% deflection x estimated 500 HR queries/month x 20 min avg handle time | ~67 hours/month freed |
 | IT help-desk first-contact deflection | 40% deflection x estimated 800 IT tickets/month x 30 min avg handle time | ~160 hours/month freed |
-| HR document generation automation | 11 doc types x estimated 50 requests/month x 45 min avg manual drafting | ~37.5 hours/month freed |
+| HR document generation automation | 12 doc types x estimated 50 requests/month x 45 min avg manual drafting | ~37.5 hours/month freed |
 | New hire onboarding acceleration | 3-day reduction x estimated 10 new hires/month x fully-loaded daily cost | Quantified at hire volume |
 
 ### Payback Period
@@ -202,7 +202,7 @@ graph TD
 - KR-1.3: pgvector knowledge base covers HR, IT, Admin, and Org domains at launch
 
 ### Objective 2: Automate administrative document generation
-- KR-2.1: All 11 HR document types available for self-service generation at launch
+- KR-2.1: All 12 HR document types available for self-service generation at launch
 - KR-2.2: Document generation requests fulfilled in under 5 minutes (P90) by month 1
 - KR-2.3: Zero manual HR drafting required for supported document types by month 3
 
@@ -228,12 +228,12 @@ graph TD
 | Dependency | Type | Owner | Risk if Unavailable |
 |------------|------|--------|---------------------|
 | Azure AD tenant and MSAL configuration | Hard | IT / Azure Admin | Authentication fails; platform unusable |
-| Ollama LLM service at ml01.alignedautomation.com:11434 | Hard | ML Infrastructure | LLM generation unavailable; fast-path regex responses only |
+| Configured LLM provider (Ollama at ml01.alignedautomation.com:11434 by default; Claude or Groq if enabled) | Hard | ML Infrastructure | LLM generation unavailable; fast-path regex responses only |
 | PostgreSQL + pgvector at hackathon.alignedautomation.com | Hard | DB Admin | RAG retrieval fails; no conversation persistence |
 | SharePoint ingestion job (jobs/sharepoint_ingestion/) | Hard | Engineering | Knowledge base goes stale; answers degrade over time |
 | Zoho People read-only PostgreSQL connection | Soft | HR Systems | EmployeeAgent and AttendanceAgent responses unavailable |
 | Microsoft Graph API credentials | Soft | IT / Azure Admin | MS Forms creation and user profile enrichment unavailable |
-| HuggingFace model (all-MiniLM-L6-v2, 384-dim) | Hard | ML Infrastructure | Embedding generation fails; pgvector ingestion and retrieval blocked |
+| HuggingFace model (nomic-embed-text-v1.5, 768-dim) | Hard | ML Infrastructure | Embedding generation fails; pgvector ingestion and retrieval blocked |
 | Tavily API key (optional) | Soft | Engineering | Web search augmentation disabled; no impact on core RAG |
 
 ---
@@ -244,11 +244,11 @@ graph TD
 |---------|-----------------|------------|--------|------------|
 | R-01 | LLM hallucination on sensitive HR/IT policy queries | Medium | High | Similarity threshold filtering (0.10 floor), source citation in responses, user feedback loop for rapid detection |
 | R-02 | SharePoint document ingestion lag causes stale knowledge base | Medium | High | Hash-based change detection runs on schedule; 24-hour SLA target; admin alert on sync failure |
-| R-03 | Ollama self-hosted model unavailability (ml01 downtime) | Low | Critical | Fast-path regex routing continues without LLM; escalation to IT on Ollama service failure |
-| R-04 | Low employee adoption due to change resistance | Medium | High | Guided onboarding flow, manager communication plan, in-app feedback to demonstrate responsiveness |
+| R-03 | Ollama self-hosted model unavailability (ml01 downtime) — applies when Ollama is the configured provider; a cloud-provider configuration (Claude/Groq) shifts this risk to the respective vendor's availability | Low | Critical | Fast-path regex routing continues without LLM; escalation to IT on Ollama service failure |
+| R-04 | Low employee adoption due to change resistance | Medium | High | Guided onboarding flow, manager communication plan, per-message thumbs-up/down feedback to demonstrate responsiveness (note: the separate in-app suggestion/bug-report form currently saves only to browser localStorage and does not reach any team, so it should not be relied on as a responsiveness channel until it is wired to the backend) |
 | R-05 | PII exposure via unredacted content in chat logs | Low | Critical | pii_controller.py and pii_service.py enforce redaction at write time; pii_events audit table captures all detections |
 | R-06 | Scope creep into unsupported domains without knowledge base | High | Medium | MasterAgent guardrails redirect out-of-scope queries; DOMAIN_KEYWORDS scoring limits routing to indexed domains |
 | R-07 | Azure AD token expiry causing mid-session authentication failures | Low | Medium | MSAL token refresh handled client-side; 30-second API timeout with 3-retry policy in apiConfig.js |
-| R-08 | pgvector retrieval quality degrades as chunk volume grows | Low | Medium | Similarity threshold review at 6 months; index maintenance on document_chunks table; chunk size (500 tokens, 50 overlap) tuned at ingest |
+| R-08 | pgvector retrieval quality degrades as chunk volume grows | Low | Medium | Similarity threshold review at 6 months; index maintenance on document_chunks table; chunk size (1000 characters, 200-character overlap) tuned at ingest |
 | R-09 | HR document generation produces legally inaccurate content | Medium | High | DocumentAgent uses structured templates with HR-approved field mapping; generated documents flagged for HR review before issuance |
 | R-10 | Analytics data insufficient to demonstrate ROI to leadership | Low | Medium | Audit_logs and feedback tables capture all interactions from day one; COO Dashboard aggregates metrics automatically |

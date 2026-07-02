@@ -13,7 +13,7 @@
 
 Aligned Automation operates as a technology-first organization whose workforce relies on timely, accurate access to HR policies, IT support, administrative procedures, project information, and organizational knowledge. Prior to the AA-Hackathon Enterprise Assistant, this information was distributed across SharePoint sites, email threads, PDF handbooks, Zoho People records, and tribal knowledge held by individual department members. Employees spent measurable hours each week locating information that should be immediately accessible, and support staff in HR, IT, and Administration absorbed repetitive inquiry load that consumed capacity better directed at strategic work.
 
-The AA-Hackathon Enterprise Assistant is a single conversational AI platform that unifies access to all organizational knowledge domains through a natural-language interface. Built on FastAPI, PostgreSQL with pgvector, LangChain, and a self-hosted Ollama LLM (gpt-oss at ml01.alignedautomation.com), the system routes employee queries through a supervisor agent to thirteen specialized domain agents, retrieves semantically relevant content from a pgvector knowledge base populated by SharePoint ingestion, and returns grounded, cited responses within seconds. This document specifies the problem the platform is designed to solve, the scope of the solution, the constraints under which it operates, and the criteria by which its success is measured.
+The AA-Hackathon Enterprise Assistant is a single conversational AI platform that unifies access to all organizational knowledge domains through a natural-language interface. Built on FastAPI, PostgreSQL with pgvector, LangChain, and a configurable LLM layer (Anthropic Claude and Groq are supported cloud providers, with self-hosted Ollama/gpt-oss at ml01.alignedautomation.com as the default/fallback when neither cloud provider is enabled), the system routes employee queries through a supervisor agent to thirteen specialized domain agents, retrieves semantically relevant content from a pgvector knowledge base populated by SharePoint ingestion, and returns grounded, cited responses within seconds. This document specifies the problem the platform is designed to solve, the scope of the solution, the constraints under which it operates, and the criteria by which its success is measured.
 
 ---
 
@@ -65,14 +65,14 @@ Employees at Aligned Automation cannot efficiently self-serve for informational 
 | Repeat HR queries absorbed per week (pre-platform) | 15–25 |
 | IT password/access queries resolvable by self-service | ~60% of total IT tickets |
 | Onboarding steps requiring synchronous HR involvement | 5 of 8 steps |
-| Documents generatable manually vs. automated | 11 document types requiring HR staff time |
+| Documents generatable manually vs. automated | 12 document types requiring HR staff time |
 | Employee lookup queries routed through HR instead of directory | Significant fraction of weekly directory queries |
 
 ### 3.3 Secondary Problems
 
 - **No audit trail for informal guidance:** Policy interpretations given via email or chat are not logged, creating compliance exposure. The platform's `audit_logs` table captures every query, response, and escalation action with user, action, entity, and status.
 - **PII mishandling risk:** Unstructured communication channels carry employee personal data without systematic detection or redaction. The platform implements a `pii_controller.py` and `pii_service.py` with `pii_redactions` and `pii_events` tables.
-- **No feedback loop on information quality:** HR and IT have no mechanism to know which policy answers employees find inadequate. The `feedback` table (rating INT[-1,0,1], comment TEXT) and AnalyticsDashboard close this loop.
+- **No feedback loop on information quality:** HR and IT have no mechanism to know which policy answers employees find inadequate. The `feedback` table (rating INT[-1,0,1], comment TEXT) closes this loop directly; AnalyticsDashboard is intended to visualize it but currently renders mock data rather than live feedback figures (see Section 5.6).
 - **Escalation black holes:** Employee-submitted escalations via email have no status visibility. The `escalations` table with priority and status fields, surfaced through EscalationDrawer.jsx, provides tracking.
 
 ---
@@ -128,18 +128,18 @@ A single chat interface (ChatWindow.jsx) where employees type natural-language q
 
 ### 5.2 Intelligent Multi-Domain Routing
 
-A supervisor agent (MasterAgent in supervisor_agent.py) applies fast-path regex detection for high-confidence intents (escalations, forms, email, greetings, attendance, employee lookup, documents) without LLM invocation, reducing latency and compute cost. When intent is ambiguous, the supervisor calls the Ollama LLM (gpt-oss) for classification with a timeout fallback to keyword scoring via DOMAIN_KEYWORDS. Queries are dispatched to the appropriate domain agent from a set of thirteen agents covering HR, IT, Admin, PMO, Finance, Org, Employee, Attendance, Document, Email, Escalation, Quick, and Funny domains.
+A supervisor agent (MasterAgent in supervisor_agent.py) applies fast-path regex detection for high-confidence intents (escalations, forms, email, greetings, attendance, employee lookup, documents) without LLM invocation, reducing latency and compute cost. When intent is ambiguous, the supervisor falls back to keyword scoring via DOMAIN_KEYWORDS. A `_route_llm()` method for LLM-based intent classification exists in the same file but is not currently called anywhere in the routing path — in the live build there are two routing tiers (regex fast-paths, then keyword scoring), not a regex-then-LLM-then-keyword chain. Queries are dispatched to the appropriate domain agent from a set of thirteen agents covering HR, IT, Admin, PMO, Finance, Org, Employee, Attendance, Document, Email, Escalation, Quick, and Funny domains.
 
 ### 5.3 Semantically Retrieved, Grounded Answers
 
-Domain agents (HRAgent, ITAgent, AdminAgent, PMOAgent, FinanceAgent, OrgAgent) extend base_deep_agent.py, which executes a parallel retrieval pipeline: pgvector cosine similarity search on 384-dimensional embeddings stored in the `document_chunks` table, FAISS local fallback, user memory from MarkdownStore, and optional Tavily web search. The similarity threshold is set at 0.10 to include weak matches, returning the top 3 chunks with scores. LLM generation uses retrieved context plus a domain-specific personality prompt.
+Domain agents (HRAgent, ITAgent, AdminAgent, PMOAgent, FinanceAgent, OrgAgent) extend base_deep_agent.py, which executes a parallel retrieval pipeline: pgvector cosine similarity search on 768-dimensional embeddings stored in the `document_chunks` table, FAISS local fallback, user memory from MarkdownStore, and optional Tavily web search. The similarity threshold is set at 0.10 to include weak matches, returning the top 3 chunks with scores. LLM generation uses retrieved context plus a domain-specific personality prompt.
 
 ### 5.4 Structured Self-Service Transactions
 
 Beyond informational queries, the platform enables transactional self-service:
-- **HR Document Generation:** 11 document types generatable through DocumentAgent via a multi-turn conversation flow, resulting in ready-to-use documents without HR staff involvement.
+- **HR Document Generation:** 12 document types generatable through DocumentAgent via a multi-turn conversation flow, resulting in ready-to-use documents without HR staff involvement.
 - **Escalation Submission:** Employees submit structured escalations through EscalationDrawer.jsx; all escalations are persisted in the `escalations` table with type, subject, priority, and status, and are trackable.
-- **Email Drafting:** EmailAgent assists employees in drafting and refining professional emails via Ollama, accessible through EmailAgentPage.jsx.
+- **Email Drafting:** EmailAgent assists employees in drafting and refining professional emails via the configured LLM (Ollama by default; Claude/Groq if configured), accessible through EmailAgentPage.jsx.
 - **Microsoft Forms Creation:** FormsDrawer.jsx enables creation of Microsoft Forms via Graph API without leaving the assistant.
 - **Attendance Queries:** AttendanceAgent connects to Zoho People read-only PostgreSQL to return clock-in/out records and monthly summaries.
 - **Employee Directory:** EmployeeAgent answers directory and self-service queries directly from Zoho People structured data.
@@ -153,9 +153,9 @@ Beyond informational queries, the platform enables transactional self-service:
 
 ### 5.6 Observable and Continuously Improving
 
-- AnalyticsDashboard.jsx provides real-time usage analytics: active users, daily query volume, peak hours, query type distribution, success/failure rates, top queries, and recent activities.
-- COODashboard.jsx surfaces leadership-level metrics.
-- The feedback loop (rating INT[-1,0,1] per message) feeds into content quality improvement and SharePoint ingestion prioritization.
+- AnalyticsDashboard.jsx is designed to provide real-time usage analytics: active users, daily query volume, peak hours, query type distribution, success/failure rates, top queries, and recent activities. **Accuracy note:** as of this writing, this dashboard's frontend (`modules/analytics/`) is wired to hardcoded/mock data (`analyticsApi.js` returns fixed constants) rather than a live backend endpoint — the numbers it displays are not yet real usage data. This is distinct from COODashboard.jsx, below, which is backend-driven.
+- COODashboard.jsx surfaces leadership-level metrics and is backed by real data.
+- The feedback loop (rating INT[-1,0,1] per message) feeds into content quality improvement and SharePoint ingestion prioritization. This per-message thumbs-up/down feedback is genuinely backend-persisted today, independent of the AnalyticsDashboard mock-data caveat above.
 
 ---
 
@@ -165,7 +165,7 @@ Beyond informational queries, the platform enables transactional self-service:
 
 | Area | Coverage |
 |---|---|
-| HR | Leave, benefits, payroll, HR policies, document generation (11 types), onboarding guidance |
+| HR | Leave, benefits, payroll, HR policies, document generation (12 types), onboarding guidance |
 | IT | Technical support, VPN, passwords, software access, provisioning guidance |
 | Administration | Travel, facilities, parking, office supplies, admin procedures |
 | PMO | Project queries, milestone status, risk information, project allocation |
@@ -173,13 +173,15 @@ Beyond informational queries, the platform enables transactional self-service:
 | Organization | Company info, culture, mission, org structure |
 | Employee Self-Service | Directory lookup, attendance records, personal profile |
 | Escalations | Structured submission, tracking, priority assignment |
-| Document Generation | 11 HR document types via multi-turn conversation |
-| Email Drafting | Drafting and refinement via Ollama |
+| Document Generation | 12 HR document types via multi-turn conversation |
+| Email Drafting | Drafting and refinement via the configured LLM (Ollama by default; Claude/Groq if configured) |
 | Microsoft Forms | Creation via Graph API |
 | Analytics | Usage, adoption, query patterns, feedback analysis |
 | Onboarding | 8-step guided flow (Welcome, Profile, Team, ITAccess, Documents, Policy, Induction, AllSet) |
 | Security | Azure AD SSO, JWT, PII detection, guardrails, audit logging |
 | Knowledge Ingestion | SharePoint sync (PDF, DOCX, XLSX, PPTX), hash-based change detection, chunking, embedding, pgvector storage |
+
+This table reflects the original problem framing (HR/IT/Admin/PMO/Finance/Org self-service). The platform has since grown additional feature areas beyond this original domain set — parking request management, org-wide communications (announcements, events, RSVP, shared calendar), skills analytics, a no-code form/workflow builder, COO analytics, and AI tool license tracking — which are covered in `README.md` and `10-reference/` rather than restated here.
 
 ### 6.2 Out of Scope
 
@@ -196,8 +198,8 @@ Beyond informational queries, the platform enables transactional self-service:
 
 ### 7.1 Technical Constraints
 
-- **LLM:** Self-hosted Ollama at ml01.alignedautomation.com:11434, model gpt-oss. No external LLM API calls for core generation. Temperature 0.1, num_predict 800 tokens, context window 2048 tokens. Latency and throughput are bounded by this single GPU host.
-- **Embedding Dimension:** 384 (all-MiniLM-L6-v2 / nomic-embed-text). All document_chunks vectors are 384-dimensional; schema changes require re-embedding the entire corpus.
+- **LLM:** The LLM provider is selected at startup by priority — Anthropic Claude, then Groq, then self-hosted Ollama at ml01.alignedautomation.com:11434 (model gpt-oss) as the default/fallback when neither cloud provider is enabled via environment flags. "No external LLM API calls for core generation" is therefore true only in the Ollama-only configuration, not as an architectural guarantee of the shipped code. Ollama parameters: temperature 0.1, num_predict 800 tokens, context window 2048 tokens. When Ollama is the active provider, latency and throughput are bounded by this single GPU host.
+- **Embedding Dimension:** 768 (nomic-embed-text-v1.5 / nomic-embed-text). All document_chunks vectors are 768-dimensional; schema changes require re-embedding the entire corpus.
 - **Database:** PostgreSQL 16 + pgvector at hackathon.alignedautomation.com:5432, database `squadrons`. Connection pool min=1, max=8 (ThreadedConnectionPool). Peak concurrent load is bounded by this pool.
 - **Zoho Integration:** Read-only access to Zoho People PostgreSQL replica. No write operations.
 - **SharePoint Ingestion:** Batch job, not real-time. Knowledge freshness depends on ingestion job schedule. Hash-based change detection prevents redundant re-processing but introduces a lag between document update and retrieval availability.
@@ -206,7 +208,7 @@ Beyond informational queries, the platform enables transactional self-service:
 ### 7.2 Organizational Constraints
 
 - **Authentication:** All users must authenticate via Azure AD (tenant configured via AZURE_TENANT_ID, AZURE_CLIENT_ID). Guest or unauthenticated access is not supported.
-- **Data Residency:** All persistent data (conversations, messages, feedback, escalations, document chunks, audit logs) resides in the PostgreSQL instance at hackathon.alignedautomation.com. No employee data transits to external LLM providers.
+- **Data Residency:** All persistent data (conversations, messages, feedback, escalations, document chunks, audit logs) resides in the PostgreSQL instance at hackathon.alignedautomation.com. Whether employee query/document content transits to an external LLM provider depends on which LLM is configured (see 7.1) — this is true when Ollama is selected, but not when Claude or Groq is the active provider. Data residency for LLM inference is a configuration/policy commitment, not an inherent property of the codebase.
 - **RBAC:** User roles and permissions are defined in userConfig.js. Feature access (e.g., COO analytics dashboard) is role-gated.
 
 ### 7.3 Assumptions
@@ -214,7 +216,7 @@ Beyond informational queries, the platform enables transactional self-service:
 - SharePoint is the authoritative source for policy and procedural documents. Documents ingested from SharePoint are treated as ground truth for RAG retrieval.
 - The Zoho People read replica is consistent with the production Zoho database within a reasonable replication lag.
 - Employees have valid Azure AD accounts and can authenticate via MSAL browser flow.
-- The Ollama host (ml01.alignedautomation.com) is available with sufficient GPU capacity to serve concurrent inference requests. The supervisor agent's fast-path routing reduces LLM invocations for common intents, lowering this dependency.
+- When Ollama is the configured provider (the default), the ml01.alignedautomation.com host is available with sufficient GPU capacity to serve concurrent inference requests; if Claude or Groq is configured instead, this assumption shifts to the respective vendor's API availability and rate limits. The supervisor agent's fast-path routing reduces LLM invocations for common intents, lowering this dependency regardless of provider.
 - Tavily web search is optional; the platform degrades gracefully to pgvector + FAISS retrieval if the Tavily API key is absent.
 
 ---
@@ -227,7 +229,7 @@ Beyond informational queries, the platform enables transactional self-service:
 |---|---|
 | Query routing accuracy | Supervisor routes query to correct domain agent in >= 90% of test cases across all 13 agent types |
 | Retrieval relevance | pgvector search returns at least one relevant chunk (similarity >= 0.10) for >= 85% of domain queries with content in the knowledge base |
-| HR document generation | All 11 document types generatable end-to-end through DocumentAgent multi-turn flow without error |
+| HR document generation | All 12 document types generatable end-to-end through DocumentAgent multi-turn flow without error |
 | Escalation submission | Escalations persisted to `escalations` table with correct type, priority, status in 100% of submissions |
 | Attendance queries | AttendanceAgent returns correct clock-in/out and monthly summary data from Zoho People for authenticated user |
 | Onboarding completion | All 8 onboarding steps render and function correctly for new joinees |
@@ -266,7 +268,7 @@ Beyond informational queries, the platform enables transactional self-service:
 
 ### 9.2 HR Team
 
-**Current pain:** 15–25 repeat informational queries per week, manual document generation consuming 30–60 minutes per document across 11 types, onboarding coordination across 5 of 8 steps.  
+**Current pain:** 15–25 repeat informational queries per week, manual document generation consuming 30–60 minutes per document across 12 types, onboarding coordination across 5 of 8 steps.  
 **Future state:** Informational query deflection to the assistant, document generation automated end-to-end, onboarding self-guided through 8-step flow.  
 **Impact:** HR staff capacity redirected from transactional to strategic work. Estimated 10–20 hours per week recovered for a typical HR team of 3–5 staff.
 
@@ -297,7 +299,7 @@ Beyond informational queries, the platform enables transactional self-service:
 ### 9.7 Leadership / COO
 
 **Current pain:** No unified view of organizational knowledge utilization, support load, or self-service effectiveness.  
-**Future state:** COODashboard.jsx and AnalyticsDashboard.jsx provide real-time metrics on usage, query types, success rates, active users, and top queries.  
+**Future state:** COODashboard.jsx provides real-time metrics on usage, query types, success rates, active users, and top queries today; AnalyticsDashboard.jsx is designed to do the same but currently displays mock data pending backend wiring (see Section 5.6).  
 **Impact:** Data-driven decisions on knowledge base investment, staffing, and policy communication.
 
 ---
@@ -314,27 +316,27 @@ graph TD
         P5[No audit trail for<br/>informal guidance]
         P6[PII mishandling<br/>in unstructured channels]
         P7[Escalation black holes<br/>no status visibility]
-        P8[Document generation<br/>30-60 min per doc<br/>manual, 11 types]
+        P8[Document generation<br/>30-60 min per doc<br/>manual, 12 types]
         P9[No feedback loop<br/>on information quality]
     end
 
     subgraph Solutions["SOLUTIONS (Platform Components)"]
         S1[SharePoint Ingestion Job<br/>PDF/DOCX/XLSX/PPTX<br/>hash-based sync<br/>pgvector storage]
-        S2[HRAgent + DocumentAgent<br/>pgvector RAG retrieval<br/>11 doc types automated]
+        S2[HRAgent + DocumentAgent<br/>pgvector RAG retrieval<br/>12 doc types automated]
         S3[ITAgent<br/>pgvector retrieval<br/>policy-grounded answers]
         S4[OnboardingGuidancePage<br/>8-step guided flow<br/>self-service completion]
         S5[audit_logs table<br/>100% API action capture<br/>user, action, entity, status]
         S6[pii_controller.py<br/>pii_service.py<br/>pii_redactions table]
         S7[EscalationAgent<br/>EscalationDrawer.jsx<br/>escalations table<br/>priority + status tracking]
-        S8[DocumentAgent<br/>Multi-turn generation<br/>11 HR document types]
+        S8[DocumentAgent<br/>Multi-turn generation<br/>12 HR document types]
         S9[feedback table<br/>AnalyticsDashboard<br/>COODashboard]
     end
 
     subgraph Enablers["CORE ENABLERS"]
-        E1[MasterAgent Supervisor<br/>Fast-path regex + LLM routing<br/>13 domain agents]
-        E2[pgvector cosine search<br/>384-dim embeddings<br/>similarity threshold 0.10]
+        E1[MasterAgent Supervisor<br/>Fast-path regex + keyword scoring<br/>13 domain agents]
+        E2[pgvector cosine search<br/>768-dim embeddings<br/>similarity threshold 0.10]
         E3[Azure AD SSO<br/>JWT auth<br/>RBAC via userConfig.js]
-        E4[Ollama gpt-oss<br/>ml01.alignedautomation.com<br/>self-hosted, no data egress]
+        E4[Configurable LLM<br/>Claude / Groq / Ollama gpt-oss ml01<br/>self-hosted is default, not exclusive]
         E5[Guardrails Tier 1 + Tier 2<br/>jailbreak rejection<br/>distress + scope handling]
     end
 
@@ -366,7 +368,7 @@ graph TD
 | pgvector knowledge base staleness if SharePoint ingestion job fails | Medium | Medium | Hash-based change detection with re-runnable idempotent ingestion. Alerting on job failure. |
 | Context window (2048 tokens) overflow on long conversations | Medium | Medium | Top-3 chunk retrieval limit; memory summarization via MarkdownStore; conversation history truncation. |
 | Connection pool exhaustion (max=8) under concurrent load | Low | High | Pool monitoring; scale max connections with load testing results; queue requests rather than fail. |
-| Embedding model drift if all-MiniLM-L6-v2 is updated | Low | High | Pin embedding model version; re-embed corpus on intentional upgrade only. |
+| Embedding model drift if nomic-embed-text-v1.5 is updated | Low | High | Pin embedding model version; re-embed corpus on intentional upgrade only. |
 | FAISS fallback returning lower-quality results than pgvector | Medium | Low | FAISS used only when pgvector returns zero results; similarity threshold applied consistently. |
 
 ### 11.2 Organizational Risks
@@ -395,7 +397,7 @@ graph TD
 1. **Load test the Ollama host** with 20 concurrent inference requests representing realistic query distribution. Establish baseline p95 latency and identify throughput ceiling before launch.
 2. **Run first full SharePoint ingestion** and validate document chunk coverage across all HR, IT, Admin, Finance, PMO, and Org document categories. Identify coverage gaps and escalate missing documents to document owners.
 3. **Execute PII red-team test suite** against the chat interface covering employee names, employee IDs, bank details, and health information to validate pii_controller detection rates meet the >= 95% threshold.
-4. **Validate all 11 HR document types** end-to-end through DocumentAgent with realistic employee data, confirming output formatting, field population, and delivery mechanism.
+4. **Validate all 12 HR document types** end-to-end through DocumentAgent with realistic employee data, confirming output formatting, field population, and delivery mechanism.
 5. **Confirm RBAC gatekeeping** on COODashboard.jsx and AnalyticsDashboard.jsx using test accounts at each permission level defined in userConfig.js.
 
 ### 12.2 Near-Term (First 30 Days Post-Launch)
@@ -410,7 +412,7 @@ graph TD
 10. **Expand embedding corpus** based on analytics data showing high-frequency queries returning low-similarity results (below 0.10 threshold). These indicate knowledge gaps in SharePoint that should be addressed by document owners.
 11. **Evaluate context window expansion.** If Ollama gpt-oss model supports higher num_ctx, increase from 2048 to allow more conversation history and retrieved context per call, improving multi-turn conversation quality.
 12. **Instrument adoption metrics against success criteria.** At day 60, compare active users / total headcount against the 40% target and HR/IT query deflection against the 50%/40% targets respectively. Report findings to leadership via COODashboard.
-13. **Introduce A/B testing for routing.** Use the AnalyticsDashboard's query type distribution to identify domains where LLM routing is invoked most frequently, and invest in additional fast-path regex rules to reduce LLM routing latency for those intents.
+13. **Introduce A/B testing for routing.** Use query type distribution data to identify domains where the keyword-scoring fallback is invoked most frequently, and invest in additional fast-path regex rules to reduce reliance on that fallback for those intents. Note: AnalyticsDashboard.jsx currently displays mock data (see Section 5.6), so this analysis should be sourced from `messages`/`audit_logs` directly, or performed after the dashboard is wired to a live backend endpoint. (Activating the dormant `_route_llm()` classification path is a separate, larger initiative — see Section 7 recommendations in the vision document.)
 14. **Review and expand guardrails** based on any Tier 1 or Tier 2 trigger logs from the first 90 days of production traffic. Refine distress-signal detection and scope-violation patterns with real observed inputs.
 
 ---

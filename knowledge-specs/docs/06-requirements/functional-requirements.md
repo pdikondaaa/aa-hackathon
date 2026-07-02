@@ -206,7 +206,7 @@ This document specifies all functional requirements for the AURA platform, organ
 
 ### FR-HR-005 — HR Policy Lookup via pgvector RAG
 **Priority:** P0  
-**Description:** All HR queries use the two-stage RAG pipeline: (1) embed query using `all-MiniLM-L6-v2` (384-dim), (2) cosine similarity search via `pgvector` with `top_k=10`, (3) supplement with local FAISS/keyword KB if pgvector returns empty, (4) single LLM generation with retrieved context. Retry: if pgvector returns no results, simplify the query and retry once.  
+**Description:** All HR queries use the two-stage RAG pipeline: (1) embed query using `nomic-embed-text-v1.5` (768-dim), (2) cosine similarity search via `pgvector` with `top_k=10`, (3) supplement with local FAISS/keyword KB if pgvector returns empty, (4) single LLM generation with retrieved context. Retry: if pgvector returns no results, simplify the query and retry once.  
 **Acceptance Criteria:**
 - Retrieval returns ≥1 chunk for common policy queries
 - Adaptive retry on empty result before LLM generation
@@ -603,20 +603,20 @@ This document specifies all functional requirements for the AURA platform, organ
 
 ### FR-KM-002 — Text Chunking
 **Priority:** P0  
-**Description:** Ingested documents are chunked into 500-token segments with 50-token overlap using a recursive text splitter. Each chunk stores `file_name`, `source_url`, `chunk_index`, and `chunk_text`.  
+**Description:** Ingested documents are chunked into 1000-character segments with 200-character overlap using a recursive text splitter. Each chunk stores `file_name`, `source_url`, `chunk_index`, and `chunk_text`.  
 **Acceptance Criteria:**
-- Chunk size 500 tokens with 50 token overlap
+- Chunk size 1000 characters with 50 token overlap
 - Each chunk linked to parent document
 - Source URL preserved for citation
 - Chunk index maintained for ordering
 
 ### FR-KM-003 — Embedding Generation
 **Priority:** P0  
-**Description:** Each chunk is embedded using `all-MiniLM-L6-v2` (384-dimensional vectors) via LangChain HuggingFace embeddings. Embeddings are stored in the `document_chunks.embedding` column typed as `vector(384)`.  
+**Description:** Each chunk is embedded using `nomic-embed-text-v1.5` (768-dimensional vectors) via LangChain HuggingFace embeddings. Embeddings are stored in the `document_chunks.embedding` column typed as `vector(768)`.  
 **Acceptance Criteria:**
-- Embedding model: `all-MiniLM-L6-v2`, 384 dimensions
-- Embedding stored as pgvector `vector(384)` type
-- Embedding generation completes without truncation for 500-token chunks
+- Embedding model: `nomic-embed-text-v1.5`, 768 dimensions
+- Embedding stored as pgvector `vector(768)` type
+- Embedding generation completes without truncation for 1000-character chunks
 - Model loaded once per process via `@lru_cache`
 
 ### FR-KM-004 — pgvector Similarity Search

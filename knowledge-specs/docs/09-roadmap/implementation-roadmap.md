@@ -127,7 +127,7 @@ Phase 1 addresses the highest-impact gaps identified in the current-state assess
 **Scope:**
 - Implement BM25 scorer over document_chunks using PostgreSQL full-text search (tsvector/tsquery)
 - Combine BM25 score and cosine similarity with configurable alpha weight
-- Add cross-encoder re-ranker (HuggingFace ms-marco-MiniLM-L-6-v2) for top-20 candidates
+- Add cross-encoder re-ranker (HuggingFace ms-marco-nomic-embed-text-v1.5-L-6-v2) for top-20 candidates
 - Expose `search_strategy` parameter in retriever (default: hybrid)
 - A/B test against pure pgvector baseline
 

@@ -66,7 +66,7 @@ The Organization entity represents Aligned Automation as a legal and operational
 | industry | Professional Services / Intelligent Automation |
 | headquarters | India |
 | identity provider | Azure Active Directory (tenant-scoped) |
-| primary LLM host | ml01.alignedautomation.com |
+| LLM provider | Configurable by priority — Anthropic Claude, then Groq, then self-hosted Ollama at ml01.alignedautomation.com as the default/fallback (env flags in `agents/working/config.py`) |
 | HR system | Zoho People |
 | document repository | SharePoint |
 | internal assistant | AA-Hackathon Enterprise Assistant |
@@ -157,7 +157,7 @@ Announcements represent time-bound, organization-wide or department-scoped commu
 
 ### Retrieval Behavior
 
-Announcements are ingested from SharePoint pages and site lists during the scheduled ingestion job. The scraping pipeline (controlled by SCRAPE_PAGES_ENABLED / SCRAPE_LISTS_ENABLED) extracts announcement content, applies chunking (500 tokens, 50 overlap), and stores embeddings in the document_chunks table. OrgAgent and QuickAgent retrieve announcement content via pgvector similarity search when employees ask about recent company news, policy updates, or upcoming events.
+Announcements are ingested from SharePoint pages and site lists during the scheduled ingestion job. The scraping pipeline (controlled by SCRAPE_PAGES_ENABLED / SCRAPE_LISTS_ENABLED) extracts announcement content, applies chunking (1000 characters, 50 overlap), and stores embeddings in the document_chunks table. OrgAgent and QuickAgent retrieve announcement content via pgvector similarity search when employees ask about recent company news, policy updates, or upcoming events.
 
 ---
 
@@ -209,7 +209,7 @@ The organizational mission and vision are stored as fixed knowledge artifacts in
 
 ### Cultural Knowledge Retrieval
 
-Cultural content is embedded with the same all-MiniLM-L6-v2 model (384 dimensions) as all other documents. Because cultural statements tend to be high-level and abstract, the similarity threshold (0.10) is sufficiently permissive to surface relevant chunks even when employee phrasing diverges from formal document language. OrgAgent applies no domain-specific tag filtering for culture queries — it performs an open retrieval across the full knowledge corpus with a culture-aware system prompt.
+Cultural content is embedded with the same nomic-embed-text-v1.5 model (768 dimensions) as all other documents. Because cultural statements tend to be high-level and abstract, the similarity threshold (0.10) is sufficiently permissive to surface relevant chunks even when employee phrasing diverges from formal document language. OrgAgent applies no domain-specific tag filtering for culture queries — it performs an open retrieval across the full knowledge corpus with a culture-aware system prompt.
 
 ---
 
@@ -448,7 +448,7 @@ SharePoint is the primary document repository for organizational knowledge conte
 
 - **Supported formats:** PDF, DOCX, XLSX, PPTX
 - **Change detection:** SHA-256 hash comparison (NEW / CHANGED / DELETED states)
-- **Processing pipeline:** TextExtractor → TextChunker (500 tokens, 50 overlap) → HuggingFace embedder (all-MiniLM-L6-v2, 384 dimensions) → pgvector upsert
+- **Processing pipeline:** TextExtractor → TextChunker (1000 characters, 50 overlap) → HuggingFace embedder (nomic-embed-text-v1.5, 768 dimensions) → pgvector upsert
 - **Authentication:** Azure AD application credentials (SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET)
 - **Site scope:** Controlled by SHAREPOINT_SITE_PATH environment variable
 - **Optional web scraping:** SharePoint site pages (SCRAPE_PAGES_ENABLED) and list items (SCRAPE_LISTS_ENABLED)
@@ -480,10 +480,10 @@ pgvector is the internal vector store that indexes all document chunks from Shar
 - **Host:** hackathon.alignedautomation.com:5432
 - **Database:** squadrons
 - **Extension:** pgvector (pg16)
-- **Vector dimension:** 384
+- **Vector dimension:** 768
 - **Distance metric:** cosine (<=> operator)
 - **Similarity threshold:** 0.10 (permissive — includes weak matches, keeps top 3)
-- **Key tables:** documents, document_chunks (embedding vector[384])
+- **Key tables:** documents, document_chunks (embedding vector[768])
 
 ---
 
@@ -681,7 +681,7 @@ Extend the Policy Entity with retention_period_months and archival_action attrib
 
 ### FDE-10: Multi-Language Organization Knowledge
 
-Index organizational knowledge (mission statement, values, key policies, leadership profiles) in multiple languages by embedding translated versions using the multilingual-capable paraphrase-multilingual-MiniLM-L12-v2 model (384 dimensions — compatible with the existing pgvector schema). Tag multilingual chunks with a language field in metadata JSONB. OrgAgent detects query language and retrieves language-matched chunks first, falling back to English chunks when no language match is found. This serves Aligned Automation employees whose primary working language is not English without requiring separate knowledge bases per language.
+Index organizational knowledge (mission statement, values, key policies, leadership profiles) in multiple languages by embedding translated versions using the multilingual-capable paraphrase-multilingual-nomic-embed-text-v1.5-L12-v2 model (768 dimensions — compatible with the existing pgvector schema). Tag multilingual chunks with a language field in metadata JSONB. OrgAgent detects query language and retrieves language-matched chunks first, falling back to English chunks when no language match is found. This serves Aligned Automation employees whose primary working language is not English without requiring separate knowledge bases per language.
 
 ---
 

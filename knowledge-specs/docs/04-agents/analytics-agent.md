@@ -1,19 +1,35 @@
 # Analytics Service Specification
-# AA-Hackathon Enterprise AI Platform — Aligned Automation
-# Document Version: 1.0 | Last Updated: 2026-06-07
-# Source Files: backend/services/analytics_service.py,
-#               backend/controllers/analytics.py,
-#               backend/controllers/coo_analytics.py
-# Frontend: frontend/src/pages/AnalyticsDashboard.jsx
+# AURA (AA-Hackathon Enterprise Assistant) — Aligned Automation
+# Document Version: 1.1 — corrected against live codebase | Last Updated: 2026-07-02
+# Real backend source: apps/api-gateway/app/api/controllers/coo_analytics_controller.py,
+#                      apps/api-gateway/app/api/services/coo_analytics_service.py
+# Frontend: apps/web-ui/src/modules/coo-analytics/ (real), apps/web-ui/src/modules/analytics/ (mock)
+
+> **Accuracy note (2026-07-02):** A code audit found that the sections below describe a fully
+> implemented, backend-driven "chatbot usage analytics" service — event hooks, an async write queue,
+> `conversations`/`messages`/`feedback` aggregation endpoints, a 10-component dashboard, etc. **This
+> does not match the code for the general chatbot usage dashboard.** The verified fact is: the
+> chatbot usage analytics dashboard (`apps/web-ui/src/modules/analytics/`) is **100% mock data** —
+> `analyticsApi.js` hardcodes constants and returns them as if they were live data, and is **not wired
+> to any backend endpoint**. There is no `backend/services/analytics_service.py` or
+> `backend/controllers/analytics.py` in this repository, and no evidence of the event-hook/queue
+> architecture described below. By contrast, the **COO Analytics dashboard is real** —
+> `coo_analytics_controller.py` and `coo_analytics_service.py` exist and back
+> `apps/web-ui/src/modules/coo-analytics/` with genuine backend-driven data. Sections below that
+> describe the general analytics dashboard as backend-driven should be read as an aspirational/target
+> design, not current implementation — see `09-roadmap/technical-debt.md` (item F1) and
+> `09-roadmap/target-state.md` for how this gap is tracked. The COO-specific sections (Section 7,
+> the `/api/coo-analytics/*` endpoints) are the accurate, currently-real part of this document.
 
 ---
 
 ## 1. Overview
 
-The Analytics Service is NOT an AI agent. It is a data aggregation and reporting service
-that collects interaction data from all platform components and presents it through two
-distinct dashboard views: an internal platform analytics dashboard and a COO-level executive
-dashboard.
+The Analytics Service is NOT an AI agent. As designed here it would be a data aggregation and
+reporting service collecting interaction data from all platform components and presenting it through
+two distinct dashboard views: an internal platform analytics dashboard and a COO-level executive
+dashboard. **Only the COO-level dashboard is real today** (see accuracy note above); the general
+platform analytics dashboard is a mock-data frontend module with no backend counterpart.
 
 The Analytics Service enables leadership to understand platform adoption, employee
 engagement patterns, agent performance, and escalation trends. All data collection is
@@ -26,14 +42,15 @@ while still enabling aggregate analysis.
 
 | Property | Value |
 |----------|-------|
-| Service Name | AnalyticsService |
-| Source File | `backend/services/analytics_service.py` |
-| Controller | `backend/controllers/analytics.py` |
-| COO Controller | `backend/controllers/coo_analytics.py` |
-| Frontend | `frontend/src/pages/AnalyticsDashboard.jsx` |
-| Database | PostgreSQL `squadrons` — multiple analytics tables |
+| Service Name | AnalyticsService (general dashboard: **mock/aspirational**; COO dashboard: **real**) |
+| General analytics backend | **Does not exist** — `apps/web-ui/src/modules/analytics/analyticsApi.js` hardcodes mock constants client-side |
+| COO Controller (real) | `apps/api-gateway/app/api/controllers/coo_analytics_controller.py` |
+| COO Service (real) | `apps/api-gateway/app/api/services/coo_analytics_service.py` |
+| Frontend (mock) | `apps/web-ui/src/modules/analytics/` |
+| Frontend (real) | `apps/web-ui/src/modules/coo-analytics/` |
+| Database | PostgreSQL `squadrons` |
 | Access Control | Analytics Admin role / COO role |
-| Not an AI agent | No Ollama calls, no RAG retrieval |
+| Not an AI agent | No LLM calls, no RAG retrieval |
 
 ---
 
@@ -55,7 +72,9 @@ CREATE TABLE conversations (
     role            VARCHAR(50),
     query_hash      VARCHAR(64),           -- SHA-256 of query (never raw text)
     agent_selected  VARCHAR(30),
-    routing_tier    VARCHAR(20),           -- regex / llm / keyword / general
+    routing_tier    VARCHAR(20),           -- regex / keyword / general (an LLM
+                                            -- classification method exists in code
+                                            -- but is dead code, never invoked)
     response_time_ms INT,
     confidence      FLOAT,
     escalation_triggered BOOLEAN DEFAULT FALSE,
@@ -230,7 +249,7 @@ The `AnalyticsDashboard.jsx` page renders 10 components:
 | 6 | DailyActiveUsersChart | Area chart: DAU over selected period | GET /api/analytics/trends?granularity=day |
 | 7 | PeakHoursHeatmap | Hour-of-day × day-of-week heatmap | GET /api/analytics/trends?granularity=hour |
 | 8 | DepartmentBreakdownTable | Table: usage by department | GET /api/analytics/overview?group_by=department |
-| 9 | RoutingTierPieChart | Pie: regex vs LLM vs keyword routing | GET /api/analytics/agents (routing_tier field) |
+| 9 | RoutingTierPieChart | Pie: regex vs keyword routing tiers | GET /api/analytics/agents (routing_tier field) |
 | 10 | AgentSatisfactionTable | Ranked table: agents by satisfaction score | GET /api/analytics/feedback (by agent) |
 
 ---

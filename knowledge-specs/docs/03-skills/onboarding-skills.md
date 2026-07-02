@@ -770,7 +770,7 @@ Guides the employee through reviewing and acknowledging key company policies the
 | Acceptable Use Policy | IT | Yes | IT portal |
 
 ### Policy RAG Integration
-Each policy is indexed in the RAG knowledge base (384-dim HuggingFace embeddings + pgvector).
+Each policy is indexed in the RAG knowledge base (768-dim HuggingFace embeddings + pgvector).
 
 Employee can ask: "What does the IT security policy say about personal device usage?"
 → RAG retrieves relevant section and provides plain-language answer.
@@ -1137,6 +1137,6 @@ You're officially part of the Aligned Automation Engineering team! 🚀"
 | HR Notifications | On each step completion + final completion |
 | IT Integration | Step 4 triggers it-new-employee-setup |
 | RAG Integration | Step 6 (policy Q&A) |
-| LLM | Ollama (gpt-oss) for conversational assistance |
+| LLM | Configurable: Anthropic Claude → Groq → Ollama (`gpt-oss`) by priority, for conversational assistance; Ollama is the default/fallback, not the exclusive provider |
 | Mobile Support | All 8 steps responsive (vertical stepper on mobile) |
 | Completion Tracking | analytics_events table (step_complete events) |

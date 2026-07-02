@@ -1,7 +1,7 @@
 # Escalation Agent Specification
 # AA-Hackathon Enterprise AI Platform — Aligned Automation
 # Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/escalation_agent.py
+# Source File: apps/api-gateway/app/agents/escalation_agent.py
 
 ---
 
@@ -25,8 +25,8 @@ Ollama only for parsing and refining the escalation summary.
 |----------|-------|
 | Registry Key | `escalation` |
 | Class | `EscalationAgent` |
-| Base Class | `Standalone` (no BaseDeepAgent) |
-| Source File | `backend/agents/escalation_agent.py` |
+| Base Class | Plain function wrapped in an adapter class in `supervisor_agent.py` (no BaseDeepAgent) |
+| Source File | `apps/api-gateway/app/agents/escalation_agent.py` |
 | Database Table | `escalations` (PostgreSQL, db=squadrons) |
 | Frontend | `EscalationDrawer.jsx` |
 | Owner | All Teams / Platform Team |
@@ -92,13 +92,17 @@ MEDIUM_PATTERNS = [
 
 ## 5. Escalation Detection
 
-The EscalationAgent is triggered in three ways:
+The EscalationAgent is triggered in two live ways, plus a dormant code path:
 
 1. **Automatic**: Domain agent returns `escalation_triggered=True` in AgentResponse
-2. **User-initiated**: User says "escalate", "raise a complaint", "speak to HR", etc.
-3. **Guardrails**: Tier 2 LLM guardrail returns `action=escalate` for welfare signals
+2. **User-initiated**: An escalation-keyword check runs early in `MasterAgent._route()`
+   (before the regex fast-paths and keyword-score fallback) and matches phrases like
+   "escalate", "raise a complaint", "speak to HR", etc.
+3. **Dormant/unused**: The router also defines a `_route_llm()` LLM-classification method
+   that could in principle return `action=escalate` for welfare signals, but it is dead
+   code — it is never actually called by `_route()`.
 
-Detection patterns for user-initiated escalation (Tier 1 regex in MasterAgent):
+Detection patterns for user-initiated escalation (checked early in `MasterAgent._route()`):
 
 ```python
 ESCALATION_TRIGGERS = [

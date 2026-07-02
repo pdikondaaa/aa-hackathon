@@ -28,26 +28,27 @@ graph TD
         end
 
         subgraph VectorIndexes["Vector Indexes (pgvector)"]
-            HNSW["HNSW Index\nidx_document_chunks_embedding_hnsw\nvector_cosine_ops\nm=16, ef_construction=64"]
-            IVFFlat["IVFFlat Index (dev only)\nidx_document_chunks_embedding_ivfflat\nvector_cosine_ops\nlists=100"]
+            IVFFlat["IVFFlat Index (current)\nidx_document_chunks_embedding_ivfflat\nvector_cosine_ops\nprobes=10 at query time"]
+            HNSW["HNSW Index (future alternative,\nnot confirmed current)\nvector_cosine_ops\nm=16, ef_construction=64"]
         end
     end
 
-    subgraph FAISS["FAISS Local Index (fallback)"]
-        FlatL2["IndexFlatL2\nExact search\nDev / small datasets"]
-        IVFFlatF["IndexIVFFlat\nApproximate search\nLarger local datasets"]
+    subgraph FAISS["FAISS Per-Domain Local Fallback\n(app/agents/working/knowledge_base.py)"]
+        FlatL2["Local knowledge base\nBuilt from local document folders\nper domain (HR/IT/Admin/Finance/PMO)"]
     end
 
-    Query["User Query"] --> Embed["Query Embedding\n384-dim vector"]
-    Embed --> HNSW
-    HNSW --> Results["Top-k Chunks"]
-    HNSW -- "unavailable" --> FlatL2
+    Query["User Query"] --> Embed["Query Embedding\n768-dim vector"]
+    Embed --> IVFFlat
+    IVFFlat --> Results["Top-k Chunks"]
+    Results -- "0 chunks returned" --> FlatL2
     FlatL2 --> Results
 
     FilterIdx --> ConvQuery["Conversation List\nPagination Queries"]
     TimeIdx --> ConvQuery
     FKIdx --> MsgQuery["Message Fetch\nby conversation_id"]
 ```
+
+**Note:** the FAISS path is consulted only when pgvector's own search returns **zero results** for a query — not when pgvector is "unavailable" (connection failure). It is a per-domain local knowledge base built from local document folders, not a mirror of the pgvector corpus, and it plays no role in the SharePoint ingestion pipeline (no FAISS usage exists anywhere under `apps/jobs`).
 
 ---
 
@@ -62,12 +63,12 @@ PostgreSQL automatically creates B-tree indexes on all primary key columns. Thes
 | `conversations` | `id` | B-tree (auto) |
 | `messages` | `id` | B-tree (auto) |
 | `feedback` | `id` | B-tree (auto) |
-| `escalations` | `id` | B-tree (auto) |
+| `escalation_records` | `id` | B-tree (auto) |
 | `audit_logs` | `id` | B-tree (auto) |
 | `documents` | `id` | B-tree (auto) |
 | `document_chunks` | `id` | B-tree (auto) |
-| `pii_redactions` | `id` | B-tree (auto) |
-| `pii_events` | `id` | B-tree (auto) |
+| `pii_redaction_rules` | `id` | B-tree (auto) |
+| `pii_redaction_logs` | `id` | B-tree (auto) |
 
 ### 3.2 Foreign Key Indexes
 
@@ -89,9 +90,9 @@ CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id
     ON document_chunks (document_id)
     WHERE is_deleted = false;
 
--- pii_redactions → messages
-CREATE INDEX IF NOT EXISTS idx_pii_redactions_message_id
-    ON pii_redactions (message_id);
+-- pii_redaction_logs → messages
+CREATE INDEX IF NOT EXISTS idx_pii_redaction_logs_message_id
+    ON pii_redaction_logs (message_id);
 ```
 
 ### 3.3 Soft-Delete Filtered Indexes
@@ -119,9 +120,9 @@ CREATE INDEX IF NOT EXISTS idx_document_chunks_active
     ON document_chunks (document_id, created_at DESC)
     WHERE is_deleted = false;
 
--- Escalations by user and status
-CREATE INDEX IF NOT EXISTS idx_escalations_user_active
-    ON escalations (user_id, status, updated_at DESC)
+-- Escalation records by user and status
+CREATE INDEX IF NOT EXISTS idx_escalation_records_user_active
+    ON escalation_records (user_id, status, updated_at DESC)
     WHERE is_deleted = false;
 ```
 
@@ -145,9 +146,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_created_at
     ON audit_logs (user_id, created_at DESC);
 
--- PII events: retention enforcement queries
-CREATE INDEX IF NOT EXISTS idx_pii_events_created_at
-    ON pii_events (created_at);
+-- PII redaction logs: retention enforcement queries
+CREATE INDEX IF NOT EXISTS idx_pii_redaction_logs_created_at
+    ON pii_redaction_logs (created_at);
 ```
 
 ### 3.5 JSONB Expression Indexes
@@ -188,50 +189,9 @@ ALTER TABLE documents ADD CONSTRAINT uq_documents_hash UNIQUE (hash);
 
 ## 4. pgvector Indexes
 
-### 4.1 HNSW Index — Production Standard
+### 4.1 IVFFlat Index — Current Platform Index
 
-Hierarchical Navigable Small World (HNSW) is the recommended index type for production use. It builds a multi-layer graph structure that enables extremely fast approximate nearest neighbor search.
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw
-    ON document_chunks
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
-```
-
-#### Parameter Explanation
-
-| Parameter | Value | Description | Trade-off |
-|-----------|-------|-------------|-----------|
-| `m` | 16 | Maximum number of bidirectional links per node in each layer | Higher → better accuracy, more memory and build time. Range: 4–64. 16 is pgvector default. |
-| `ef_construction` | 64 | Size of the candidate list during index construction | Higher → better graph quality, slower build. Range: 16–256. 64 is a good balance. |
-
-#### Query-Time Parameter
-
-```sql
--- Set at connection level or per session
-SET hnsw.ef_search = 100;
--- Default: 40. Higher → better recall, slower query. Range: ef_construction to 1000.
-```
-
-Recommended values by use case:
-
-| Use Case | `ef_search` | Rationale |
-|----------|-------------|-----------|
-| Real-time chat (< 100ms) | 64 | Fast response |
-| Standard retrieval | 100 | Good balance (production default) |
-| Analytics / offline reranking | 200 | High recall priority |
-| Benchmarking / evaluation | 400 | Maximum recall |
-
-#### Memory Estimation
-
-HNSW memory per vector = approximately `m * 2 * 8 bytes` = 256 bytes overhead per vector (at m=16).
-
-For 100,000 chunks: `100,000 × (384 × 4 + 256)` = ~178 MB total (vectors + graph structure).
-
-### 4.2 IVFFlat Index — Development Only
-
-Inverted File (IVF) index with flat storage. Suitable for development environments and small datasets (< 10,000 vectors) where fast build time matters more than query speed.
+The platform's documented retrieval configuration uses an **IVFFlat** index with `probes = 10` at query time — this is the current, real index type used by `document_chunks`, not HNSW.
 
 ```sql
 -- Build AFTER inserting initial data (IVFFlat trains on existing rows)
@@ -245,20 +205,34 @@ CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_ivfflat
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `lists` | 100 | Number of inverted lists (clusters). Recommended: `sqrt(row_count)`. At 10,000 rows → 100 lists. |
+| `lists` | 100 (approx.) | Number of inverted lists (clusters). Recommended rule of thumb: `sqrt(row_count)`. |
 
 #### Query-Time Parameter
 
 ```sql
-SET ivfflat.probes = 10;
--- Default: 1 (very fast, lower recall). 10 searches 10% of lists. Typical range: 1–100.
+SET ivfflat.probes = 10;   -- The platform's documented default
+-- Higher values search more lists → better recall, slower query. Typical range: 1–100.
 ```
 
 #### IVFFlat Limitations
 
-- Must be built on existing data (cannot be built on empty table)
+- Must be built on existing data (cannot be built on an empty table)
 - Recall degrades as new data is inserted (clusters become stale)
-- REINDEX recommended after adding > 20% of original row count
+- `REINDEX` recommended after adding a large fraction of the original row count — e.g. after the SharePoint ingestion job's full purge-and-rebuild run (see [`sharepoint-ingestion.md`](sharepoint-ingestion.md))
+
+### 4.2 HNSW Index — Future Alternative, Not Confirmed Current
+
+Hierarchical Navigable Small World (HNSW) builds a multi-layer graph structure that can offer faster queries and higher recall than IVFFlat, at the cost of slower, more memory-intensive index builds. It is a reasonable future upgrade path, but **it is not confirmed as the index type currently in use** on this platform — the README and the platform's documented retrieval configuration both point to IVFFlat as the real, current index.
+
+```sql
+-- Illustrative only — treat as a future option, not the current state
+CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw
+    ON document_chunks
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+SET hnsw.ef_search = 100;
+```
 
 ### 4.3 Choosing HNSW vs IVFFlat
 
@@ -269,62 +243,40 @@ SET ivfflat.probes = 10;
 | Recall at same speed | Higher | Lower |
 | Memory during build | High (entire graph in memory) | Lower |
 | Incremental insert support | Yes (degrades gracefully) | Yes (degrades, REINDEX recommended) |
-| Recommended for | Production, > 5,000 rows | Development, < 10,000 rows |
-| Current platform use | Production (default) | Development fallback |
+| **Current platform use** | **Not confirmed — future candidate** | **Current (`probes = 10`)** |
 
 ---
 
-## 5. FAISS Local Index
+## 5. FAISS Local Index — Per-Domain Fallback (Not an Ingestion-Pipeline Component)
 
-The FAISS index is the fallback when pgvector is unavailable. It is built in-memory from embeddings loaded from the database (or from a persisted file).
+`faiss-cpu` is a real dependency in `apps/api-gateway/requirements.txt`, but its role is narrower than earlier drafts of this document suggested:
 
-### 5.1 Index Types
+- It is built by `app/agents/working/knowledge_base.py` from **local document folders**, one knowledge base per domain agent (HR, IT, Admin, Finance, PMO) — it is not built from the pgvector corpus and is not a mirror of it.
+- It is consulted only when a pgvector similarity search for a query returns **zero results** — not when pgvector is unreachable/unavailable due to a connection failure.
+- It plays **no role in the SharePoint ingestion pipeline**: there is no FAISS usage anywhere under `apps/jobs`, so it is not "persisted after each ingestion run" as earlier drafts claimed. It is populated from static local folders that are separate from the SharePoint-sourced corpus in `document_chunks`.
+
+### 5.1 Indicative Usage Pattern
 
 ```python
 import faiss
 import numpy as np
 
-DIMENSION = 384
+DIMENSION = 768
 
-# Development / small datasets (< 10,000 vectors)
-# Exact search — perfect recall, linear time O(n)
-index = faiss.IndexFlatL2(DIMENSION)
-
-# Production fallback (> 10,000 vectors)
-# Approximate search with IVF clustering
-quantizer = faiss.IndexFlatL2(DIMENSION)
-index = faiss.IndexIVFFlat(quantizer, DIMENSION, nlist=100)
-index.train(training_vectors)  # requires training data
-index.nprobe = 10              # probes at query time
+# Per-domain local knowledge base, built from a local document folder
+index = faiss.IndexFlatL2(DIMENSION)   # exact search over a comparatively small local corpus
 ```
 
-### 5.2 Persistence
+Because each domain's local knowledge base is expected to be small (a curated local folder per domain, not the full organizational corpus), exact search (`IndexFlatL2`) is a reasonable choice; there is no confirmed use of `IndexIVFFlat` for this fallback path.
 
-The FAISS index is persisted to disk after each ingestion run and loaded on startup:
+### 5.2 When It Is Consulted
 
 ```python
-FAISS_INDEX_PATH = os.path.join(FAISS_DATA_DIR, "knowledge_base.index")
-FAISS_META_PATH  = os.path.join(FAISS_DATA_DIR, "knowledge_base_meta.pkl")
-
-# Save after ingestion
-faiss.write_index(index, FAISS_INDEX_PATH)
-with open(FAISS_META_PATH, "wb") as f:
-    pickle.dump(chunk_metadata_list, f)
-
-# Load on startup
-if os.path.exists(FAISS_INDEX_PATH):
-    index = faiss.read_index(FAISS_INDEX_PATH)
-    with open(FAISS_META_PATH, "rb") as f:
-        chunk_metadata_list = pickle.load(f)
+# Illustrative — see app/agents/working/base_deep_agent.py for the real pipeline
+chunks = pgvector_search(query_embedding, top_k=10)
+if not chunks:
+    chunks = domain_faiss_knowledge_base.search(query_embedding, top_k=10)
 ```
-
-### 5.3 FAISS Index Size
-
-| Vectors | IndexFlatL2 Size | IndexIVFFlat Size |
-|---------|-----------------|------------------|
-| 10,000 | 15 MB | 16 MB |
-| 50,000 | 75 MB | 77 MB |
-| 100,000 | 150 MB | 155 MB |
 
 ---
 
@@ -412,11 +364,11 @@ ORDER BY dc.embedding <=> '[0.1,0.2,...]'::vector
 LIMIT 10;
 ```
 
-Expected: `Index Scan using idx_document_chunks_embedding_hnsw`. Typical execution time: 5–50ms for 50,000 vectors.
+Expected: `Index Scan using idx_document_chunks_embedding_ivfflat`. Actual execution time on this platform's dataset was not independently benchmarked in the last audit — treat any specific millisecond figure as illustrative, not measured.
 
 ### 7.3 Connection Pool Interaction
 
-With `ThreadedConnectionPool(min=1, max=8)`, a maximum of 8 concurrent connections can run vector queries simultaneously. Each vector query with `hnsw.ef_search=100` uses approximately 50MB of working memory. Total working memory estimate: `8 × 50MB = 400MB` — within acceptable bounds for the platform host.
+The API uses `psycopg2.pool.ThreadedConnectionPool` for its PostgreSQL connections (see [`database-standards.md`](../07-technical/database-standards.md) for the confirmed pool configuration). Exact pool size and per-query memory figures should be read from that document rather than assumed here.
 
 ---
 
@@ -424,8 +376,8 @@ With `ThreadedConnectionPool(min=1, max=8)`, a maximum of 8 concurrent connectio
 
 | Improvement | Description | Target |
 |------------|-------------|--------|
+| Evaluate HNSW as an upgrade from the current IVFFlat index | Potentially faster queries / higher recall at the cost of slower index builds — see Section 4.2 | Q3 2026 |
 | Separate read replica for vector search | Offload vector queries from write connection pool | Q4 2026 |
-| HNSW auto-tuning | Dynamic `ef_search` based on query latency SLA | Q3 2026 |
-| Domain-partitioned indexes | Separate HNSW index per domain (HR, IT, etc.) for faster domain-filtered search | Q4 2026 |
+| Domain-partitioned indexes | Separate vector index per domain (HR, IT, etc.) for faster domain-filtered search | Q4 2026 |
 | pgBouncer | Connection pooler to reduce connection overhead | Q3 2026 |
 | Hybrid BM25 + vector index | PostgreSQL full-text index (GIN) combined with vector index for hybrid search | Q4 2026 |

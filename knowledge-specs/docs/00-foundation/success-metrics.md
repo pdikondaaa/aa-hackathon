@@ -51,7 +51,7 @@ These KPIs represent the health and adoption of the assistant as a unified produ
 | Average Messages per Session | Total messages divided by total conversation sessions | >= 3.5 |
 | Conversation Return Rate | Users who return within 7 days of a first conversation | >= 50% |
 | Escalation Conversion Rate | Escalations submitted as a fraction of escalation-intent queries | >= 80% |
-| Document Generation Volume | Total HR documents generated per week (11 supported types) | Tracked; no minimum threshold |
+| Document Generation Volume | Total HR documents generated per week (12 supported types) | Tracked; no minimum threshold |
 
 ### Self-Service Rate
 
@@ -74,7 +74,7 @@ Topics: leave, benefits, payroll, policies — retrieved via pgvector.
 | Policy Query Accuracy | Fraction of HR policy responses rated positive (rating = 1) in feedback | >= 85% |
 | Leave Query Resolution Rate | Leave-related queries answered without escalation | >= 90% |
 | Document Generation Success | Successfully generated HR documents / total requested | >= 95% |
-| Supported Doc Types Coverage | Percentage of 11 document types with at least one successful generation per month | 100% (all 11 types functional) |
+| Supported Doc Types Coverage | Percentage of 12 document types with at least one successful generation per month | 100% (all 12 types functional) |
 
 ### 3.2 IT Domain (ITAgent)
 
@@ -180,12 +180,14 @@ The `feedback` table stores: `rating` (INT in {-1, 0, 1}), `comment` (TEXT), `me
 
 ### Routing Quality (MasterAgent)
 
+In the current build, routing is two-tier — regex fast-paths, then keyword scoring against `DOMAIN_KEYWORDS` — not three-tier. A `_route_llm()` method for LLM-based classification exists in `supervisor_agent.py` but is not called from the live routing path, so the LLM-routing metrics below are not currently collectible; they are included as targets to activate if/when that path is wired in.
+
 | Metric | Definition | Target |
 |---|---|---|
 | Fast-Path Routing Accuracy | Fraction of fast-path (regex) routed queries correctly handled by the routed agent | >= 90% |
-| LLM Routing Accuracy | Fraction of LLM-classified queries correctly handled by the routed agent | >= 85% |
 | Keyword Fallback Rate | Fraction of queries handled by keyword fallback routing | <= 15% |
-| Routing Latency (LLM path) | Time taken for Ollama intent classification call | <= 1.5 seconds |
+| LLM Routing Accuracy *(not yet live — dormant code path)* | Fraction of LLM-classified queries correctly handled by the routed agent, once `_route_llm()` is activated | >= 85% |
+| Routing Latency (LLM path) *(not yet live — dormant code path)* | Time taken for an LLM intent-classification call, once activated | <= 1.5 seconds |
 
 ### Latency
 
@@ -194,8 +196,8 @@ The `feedback` table stores: `rating` (INT in {-1, 0, 1}), `comment` (TEXT), `me
 | End-to-End Response Time (full) | POST /api/chat — time to complete response | <= 8 seconds (p95) |
 | Time to First Token (streaming) | POST /api/chat/stream — time to first SSE event | <= 2 seconds (p95) |
 | pgvector Query Latency | Time for cosine similarity SQL query execution | <= 500 ms (p95) |
-| Embedding Generation Latency | Time to embed query with all-MiniLM-L6-v2 (384-dim) | <= 200 ms (p95) |
-| LLM Generation Latency | Ollama gpt-oss generation time (800-token limit, 2048 context) | <= 6 seconds (p95) |
+| Embedding Generation Latency | Time to embed query with nomic-embed-text-v1.5 (768-dim) | <= 200 ms (p95) |
+| LLM Generation Latency | Generation time from the configured LLM provider (Ollama/gpt-oss by default, 800-token limit, 2048 context; figures will differ if Claude or Groq is the active provider) | <= 6 seconds (p95) |
 
 ---
 
@@ -208,7 +210,7 @@ The `feedback` table stores: `rating` (INT in {-1, 0, 1}), `comment` (TEXT), `me
 | Platform Uptime | Percentage of time all API endpoints are responsive | >= 99.5% (monthly) |
 | API Health Check Success Rate | GET /api/health returning 200 / total checks | >= 99.9% |
 | Database Availability | PostgreSQL 16 + pgvector connection pool (min=1, max=8) operational | >= 99.9% |
-| Ollama LLM Availability | ml01.alignedautomation.com:11434 responsive | >= 99.0% |
+| LLM Provider Availability | Configured LLM provider responsive — Ollama at ml01.alignedautomation.com:11434 when Ollama is active; Anthropic/Groq API reachability when a cloud provider is configured | >= 99.0% |
 
 ### Throughput
 
@@ -225,8 +227,8 @@ The `feedback` table stores: `rating` (INT in {-1, 0, 1}), `comment` (TEXT), `me
 |---|---|---|
 | API Error Rate (5xx) | 5xx responses / total API responses | <= 0.5% |
 | API Error Rate (4xx) | 4xx responses / total API responses | <= 2% (excluding intentional auth rejections) |
-| LLM Call Failure Rate | Failed Ollama calls / total LLM calls | <= 1% |
-| Routing Timeout Rate | Queries that fall back due to Ollama routing timeout | <= 5% |
+| LLM Call Failure Rate | Failed generation calls to the configured LLM provider / total LLM calls | <= 1% |
+| Routing Timeout Rate *(not yet live — dormant code path)* | Queries that would fall back due to an LLM routing-classification timeout, once `_route_llm()` is activated; currently no such timeout occurs because that path is never invoked | <= 5% |
 | Document Generation Failure Rate | Failed document generation / total requests | <= 2% |
 
 ### SharePoint Ingestion Health
@@ -236,13 +238,13 @@ The `feedback` table stores: `rating` (INT in {-1, 0, 1}), `comment` (TEXT), `me
 | NEW Document Detection Rate | New documents correctly identified by hash-based change detection | >= 99% |
 | CHANGED Document Reprocessing Rate | Modified documents correctly re-chunked and re-embedded | >= 99% |
 | DELETED Document Cleanup Rate | Deleted documents correctly marked is_deleted in document_chunks | >= 99% |
-| Chunking Consistency | Chunks produced at 500-token size, 50-token overlap within tolerance | >= 98% compliant |
+| Chunking Consistency | Chunks produced at 1000-character size, 200-character overlap within tolerance | >= 98% compliant |
 
 ---
 
 ## 7. Analytics Implementation
 
-The platform's analytics dashboard (`analytics/AnalyticsDashboard.jsx`) and COO dashboard (`coo-analytics/COODashboard.jsx`) implement the following tracking components, backed by `GET /api/analytics/overview`.
+The platform's COO dashboard (`coo-analytics/COODashboard.jsx`) is backed by `GET /api/analytics/overview` and real underlying tables today. The general usage-analytics dashboard (`modules/analytics/`, `AnalyticsDashboard.jsx`) is designed against the same set of components and data sources described below, but as of this writing its frontend (`analyticsApi.js`) returns hardcoded mock constants and is not wired to `GET /api/analytics/overview` or any other backend endpoint. The component/tracking descriptions below represent the intended (and, for COODashboard, already-live) design — treat any specific numbers currently shown in `AnalyticsDashboard.jsx` as illustrative, not real, until that wiring is completed.
 
 ### Dashboard Components and What They Track
 
@@ -304,7 +306,7 @@ flowchart TD
     D --> E
     E --> F[Domain Agent\nHR / IT / Admin / etc.]
     F --> G[pgvector Retrieval\ncosine similarity, top-k]
-    G --> H[Ollama LLM\ngpt-oss generation]
+    G --> H[Configured LLM\nClaude / Groq / Ollama gpt-oss]
     H --> I[Response Returned]
     I --> J[User Feedback\nPOST /api/feedback]
     J --> K[(feedback table\nrating, comment)]
@@ -363,7 +365,7 @@ flowchart TD
 |---|---|---|
 | API Uptime | < 99.0% in any 1-hour window | Page on-call engineer; incident declared |
 | API 5xx Error Rate | > 2% in any 15-minute window | Page on-call engineer |
-| Ollama LLM Availability | Unavailable for > 5 minutes | Page on-call; activate fallback QuickAgent mode |
+| LLM Provider Availability (configured provider — Ollama by default) | Unavailable for > 5 minutes | Page on-call; activate fallback QuickAgent mode |
 | Database Connection Pool | Utilization > 95% sustained for > 5 minutes | Page on-call; investigate connection leak |
 | pgvector Query Latency p95 | > 2 seconds | Alert platform engineering |
 
@@ -375,7 +377,7 @@ flowchart TD
 | Negative Feedback Rate | > 15% in any 7-day window | Product + domain lead review |
 | Zero-Result Retrieval Rate | > 12% in any 7-day window | Trigger SharePoint re-ingestion review |
 | FAISS Fallback Rate | > 25% in any 24-hour window | Investigate pgvector health |
-| Routing Timeout Rate | > 8% in any 24-hour window | Review Ollama routing load |
+| Routing Timeout Rate *(not yet live — see Section 5)* | > 8% in any 24-hour window | Applicable only once LLM-based routing is activated; not currently measurable |
 | Guardrail False Positive Rate | > 5% | Guardrail tuning review |
 | Document Generation Failure Rate | > 5% in any week | DocumentAgent debugging sprint |
 | Onboarding Step Drop-off | Any step < 70% completion | UX review and remediation |
@@ -384,7 +386,7 @@ flowchart TD
 
 | Metric | Threshold | Action |
 |---|---|---|
-| Keyword Fallback Routing Rate | > 20% | Consider expanding LLM routing coverage |
+| Keyword Fallback Routing Rate | > 20% | Consider adding fast-path regex rules for the affected intents, or activating the currently-dormant `_route_llm()` classification path |
 | Adaptive Retry Rate | > 25% | Review document ingestion quality |
 | Session Abandonment Rate | > 30% | UX investigation |
 | NSS Score | < 50 | Product review |

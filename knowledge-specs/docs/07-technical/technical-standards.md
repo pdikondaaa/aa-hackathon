@@ -47,26 +47,27 @@ These standards govern the full stack: backend services, AI/ML pipeline, vector 
 | Language | Python | 3.11 | Stable LTS, async support, ML ecosystem |
 | Web Framework | FastAPI | Latest stable | Async-native, Pydantic integration, auto-docs |
 | ASGI Server | Uvicorn | Latest stable | High-performance async server for FastAPI |
-| AI Orchestration | LangChain | Latest stable | Standardized LLM interface, chain composition |
-| LLM Runtime | Ollama | Server at ml01.alignedautomation.com:11434 | On-premise LLM, data privacy |
-| LLM Model | gpt-oss | As deployed | Internal model |
-| Embedding Model | sentence-transformers/all-MiniLM-L6-v2 | Latest | 384-dim, fast, accurate |
-| Alt Embedding | nomic-embed-text | Via Ollama | Same 384-dim, on-prem |
+| AI Orchestration | LangChain | Latest stable | `langchain-huggingface`, `langchain-ollama`, `langchain-groq`, `langchain-anthropic`, `langchain-community`, `langchain-text-splitters` are genuinely used for prompt templates, LCEL chains, document loaders, and text splitting. **`langgraph` is listed in `requirements.txt` but has zero imports anywhere in `apps/api-gateway` — it is an unused/aspirational dependency, not part of the live orchestration.** |
+| LLM Runtime | **Configurable: Anthropic Claude → Groq → Ollama**, in that priority order | Selected by env flags (`USE_Claude_API_Key`, `USE_Groq_API_Key`, `Use_Ollama_LLM`) in `app/agents/working/config.py` | Ollama (self-hosted) is the default/fallback provider, not the exclusive one — Claude or Groq can be active depending on configuration |
+| LLM Model (Ollama path) | `gpt-oss` at `ml01.alignedautomation.com:11434` | As deployed | Used only when Ollama is the selected provider |
+| LLM Model (Claude path) | `claude-sonnet-4-6` (default) | Configurable via `CLAUDE_MODEL` | Used when `USE_Claude_API_Key` is set |
+| LLM Model (Groq path) | `llama3-70b-8192` (default) | Configurable via `GROQ_MODEL` | Used when `USE_Groq_API_Key` is set |
+| Embedding Model | `nomic-ai/nomic-embed-text-v1.5` | 768-dim | Loaded via `langchain_huggingface.HuggingFaceEmbeddings` (`model_kwargs={"trust_remote_code": True}`) — used identically at query time (`app/rag/retriever.py`) and at ingestion time (`apps/jobs/sharepoint_ingestion/embeddings/embedder.py`). This is **not** `all-MiniLM-L6-v2` / 384-dim, and there is no separate Ollama-based embedding path. |
 | Database | PostgreSQL | 16 | Stable, pgvector support |
 | Vector Extension | pgvector | Latest | Native vector similarity in Postgres |
-| Local Vector | FAISS | Latest | Fallback when pgvector unavailable |
-| Auth Library | python-jose | Latest | JWT RS256 validation |
-| HTTP Client | httpx / aiohttp | Latest | Async HTTP |
-| DB Driver | psycopg2 | Latest | PostgreSQL driver, RealDictCursor |
+| Local Vector | FAISS (`faiss-cpu`) | Latest | Per-domain local fallback knowledge base (`app/agents/working/knowledge_base.py`), consulted only when pgvector returns zero results for a query — not a global mirror of the pgvector corpus, and not used anywhere in the ingestion pipeline |
+| Auth Library | python-jose | Latest | JWT RS256 validation against Azure AD JWKS. MSAL is never imported in `apps/api-gateway` — MSAL is frontend-only (login) and, separately, `apps/jobs/sharepoint_ingestion` uses Python `msal` for its own app-only Graph auth |
+| HTTP Client | httpx | Latest | Async HTTP (`aiohttp` is not in `requirements.txt`) |
+| DB Driver | psycopg2-binary | Latest | PostgreSQL driver, `RealDictCursor`. **No ORM (no SQLAlchemy, no Alembic) — all data access is raw parameterized SQL.** |
 
 ### 3.2 Frontend
 
 | Component | Technology | Version | Justification |
 |-----------|-----------|---------|---------------|
-| UI Framework | React | 18.3.1 | Industry standard, hooks-based |
+| UI Framework | React | 18.3.1 | Industry standard, hooks-based. Single-page app — no React Router; navigation is a plain `activeNav` state switch in `App.jsx` |
 | Build Tool | Vite | 5.4.0 | Fast HMR, modern ESM |
-| State Management | Redux Toolkit | 2.12.0 | Structured global state |
-| Auth Client | MSAL Browser | 5.9.0 | Azure AD integration |
+| State Management | Local `useState`/`useEffect` + `localStorage` | — | Redux Toolkit, react-redux, redux, and redux-thunk are listed in `package.json` but are **not used anywhere** in the code (no `<Provider>`, no imports of any Redux API) |
+| Auth Client | MSAL Browser | 5.9.0 | Azure AD SSO, PKCE redirect flow — frontend only. The backend never imports MSAL; it validates the resulting JWT itself via `python-jose` |
 | Charting | Recharts | 3.8.1 | React-native charts |
 | PDF Export | jsPDF | 4.2.1 | Client-side PDF generation |
 
@@ -74,10 +75,10 @@ These standards govern the full stack: backend services, AI/ML pipeline, vector 
 
 | Component | Technology | Notes |
 |-----------|-----------|-------|
-| Containerization | Docker | All services containerized |
-| Orchestration | Docker Compose | Development and production |
+| Containerization | Docker | The `api` service is containerized via `deployments/docker/docker-compose.yml` |
+| Orchestration | Docker Compose | Exactly **three** services are defined: `api`, `postgres` (`pgvector/pgvector:pg16`), and `redis`. The file is minimal — no health checks, no named volumes, no resource limits, no Nginx, no Kubernetes/AKS manifests exist anywhere in this repository |
 | Database Image | pgvector/pgvector:pg16 | Official pgvector image |
-| Cache | Redis | Optional, for rate limiting / sessions |
+| Cache | Redis | **Defined in `docker-compose.yml` but currently unused by any application code** — no `redis` client library is in `requirements.txt` and no code connects to it. Treat as vestigial infrastructure, not an active session/cache/rate-limit store |
 
 ---
 
@@ -86,39 +87,40 @@ These standards govern the full stack: backend services, AI/ML pipeline, vector 
 ```mermaid
 graph TD
     subgraph Client["Browser Client"]
-        React["React 18.3.1\nVite 5.4.0"]
+        React["React 18.3.1\nVite 5.4.0\nlocal useState/localStorage (no Redux)"]
         MSAL["MSAL Browser 5.9.0\nAzure AD Auth"]
-        Redux["Redux Toolkit 2.12.0\nState Management"]
         Recharts["Recharts 3.8.1\nAnalytics Charts"]
     end
 
     subgraph API["API Gateway (Docker :8000)"]
         FastAPI["FastAPI + Uvicorn\nPython 3.11"]
-        Auth["JWT Auth Middleware\npython-jose RS256"]
-        LangChain["LangChain + LangChain-Ollama\nAI Orchestration"]
+        Auth["JWT Auth Middleware\npython-jose RS256 (no MSAL on backend)"]
+        LangChain["LangChain (LCEL chains)\nlanggraph in requirements.txt but unused"]
         RAG["RAG Pipeline\nRetriever + Generator"]
-        Embedder["HuggingFace Embedder\nall-MiniLM-L6-v2 384-dim"]
+        Embedder["HuggingFace Embedder\nnomic-embed-text-v1.5 768-dim"]
     end
 
     subgraph Storage["Storage Layer (Docker)"]
         PG["PostgreSQL 16\nhackathon.alignedautomation.com\ndb=squadrons"]
-        PGV["pgvector Extension\nvector(384) cosine <=>"]
-        FAISS["FAISS Local\nFallback Vector Store"]
-        Redis["Redis\nOptional Cache"]
+        PGV["pgvector Extension\nvector(768) cosine <=>"]
+        FAISS["FAISS Local\nPer-domain fallback KB\n(used only when pgvector returns 0 hits)"]
+        Redis["Redis\nDefined in compose, unused by app code"]
     end
 
-    subgraph AI["AI Infrastructure"]
-        Ollama["Ollama Server\nml01.alignedautomation.com:11434\nmodel=gpt-oss"]
-        SentT["sentence-transformers\nall-MiniLM-L6-v2"]
+    subgraph AI["LLM Providers (priority order)"]
+        Claude["Anthropic Claude\nclaude-sonnet-4-6"]
+        Groq["Groq\nllama3-70b-8192"]
+        Ollama["Ollama (default/fallback)\nml01.alignedautomation.com:11434\nmodel=gpt-oss"]
     end
 
     subgraph Identity["Identity"]
         AzureAD["Azure AD\nJWT RS256 JWKS"]
     end
 
-    subgraph Ingestion["Ingestion Jobs"]
-        SPIngestion["SharePoint Ingestion\napps/jobs/sharepoint_ingestion"]
-        SP["SharePoint\nPDF/DOCX/XLSX/PPTX"]
+    subgraph Ingestion["Ingestion Job (apps/jobs/sharepoint_ingestion)"]
+        SPIngestion["main.py\npurges + fully re-ingests each run"]
+        SPGraph["connectors/sharepoint.py\nGraph API + msal (primary, live)"]
+        SPScrape["connectors/sharepoint_web_scraper.py\nPlaywright (Phase 2, disabled by default)"]
     end
 
     React --> FastAPI
@@ -126,15 +128,17 @@ graph TD
     FastAPI --> Auth
     Auth --> AzureAD
     FastAPI --> LangChain
+    LangChain --> Claude
+    LangChain --> Groq
     LangChain --> Ollama
     LangChain --> RAG
     RAG --> Embedder
-    Embedder --> SentT
     RAG --> PG
     PG --> PGV
-    RAG --> FAISS
-    FastAPI --> Redis
-    SPIngestion --> SP
+    RAG -. "fallback on 0 results" .-> FAISS
+    FastAPI -. "defined but unused" .-> Redis
+    SPIngestion --> SPGraph
+    SPIngestion -. "disabled by default" .-> SPScrape
     SPIngestion --> PG
     SPIngestion --> Embedder
 ```
@@ -204,7 +208,10 @@ The following are explicitly prohibited and will cause pull request rejection:
 | `SQL_DATABASE` | Database name | `squadrons` |
 | `SQL_USER` | Database user | `admin` |
 | `SQL_PASSWORD` | Database password | _(secret)_ |
-| `OLLAMA_BASE_URL` | Ollama server URL | `http://ml01.alignedautomation.com:11434` |
+| `USE_Claude_API_Key` / `USE_Groq_API_Key` / `Use_Ollama_LLM` | Selects the active LLM provider (Claude > Groq > Ollama priority) | `true` / `false` |
+| `CLAUDE_API_KEY` / `CLAUDE_MODEL` | Anthropic API key and model | `claude-sonnet-4-6` |
+| `GROQ_API_KEY` / `GROQ_MODEL` | Groq API key and model | `llama3-70b-8192` |
+| `OLLAMA_BASE_URL` | Ollama server URL (default/fallback provider) | `http://ml01.alignedautomation.com:11434` |
 | `OLLAMA_MODEL` | Model name | `gpt-oss` |
 | `AZURE_TENANT_ID` | Azure AD tenant ID | _(GUID)_ |
 | `AZURE_CLIENT_ID` | App registration client ID | _(GUID)_ |
@@ -212,8 +219,8 @@ The following are explicitly prohibited and will cause pull request rejection:
 | `SHAREPOINT_CLIENT_SECRET` | SharePoint app secret | _(secret)_ |
 | `SHAREPOINT_TENANT_ID` | SharePoint tenant | _(GUID)_ |
 | `SHAREPOINT_SITE_URL` | SharePoint site URL | `https://org.sharepoint.com/sites/...` |
-| `EMBEDDING_MODEL` | Embedding model name | `all-MiniLM-L6-v2` |
-| `EMBEDDING_DIM` | Embedding dimension | `384` |
+| `EMBEDDING_MODEL` | Embedding model name | `nomic-embed-text-v1.5` |
+| `EMBEDDING_DIM` | Embedding dimension | `768` |
 
 ### 7.3 Secret Management Rules
 

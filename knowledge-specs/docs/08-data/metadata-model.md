@@ -33,7 +33,7 @@ erDiagram
         uuid document_id FK
         text chunk_text "Extracted text segment"
         jsonb metadata "chunk_index, page_number, section_title, word_count, slide_number, sheet_name"
-        vector embedding "384-dim cosine vector"
+        vector embedding "768-dim cosine vector"
         boolean is_deleted
         timestamp created_at
     }
@@ -161,7 +161,7 @@ CREATE TABLE document_chunks (
     document_id UUID    NOT NULL REFERENCES documents(id),
     chunk_text  TEXT    NOT NULL,
     metadata    JSONB   NOT NULL DEFAULT '{}',
-    embedding   vector(384) NOT NULL,
+    embedding   vector(768) NOT NULL,
     is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -11,7 +11,7 @@ The productivity cluster provides employees with AI-assisted tools for daily wor
 
 ```mermaid
 flowchart TD
-    USER([User Message]) --> MASTER[MasterAgent\n3-Tier Router]
+    USER([User Message]) --> MASTER[MasterAgent\n2-Tier Router]
     MASTER --> PROD[Productivity Skills Router]
 
     PROD -->|email / draft / write email| EMAIL[email-drafting\nEmailAgent]
@@ -151,7 +151,7 @@ BODY:
 - Integration notice: "This is a draft only — please send from your email client"
 
 ### SLA
-Email drafts generated in < 5 seconds (LLM generation via Ollama gpt-oss).
+Email drafts generated in < 5 seconds (LLM generation via the configured provider — Claude, Groq, or Ollama `gpt-oss`, selected by priority; Ollama is the default/fallback, not the exclusive provider).
 
 ### Fallback Behavior
 1. If recipient is unclear, prompt user to specify or use department default
@@ -1031,7 +1031,7 @@ Agent: 8 old conversations moved to trash. They will be permanently deleted on J
 
 | Skill | Component | API Endpoint | Integration |
 |-------|-----------|-------------|-------------|
-| email-drafting | EmailAgentPage.jsx | POST /api/email-agent/from-chat | Ollama LLM |
+| email-drafting | EmailAgentPage.jsx | POST /api/email-agent/from-chat | Configurable LLM (Claude → Groq → Ollama priority) |
 | personal-notes | PersonalNotes.jsx | /api/notes | PostgreSQL |
 | allocation-board | AllocationBoard.jsx | /api/zoho/allocation | Zoho Projects |
 | quick-links | quickLinksConfig.js | Static config | Internal URLs |

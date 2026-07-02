@@ -16,6 +16,8 @@ This document defines database design and access standards for the AA-Hackathon 
 
 ## 2. Database Overview
 
+The `squadrons` database has approximately 28 tables in total (created by `apps/jobs/sharepoint_ingestion/create_schema.py` and `create_communications_schema.py`, plus two manual SQL migrations in `apps/api-gateway/migrations/`), including the `ncl_*` family (~13 tables) backing the no-code form builder, plus `agent_routing_logs`, `prompt_logs`, `error_logs`, `employee_details`, `project_details`, `allocation_details`, `allocation_role_map`, and more. The diagram below is a **representative subset** relevant to conversations, feedback, escalations, PII handling, and document retrieval — it is not the full schema. See [`10-reference/architecture-overview.md`](../10-reference/architecture-overview.md) for the complete table list.
+
 ```mermaid
 erDiagram
     conversations {
@@ -31,8 +33,15 @@ erDiagram
         uuid conversation_id FK
         varchar role
         text content
-        jsonb sources
         boolean is_deleted
+        timestamp created_at
+    }
+    message_citations {
+        uuid id PK
+        uuid message_id FK
+        varchar document_name
+        varchar source_url
+        text chunk_text_preview
         timestamp created_at
     }
     feedback {
@@ -44,7 +53,7 @@ erDiagram
         boolean is_deleted
         timestamp created_at
     }
-    escalations {
+    escalation_records {
         uuid id PK
         varchar user_id
         varchar escalation_type
@@ -82,23 +91,25 @@ erDiagram
         boolean is_deleted
         timestamp created_at
     }
-    pii_redactions {
+    pii_redaction_rules {
+        uuid id PK
+        varchar rule_name
+        varchar entity_type
+        jsonb pattern_config
+        boolean is_active
+        timestamp created_at
+    }
+    pii_redaction_logs {
         uuid id PK
         uuid message_id FK
         jsonb redacted_spans
         timestamp created_at
     }
-    pii_events {
-        uuid id PK
-        varchar user_id
-        varchar event_type
-        jsonb details
-        timestamp created_at
-    }
 
     conversations ||--o{ messages : "has"
     messages ||--o{ feedback : "receives"
-    messages ||--o| pii_redactions : "may have"
+    messages ||--o{ message_citations : "cites"
+    messages ||--o| pii_redaction_logs : "may have"
     documents ||--o{ document_chunks : "contains"
 ```
 
@@ -201,7 +212,7 @@ Tables that support updates also include:
 | Timestamps | TIMESTAMPTZ | Always with timezone, stored as UTC |
 | Boolean flags | BOOLEAN | `NOT NULL DEFAULT FALSE` |
 | Flexible/optional data | JSONB | Schema documented in metadata-model.md |
-| Embeddings | vector(384) | pgvector type, requires extension |
+| Embeddings | vector(768) | pgvector type, requires extension |
 | Enums | VARCHAR with CHECK | Not PostgreSQL ENUM type (hard to alter) |
 
 ---
@@ -262,12 +273,13 @@ JSONB columns store flexible, document-like data that varies by record type. All
 
 | Table | Column | Schema |
 |-------|--------|--------|
-| `messages` | `sources` | `[{document_name, source_url, similarity, chunk_text_preview}]` |
-| `escalations` | `form_data` | Flexible: `{leave_type, dates, reason}` or `{issue_type, description}` |
-| `document_chunks` | `metadata` | `{chunk_index, page_number, section_title, word_count}` |
+| `escalation_records` | `form_data` | Flexible: `{leave_type, dates, reason}` or `{issue_type, description}` |
+| `document_chunks` | `metadata` | `{chunk_index, section_heading}` — see [`08-data/chunking-strategy.md`](../08-data/chunking-strategy.md) for the verified metadata contract; do not assume a richer format-specific set (`page_number`, `slide_number`, etc.) without checking the chunker source |
 | `documents` | `tags` | `{source_url, domain, category, content_type, sharepoint_item_id}` |
 | `audit_logs` | `details` | `{action_context, affected_fields, ip_address}` |
-| `pii_redactions` | `redacted_spans` | `[{start, end, entity_type, original_text_hash}]` |
+| `pii_redaction_logs` | `redacted_spans` | `[{start, end, entity_type, original_text_hash}]` |
+
+Note: citation/source information for a message (which document, which chunk, similarity score) is modeled as its own table, `message_citations`, rather than as a JSONB column inline on `messages` — see the ERD in Section 2.
 
 ### 6.1 JSONB Queries
 

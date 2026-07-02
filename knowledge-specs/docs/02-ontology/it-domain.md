@@ -20,7 +20,7 @@ The IT domain spans five core capability areas:
 - **Security and Compliance** — incident reporting, endpoint protection, data handling
 - **Service and Support** — helpdesk tickets, knowledge base lookup, troubleshooting
 
-All IT-domain knowledge is sourced from SharePoint-ingested documents stored as 384-dimensional pgvector embeddings in the `document_chunks` table. Escalations requiring human intervention are persisted in the `escalations` table and routed through the EscalationAgent.
+All IT-domain knowledge is sourced from SharePoint-ingested documents stored as 768-dimensional pgvector embeddings in the `document_chunks` table. Escalations requiring human intervention are persisted in the `escalations` table and routed through the EscalationAgent.
 
 ### Domain Boundary Conditions
 
@@ -128,7 +128,7 @@ ITTool {
 | Design | Figma, Adobe Creative Cloud |
 | HR / Payroll | Zoho People |
 | Security | Endpoint protection, password manager |
-| AI / ML | Ollama (self-hosted at ml01.alignedautomation.com) |
+| AI / ML | Configured LLM provider — Anthropic Claude, Groq, or self-hosted Ollama at ml01.alignedautomation.com (default/fallback) |
 
 ---
 
@@ -197,7 +197,7 @@ KBArticle {
     {
       id:          UUID (document_chunks.id)
       chunk_text:  TEXT (500 token segments, 50 token overlap)
-      embedding:   vector[384] (nomic-embed-text / all-MiniLM-L6-v2)
+      embedding:   vector[768] (nomic-embed-text / nomic-embed-text-v1.5)
       metadata:    JSONB
     }
   ]
@@ -217,11 +217,11 @@ KBArticle {
 
 ### Retrieval Configuration
 
-- Embedding model: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
+- Embedding model: `sentence-transformers/nomic-embed-text-v1.5` (768 dimensions)
 - Similarity metric: cosine distance via pgvector (`<=>` operator)
 - Minimum similarity threshold: 0.10
 - Top-K results returned: 3
-- Chunk size: 500 tokens, overlap: 50 tokens
+- Chunk size: 1000 characters, overlap: 200 characters
 - Adaptive retry: query simplified and retried if pgvector returns no results
 
 ---
@@ -263,7 +263,7 @@ Fast-path check (regex): Is this an escalation trigger?
                     |
                     v
              LLM generation: personality + context + query
-             (Ollama gpt-oss, temp=0.1, 800 tokens)
+             (configured provider: Claude / Groq / Ollama gpt-oss, temp=0.1, 800 tokens)
                     |
                     v
              Response streamed via SSE to frontend
@@ -451,7 +451,7 @@ Key rules surfaced by ITAgent on request:
 | Source | Content | Integration Method |
 |---|---|---|
 | SharePoint IT Library | VPN guides, password policy, hardware SOPs, security policies, troubleshooting FAQs | SharePoint ingestion job (Phase 1 file sync) |
-| pgvector (document_chunks) | 384-dim embeddings of all ingested IT documents | Cosine similarity retrieval in ITAgent |
+| pgvector (document_chunks) | 768-dim embeddings of all ingested IT documents | Cosine similarity retrieval in ITAgent |
 | escalations table (PostgreSQL) | IT tickets, access requests, security incidents, hardware requests | Direct DB read/write via ITAgent and EscalationAgent |
 | audit_logs table | IT action audit trail | Written on every escalation and sensitive action |
 | Azure AD / Microsoft Graph | User identity, group membership, license info | Graph API (read-only for context) |
@@ -461,8 +461,8 @@ Key rules surfaced by ITAgent on request:
 - **Sync schedule:** Configured via SharePoint ingestion job (`jobs/sharepoint_ingestion/`)
 - **Supported formats:** PDF, DOCX, XLSX, PPTX
 - **Change detection:** SHA-256 hash comparison (NEW / CHANGED / DELETED)
-- **Chunking:** 500 tokens per chunk, 50 token overlap
-- **Embedding:** HuggingFace `all-MiniLM-L6-v2` → 384-dim vector stored in `document_chunks.embedding`
+- **Chunking:** 1000 characters per chunk, 200 character overlap
+- **Embedding:** HuggingFace `nomic-embed-text-v1.5` → 768-dim vector stored in `document_chunks.embedding`
 - **Tags:** Source URL and document category stored in `documents.tags` JSONB and `document_chunks.metadata` JSONB
 
 ### Retrieval SQL Pattern
@@ -592,22 +592,23 @@ The ITAgent is a domain agent that inherits from `BaseDeepAgent` (`base_deep_age
 
 ### Routing Triggers
 
-The MasterAgent routes queries to ITAgent based on:
+The MasterAgent routes queries to ITAgent based on two live tiers:
 
 - **Fast-path regex:** Keywords such as `vpn`, `password`, `laptop`, `software install`, `network`, `printer`, `access request`, `antivirus`, `wi-fi`, `reset`, `locked out`
-- **LLM intent classification:** When regex confidence is low, the Ollama model classifies intent with timeout fallback
-- **DOMAIN_KEYWORDS scoring:** Fallback keyword dict scoring if LLM call times out
+- **DOMAIN_KEYWORDS scoring:** Keyword-dict scoring used as the catch-all when no regex matches
+
+An LLM-based intent classification method (`_route_llm()`) exists in `supervisor_agent.py` but is never invoked in the current build — it is not a live routing tier.
 
 ### Retrieval Pipeline
 
-1. **Parallel async retrieval:**
-   - pgvector similarity search on `document_chunks` (IT-tagged documents)
-   - FAISS local fallback if pgvector is unavailable
-   - User memory context (MarkdownStore)
-   - Optional Tavily web search (if `TAVILY_API_KEY` present)
-2. **Adaptive retry:** Query simplified and retried if pgvector returns no results above threshold (0.10)
-3. **Context assembly:** Memory + pgvector chunks + FAISS + web results combined
-4. **LLM generation:** Single Ollama call (`gpt-oss`, temperature=0.1, 800 tokens max, 2048 context window)
+1. **Conditional retrieval chain** (not a parallel `asyncio.gather` across sources):
+   - pgvector similarity search on `document_chunks` (IT-tagged documents) is tried first
+   - Only if pgvector returns zero results does the agent fall back to the local, per-domain FAISS/keyword knowledge base
+   - User memory context (MarkdownStore) is included when available
+   - Optional Tavily web search (if `TAVILY_API_KEY` present) may supplement the result
+2. **Adaptive retry:** Query simplified and retried once against pgvector if it returns no results above threshold (0.10), before falling back to FAISS
+3. **Context assembly:** Memory + pgvector chunks (or FAISS chunks on fallback) + optional web results combined
+4. **LLM generation:** Single call to the configured provider (Anthropic Claude, Groq, or Ollama `gpt-oss` as the default/fallback, selected by priority via env flags; temperature=0.1, 800 tokens max, 2048 context window)
 5. **Response delivery:** SSE streaming via `POST /api/chat/stream`
 
 ### Supported User Intents

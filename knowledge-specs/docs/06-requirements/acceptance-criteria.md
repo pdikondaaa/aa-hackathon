@@ -246,11 +246,11 @@ flowchart TD
 | Scenario | Condition | Expected Result |
 |----------|-----------|-----------------|
 | New document ingested | New SharePoint doc | Document chunked, embedded, stored in document_chunks |
-| Chunk size | 500-token document | Document split into chunks of ≤500 tokens with 50-token overlap |
+| Chunk size | 1000-character document | Document split into chunks of ≤1000 characters with 200-character overlap |
 | Changed document | Modification timestamp newer | Document re-ingested; old chunks replaced |
 | Deleted document | Document removed from SharePoint | Chunks soft-deleted in document_chunks table |
 | Source URL | Chunk in pgvector | `source_url` populated with SharePoint document URL |
-| Embedding dimension | Chunk embedded | Embedding stored as `vector(384)` |
+| Embedding dimension | Chunk embedded | Embedding stored as `vector(768)` |
 | Connection pool | Concurrent ingestion | Min=1, max=8 connections; no pool exhaustion |
 
 **Verification:** Ingestion job integration test with mock SharePoint API and real pgvector. Verify chunk table before and after for each scenario.

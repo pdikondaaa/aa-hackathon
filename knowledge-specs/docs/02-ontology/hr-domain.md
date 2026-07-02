@@ -169,9 +169,9 @@ HR policy documents are the primary knowledge source for HRAgent. All policy doc
 1. SharePoint document library sync (PDF, DOCX) via Microsoft Graph API
 2. Hash-based change detection (NEW / CHANGED / DELETED)
 3. TextExtractor extracts plain text
-4. TextChunker splits into 500-token chunks with 50-token overlap
-5. HuggingFace all-MiniLM-L6-v2 encodes to 384-dimensional vectors
-6. Vectors stored in `document_chunks.embedding` (pgvector vector[384])
+4. TextChunker splits into 1000-character chunks with 200-character overlap
+5. HuggingFace nomic-embed-text-v1.5 encodes to 768-dimensional vectors
+6. Vectors stored in `document_chunks.embedding` (pgvector vector[768])
 7. Retrieval at query time: cosine similarity, threshold 0.10, top 3 chunks
 
 **SharePoint data folders mapped to HRAgent:**
@@ -208,7 +208,7 @@ The DocumentAgent generates professional HR documents through a multi-turn conve
 
 **Session management:** One active document session per user, keyed by user email or user ID. Session state is maintained in-memory with a 30-minute timeout. Sessions survive between turns but expire after inactivity.
 
-### Supported Document Types (11 Types)
+### Supported Document Types (12 Types, plus custom)
 
 | Document Key | Document Name | Primary Purpose |
 |---|---|---|
@@ -224,6 +224,7 @@ The DocumentAgent generates professional HR documents through a multi-turn conve
 | `noc` | No Objection Certificate (NOC) | Higher studies, part-time work, travel clearance |
 | `confirmation_letter` | Employee Confirmation Letter | Probation completion and permanent employment confirmation |
 | `id_card_request` | ID Card Request Letter | Lost, damaged, or new joining ID card requests |
+| `custom` | Custom Document | Free-text mode for document types not covered above |
 
 ### Required Fields Per Document Type
 
@@ -253,7 +254,7 @@ User request -> Keyword/LLM doc-type detection
            -> Document wrapped and returned as markdown
 ```
 
-**Generation model:** Ollama gpt-oss at ml01.alignedautomation.com:11434 (max_tokens: 2048)  
+**Generation model:** Configured LLM provider — Anthropic Claude, Groq, or Ollama gpt-oss at ml01.alignedautomation.com:11434 (default/fallback), selected by priority via env flags (max_tokens: 2048)  
 **Format:** Markdown suitable for PDF conversion via jsPDF (frontend)  
 **Fallback:** `_template_document()` — deterministic template, never returns empty  
 **Reference format:** `REF/{year}/{4-digit-number}` auto-generated  
@@ -377,8 +378,8 @@ All HR policy documents are ingested from SharePoint document libraries into the
 | Ingestion schedule | Scheduled batch job |
 | Change detection | SHA-256 hash per file; NEW / CHANGED / DELETED states |
 | File formats | PDF, DOCX (primary), XLSX, PPTX |
-| Chunking | 500 tokens, 50-token overlap |
-| Embedding model | sentence-transformers/all-MiniLM-L6-v2 (384 dimensions) |
+| Chunking | 1000 characters, 200-character overlap |
+| Embedding model | sentence-transformers/nomic-embed-text-v1.5 (768 dimensions) |
 | Vector store | pgvector (document_chunks table, cosine distance) |
 | Fallback | FAISS local index |
 | Similarity threshold | 0.10 (permissive; returns top 3 chunks) |
@@ -532,7 +533,7 @@ erDiagram
 | HR Policy | Retrieve and explain POSH, WFH, conduct, grievance, separation policy | — | pgvector (SharePoint) |
 | Onboarding | Explain probation, confirmation, induction, documentation checklist | Confirmation Letter generation | pgvector (SharePoint) |
 | Performance | Explain appraisal cycle, ratings, self-assessment process | Promotion Letter generation | pgvector (SharePoint) |
-| HR Documents | Explain when and why documents are needed | Generate all 11 document types | LLM template generation |
+| HR Documents | Explain when and why documents are needed | Generate all 12 document types (plus custom) | LLM template generation |
 | Escalation | Detect need, route to EscalationAgent | — | Platform PostgreSQL (escalations) |
 | Employee Directory | Redirect to EmployeeAgent | — | Zoho People PostgreSQL |
 | Attendance | Redirect to AttendanceAgent | — | Zoho People PostgreSQL |
@@ -542,9 +543,10 @@ erDiagram
 | Signal Type | HR Keywords / Patterns |
 |---|---|
 | Fast-path regex (no LLM) | Apply leave, generate letter, employment verification, experience letter |
-| LLM routing | leave policy, benefit, payroll structure, POSH, grievance, appraisal, WFH |
-| Keyword fallback scoring | leave, sick, maternity, salary, PF, gratuity, increment, notice period, resignation |
+| Keyword fallback scoring (`DOMAIN_KEYWORDS`) | leave policy, benefit, payroll structure, POSH, grievance, appraisal, WFH, leave, sick, maternity, salary, PF, gratuity, increment, notice period, resignation |
 | Catch-all fallback | Any unrouted query that does not match other domains |
+
+Note: an LLM-based intent classification method (`_route_llm()`) exists in `supervisor_agent.py` but is never invoked in the current build — routing to HRAgent runs on the two live tiers above, not a three-tier design.
 
 ---
 
@@ -591,7 +593,7 @@ Extend HRAgent responses with role-contextual information for managers (Azure AD
 **Dependency:** Azure AD group membership retrieval (already within User.Read scope), role-context injection in BaseDeepAgent.
 
 ### FHR-09: Multi-Language HR Policy Support
-Extend the embedding pipeline to support multilingual queries for Hindi and Tamil-speaking employees. Use a multilingual embedding model (paraphrase-multilingual-MiniLM-L12-v2, 384-dim compatible) as a drop-in replacement to preserve the existing pgvector schema.
+Extend the embedding pipeline to support multilingual queries for Hindi and Tamil-speaking employees. Use a multilingual embedding model (paraphrase-multilingual-nomic-embed-text-v1.5-L12-v2, 768-dim compatible) as a drop-in replacement to preserve the existing pgvector schema.
 
 **Dependency:** Embedding model swap, LLM prompt localization for HR responses.
 
@@ -608,20 +610,19 @@ Integrate with a document signing service (DocuSign or Adobe Sign) to route gene
 graph TD
     subgraph SUPERVISOR["Supervisor (MasterAgent)"]
         FASTPATH[Fast-path Regex]
-        LLMROUTE[LLM Router]
-        KWFALLBACK[Keyword Fallback]
+        KWFALLBACK[Keyword Fallback\nDOMAIN_KEYWORDS]
     end
 
     subgraph HR_AGENTS["HR Domain Agents"]
         HRAGENT[HRAgent\nLeave, Benefits, Payroll, Policy]
-        DOCAGENT[DocumentAgent\n11 Document Types]
+        DOCAGENT[DocumentAgent\n12 Document Types + custom]
         ESCAGENT[EscalationAgent\nHR Escalations]
     end
 
     subgraph DATA_SOURCES["Data Sources"]
         PGVECTOR[(pgvector\nSharePoint Policies)]
         ZOHO[(Zoho People\nEmployee and Attendance)]
-        OLLAMA[Ollama gpt-oss\nml01.alignedautomation.com]
+        LLM[Configured LLM\nClaude / Groq / Ollama gpt-oss]
         PORTAL[Zoho People Portal\nLeave Application]
     end
 
@@ -630,7 +631,7 @@ graph TD
         PAYROLL[Payroll Structure]
         BENEFITS[Benefits Plans]
         POLICY[HR Policies]
-        DOCS[HR Documents\n11 Types]
+        DOCS[HR Documents\n12 Types + custom]
         ONBOARD[Onboarding\n8 Steps]
         PERF[Performance\nand Appraisal]
     end
@@ -638,14 +639,13 @@ graph TD
     USER[Authenticated Employee] --> SUPERVISOR
     FASTPATH -->|Apply leave regex| PORTAL
     FASTPATH -->|Document regex| DOCAGENT
-    LLMROUTE -->|HR intent| HRAGENT
-    KWFALLBACK -->|Default catch-all| HRAGENT
+    KWFALLBACK -->|Default catch-all, no live LLM routing tier| HRAGENT
 
     HRAGENT --> PGVECTOR
-    HRAGENT --> OLLAMA
+    HRAGENT --> LLM
     HRAGENT --> ESCAGENT
 
-    DOCAGENT --> OLLAMA
+    DOCAGENT --> LLM
 
     PGVECTOR --> LEAVE
     PGVECTOR --> PAYROLL

@@ -269,7 +269,7 @@ Admin documents are managed through the SharePoint ingestion pipeline and surfac
 
 1. Admin team uploads or updates documents in the designated SharePoint admin library
 2. The SharePoint ingestion job (`jobs/sharepoint_ingestion/`) polls for changes using hash-based detection (NEW / CHANGED / DELETED)
-3. Changed documents are extracted (PDF, DOCX, XLSX, PPTX supported), chunked at 500 tokens with 50-token overlap, embedded with `sentence-transformers/all-MiniLM-L6-v2` (384-dim), and upserted into `document_chunks` with pgvector
+3. Changed documents are extracted (PDF, DOCX, XLSX, PPTX supported), chunked at 1000 characters with 200-character overlap, embedded with `sentence-transformers/nomic-embed-text-v1.5` (768-dim), and upserted into `document_chunks` with pgvector
 4. The `documents` table records the document metadata including `source_path`, `tags`, and `hash`
 5. Soft-deleted documents (SharePoint removal) trigger `is_deleted=true` in both `documents` and `document_chunks` tables, with vector entries purged to prevent stale retrieval
 
@@ -288,7 +288,7 @@ Admin documents are managed through the SharePoint ingestion pipeline and surfac
 
 - **Knowledge partitions**: `Admin Documents` and `Admin Policies` folders (configured in `AdminAgent._DATA_FOLDERS`)
 - **Similarity threshold**: 0.10 (weak matches included, top 3 chunks selected)
-- **Embedding model**: `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional vectors)
+- **Embedding model**: `sentence-transformers/nomic-embed-text-v1.5` (768-dimensional vectors)
 - **Distance metric**: Cosine distance via pgvector (`embedding <=> query_vec::vector`)
 - **Adaptive retry**: If pgvector returns no results, the query is simplified and retried once before falling back to FAISS
 
@@ -383,7 +383,7 @@ Shared resources are physical assets that employees borrow temporarily (projecto
 - **Ingestion**: SharePoint ingestion job polls via Microsoft Graph API using Azure AD app credentials (`SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_TENANT_NAME`, `SHAREPOINT_SITE_PATH`)
 - **Change detection**: SHA-256 hash comparison (`hash VARCHAR UNIQUE` in `documents` table); unchanged files skipped
 - **File formats**: PDF, DOCX, XLSX, PPTX
-- **Storage**: pgvector `document_chunks` table with 384-dim embeddings
+- **Storage**: pgvector `document_chunks` table with 768-dim embeddings
 
 ### Microsoft Forms via Graph API
 - **Purpose**: Structured admin request collection (travel, visitor, supply, parking)
@@ -402,11 +402,10 @@ Shared resources are physical assets that employees borrow temporarily (projecto
 - **Access**: Read-only PostgreSQL connection to Zoho DB (`ZOHO_DB_HOST`, `ZOHO_DB_PORT`, `ZOHO_DB_NAME`)
 - **Usage**: AdminAgent may query employee grade to apply correct travel entitlements from policy documents
 
-### Ollama LLM (Self-Hosted)
-- **Endpoint**: `http://ml01.alignedautomation.com:11434`
-- **Model**: `gpt-oss`
+### Configured LLM (Claude > Groq > Ollama, Priority Order)
+- **Provider selection**: Anthropic Claude (`claude-sonnet-4-6` default), then Groq (`llama3-70b-8192` default), then self-hosted Ollama (`gpt-oss` at `http://ml01.alignedautomation.com:11434`) as the default/fallback, selected via env flags in `agents/working/config.py`
 - **Role**: Final response generation after retrieval context is assembled
-- **Parameters**: temperature=0.1, num_predict=800, num_ctx=2048
+- **Parameters** (Ollama configuration): temperature=0.1, num_predict=800, num_ctx=2048
 
 ---
 
@@ -574,21 +573,22 @@ The `AdminAgent` is a `BaseDeepAgent` subclass that handles all admin-domain que
 
 ### Routing
 
-The MasterAgent supervisor routes queries to AdminAgent via:
+The MasterAgent supervisor routes queries to AdminAgent via two live tiers:
 - **Fast-path regex**: Patterns matching "travel", "reimbursement", "parking", "meeting room", "visitor", "supplies", "facilities", "office", "booking"
-- **Keyword scoring**: `DOMAIN_KEYWORDS` dict scoring for the admin domain
-- **LLM intent classification**: Fallback routing when regex and keyword scoring yield low confidence
+- **Keyword scoring**: `DOMAIN_KEYWORDS` dict scoring for the admin domain, used as the catch-all when no regex matches
+
+An LLM intent classification method (`_route_llm()`) exists in `supervisor_agent.py` but is never invoked in the current build — it is not a live routing tier.
 
 ### Retrieval Pipeline (from BaseDeepAgent)
 
-1. **Parallel async retrieval**:
-   - pgvector search over `Admin Documents` and `Admin Policies` partitions
-   - FAISS local fallback if pgvector is unavailable
-   - User memory context from MarkdownStore and MemoryClient
-   - Tavily web search (if API key is configured)
-2. **Adaptive retry**: Query is simplified and retried if pgvector returns no results above threshold
+1. **Conditional retrieval chain** (not a parallel `asyncio.gather` across sources):
+   - pgvector search over `Admin Documents` and `Admin Policies` partitions is tried first
+   - Only if pgvector returns zero results does the agent fall back to the local, per-domain FAISS/keyword knowledge base built from local document folders
+   - User memory context from MarkdownStore and MemoryClient is included when available
+   - Tavily web search (if API key is configured) may supplement the result
+2. **Adaptive retry**: Query is simplified and retried once against pgvector if it returns no results above threshold, before falling back to FAISS
 3. **Similarity threshold**: 0.10 (top 3 chunks selected)
-4. **Context assembly**: Memory + pgvector chunks + FAISS chunks + optional web results
+4. **Context assembly**: Memory + pgvector chunks (or FAISS chunks on fallback) + optional web results
 5. **Generation**: Single LLM call using `ADMIN_PERSONALITY` system prompt plus assembled context
 
 ### Current Capabilities

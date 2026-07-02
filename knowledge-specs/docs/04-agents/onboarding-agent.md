@@ -1,9 +1,19 @@
 # Onboarding Module Specification
-# AA-Hackathon Enterprise AI Platform — Aligned Automation
-# Document Version: 1.0 | Last Updated: 2026-06-07
-# Source Files: backend/controllers/onboarding.py
-#               frontend/src/pages/OnboardingPage.jsx
-#               frontend/src/hooks/useOnboardingState.js
+# AURA (AA-Hackathon Enterprise Assistant) — Aligned Automation
+# Document Version: 1.1 — corrected against live codebase | Last Updated: 2026-07-02
+# Real source files: apps/api-gateway/app/api/onboarding.py
+#                    apps/web-ui/src/modules/onboarding-guidance/
+
+> **Accuracy note (2026-07-02):** The previous version of this file pointed at nonexistent
+> `backend/...` and `frontend/...` paths and named `useOnboardingState.js` as the live state hook
+> for the onboarding flow. The real backend endpoint file is
+> `apps/api-gateway/app/api/onboarding.py`, and the real frontend module is
+> `apps/web-ui/src/modules/onboarding-guidance/` (an 8-step wizard pulling real employee data from
+> the server). Note that `useOnboardingState.js`, along with `ChecklistPanel.jsx`, `DocumentPanel.jsx`,
+> `HRNotes.jsx`, `TimelinePanel.jsx`, `TrainingGrid.jsx`, and `WelcomeHeader.jsx` in that module are
+> **orphaned dead code** — not imported anywhere and referencing constants that no longer exist in
+> `constants/onboardingData.js`. They would throw if ever imported. The live onboarding flow does not
+> use these particular files; see `09-roadmap/technical-debt.md` (item F3).
 
 ---
 
@@ -12,11 +22,12 @@
 The Onboarding Module is a structured, 8-step guided workflow that takes a new employee
 from their first day at Aligned Automation through all setup, policy acknowledgment, and
 team integration tasks. Unlike the chat-based agents, the Onboarding Module is a dedicated
-page-based UI experience with a step navigator, checklist panels, and HR oversight tools.
+module-based UI experience (`modules/onboarding-guidance/`) with a step navigator and HR
+oversight tools.
 
-The module is NOT an AI agent — it does not use Ollama or retrieval. It is a stateful
-workflow controller backed by a PostgreSQL state table and a React frontend. The HRAgent
-references the Onboarding Module and can deep-link to it when employees ask onboarding
+The module is NOT an AI agent — it does not use an LLM or retrieval. It is a stateful
+workflow experience backed by real employee data from the server and a React frontend. The
+HRAgent can reference the Onboarding Module and deep-link to it when employees ask onboarding
 questions.
 
 ---
@@ -26,13 +37,11 @@ questions.
 | Property | Value |
 |----------|-------|
 | Module Name | OnboardingModule |
-| Backend | `backend/controllers/onboarding.py` |
-| Frontend Page | `frontend/src/pages/OnboardingPage.jsx` |
-| State Hook | `frontend/src/hooks/useOnboardingState.js` |
-| Database Table | `onboarding_progress` (PostgreSQL, db=squadrons) |
+| Backend (real) | `apps/api-gateway/app/api/onboarding.py` |
+| Frontend Module (real) | `apps/web-ui/src/modules/onboarding-guidance/` |
+| Orphaned dead code (not live) | `ChecklistPanel.jsx`, `DocumentPanel.jsx`, `HRNotes.jsx`, `TimelinePanel.jsx`, `TrainingGrid.jsx`, `WelcomeHeader.jsx`, `useOnboardingState.js` — unimported, reference missing constants |
 | Owner | HR Operations Team |
 | Access | New employee (all steps), HR Admin (oversight + notes) |
-| Route | `/onboarding` |
 
 ---
 

@@ -490,7 +490,7 @@ graph LR
 ### FEAT-023 — SharePoint RAG
 **Status:** implemented  
 **Version:** 1.0  
-**Description:** The RAG (Retrieval-Augmented Generation) knowledge base built from SharePoint Online documents. Ingestion job downloads documents, chunks them (500 tokens, 50 overlap), embeds with `all-MiniLM-L6-v2` (384-dim), and stores in `document_chunks` pgvector table. At query time, `retriever.py` embeds the query and performs cosine similarity search (`<=>` operator) returning `top_k=10` most relevant chunks.
+**Description:** The RAG (Retrieval-Augmented Generation) knowledge base built from SharePoint Online documents. Ingestion job downloads documents, chunks them (1000 characters, 50 overlap), embeds with `nomic-embed-text-v1.5` (768-dim), and stores in `document_chunks` pgvector table. At query time, `retriever.py` embeds the query and performs cosine similarity search (`<=>` operator) returning `top_k=10` most relevant chunks.
 
 **Backend Components:**
 - `apps/api-gateway/app/rag/retriever.py` — `retrieve_chunks()` runtime query function; connection pool min=1/max=8
@@ -498,7 +498,7 @@ graph LR
 
 **Frontend Components:** None (purely backend)
 
-**Dependencies:** SharePoint Online (`SHAREPOINT_SITE_URL`), PostgreSQL + pgvector, HuggingFace `all-MiniLM-L6-v2`, psycopg2
+**Dependencies:** SharePoint Online (`SHAREPOINT_SITE_URL`), PostgreSQL + pgvector, HuggingFace `nomic-embed-text-v1.5`, psycopg2
 
 ---
 

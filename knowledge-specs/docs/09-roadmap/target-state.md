@@ -1,16 +1,30 @@
-# Target State Vision — AA-Hackathon Enterprise AI Platform
+# Target State Vision — AURA (AA-Hackathon Enterprise Assistant)
 
 **Organization:** Aligned Automation  
-**Platform:** AA-Hackathon Enterprise Assistant  
-**Vision Horizon:** 6-Month Target  
-**Document Date:** 2026-06-07  
-**Version:** 1.0  
+**Platform:** AURA — AA-Hackathon Enterprise Assistant  
+**Vision Horizon:** 6-Month Target (aspirational — not committed or in progress)  
+**Document Date:** 2026-07-02 (revised — corrected against live codebase)  
+**Version:** 2.0  
+
+> **Accuracy note:** Everything in this document is **forward-looking and aspirational** — none of
+> the target-state items below reflect current implementation status. In particular, the
+> "LangGraph orchestration" item is not a migration already underway: `langgraph` is listed in
+> `apps/api-gateway/requirements.txt` but has **zero imports anywhere in the codebase** today. Treat
+> every mermaid diagram, table, and migration step in this document as a proposal, not a status
+> report. For the actual current state, see `09-roadmap/current-state.md` and `README.md`.
 
 ---
 
 ## Executive Summary
 
-This document defines the 6-month target architecture for the AA-Hackathon Enterprise AI Platform. The vision elevates the platform from a chat assistant with 13 domain agents into a full enterprise AI operating system: event-driven knowledge ingestion, LangGraph-orchestrated multi-step workflows, autonomous email dispatch, real-time monitoring, mobile-responsive PWA, and integration with Microsoft Teams and Confluence. Every target here is grounded in the existing codebase and extends — rather than replaces — the proven components.
+This document defines a 6-month target architecture for AURA. The vision would elevate the platform
+from its current state — a mixed roster of retrieval agents, lightweight agents, and
+plain-class/function handlers (not a fixed "13 agents," see `README.md` and
+`04-agents/agent-framework.md` for the real roster) routed by regex fast-paths and keyword scoring —
+into a fuller enterprise AI operating system: event-driven knowledge ingestion, LangGraph-orchestrated
+multi-step workflows, autonomous email dispatch, real-time monitoring, a mobile-responsive PWA, and
+integration with Microsoft Teams and Confluence. Every target here is intended to extend — rather than
+replace — the proven components of the current system, but none of it has shipped yet.
 
 ---
 
@@ -28,8 +42,8 @@ graph TD
         GW["FastAPI + Uvicorn"]
         AUTH["JWT Validator"]
         GOV["AI Governor Service\n(Dedicated Microservice)"]
-        LGGRAPH["LangGraph Orchestrator\n(State Machine)"]
-        AGENTS["15+ Domain Agents\n+ 3 New Phase 2 Agents"]
+        LGGRAPH["LangGraph Orchestrator\n(State Machine —\nzero implementation today,\nnot yet started)"]
+        AGENTS["Expanded handler roster\n(retrieval agents, lightweight\nagents, plain classes/functions)\n+ Phase 2 additions"]
         HYBRID["Hybrid Retriever\nBM25 + pgvector"]
         MEM["Enhanced Memory\nVector-Based Long-Term"]
         GUARD["Guardrails v2\nPII Auto-Redact + WAF"]
@@ -45,8 +59,8 @@ graph TD
     end
 
     subgraph "AI Layer"
-        OLLAMA["Ollama gpt-oss\nml01:11434"]
-        EMBED["HuggingFace\nall-MiniLM-L6-v2"]
+        LLM["Claude → Groq → Ollama\n(existing configurable priority,\nretained in target — not\nOllama-exclusive)"]
+        EMBED["nomic-embed-text-v1.5\n768-dim embeddings"]
         RERANK["Cross-Encoder\nRe-Ranker"]
     end
 
@@ -80,7 +94,7 @@ graph TD
     HYBRID --> PG
     HYBRID --> RERANK
     AGENTS --> MEM
-    AGENTS --> OLLAMA
+    AGENTS --> LLM
     AGENTS --> GUARD
     AGENTS --> GRAPH
     AGENTS --> ZOHO
@@ -104,7 +118,15 @@ graph TD
 
 ### 1. Orchestration — LangGraph State Machine
 
-Replace the flat MasterAgent router with a LangGraph state machine. Each conversation turn becomes a graph traversal: nodes for routing, retrieval, generation, memory update, and response formatting. Conditional edges allow agents to hand off to one another based on intermediate results.
+**Current status: not started.** `langgraph` is listed in `apps/api-gateway/requirements.txt` but has
+zero imports anywhere in the codebase today — there is no partial implementation, prototype, or
+parallel routing path to build on. The target below describes a possible future direction, not a
+migration in progress.
+
+Replace the flat MasterAgent router (regex fast-paths + keyword scoring, see `09-roadmap/current-state.md`)
+with a LangGraph state machine. Each conversation turn becomes a graph traversal: nodes for routing,
+retrieval, generation, memory update, and response formatting. Conditional edges allow agents to hand
+off to one another based on intermediate results.
 
 **Target capability:** A user asks "Check my leave balance, book three days from next Monday, and email my manager." The graph routes through Attendance Agent → Zoho write-back → Email Agent → Graph Mail.Send — all in a single turn, with state shared across nodes.
 
@@ -209,6 +231,9 @@ Cluster conversation embeddings weekly to identify emerging question trends, una
 ---
 
 ## Migration Plan Overview
+
+> None of the steps below have begun. This is a proposed sequence, starting from zero — there is no
+> existing LangGraph code, parallel routing path, or partial migration to build on today.
 
 | Step | Description | Risk |
 |---|---|---|

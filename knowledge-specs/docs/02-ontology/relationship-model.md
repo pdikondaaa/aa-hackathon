@@ -73,7 +73,7 @@ Knowledge documents are ingested from SharePoint by the `sharepoint_ingestion` j
 
 ### Generated HR Documents
 
-The `DocumentAgent` supports 11 HR document types that an employee requests and receives as generated artifacts.
+The `DocumentAgent` supports 12 HR document types, plus a free-text custom mode, that an employee requests and receives as generated artifacts.
 
 | From | Relationship | To | Cardinality |
 |---|---|---|---|
@@ -92,7 +92,10 @@ The `DocumentAgent` supports 11 HR document types that an employee requests and 
 8. Promotion Letter
 9. Address Proof
 10. Internship Certificate
-11. Confirmation Letter / ID Card Request
+11. Confirmation Letter
+12. ID Card Request
+
+(plus a free-text `custom` mode)
 
 Document generation is a multi-turn interaction. The `DocumentAgent` maintains state across turns within a single `Conversation` to collect required fields before generating the final artifact.
 
@@ -166,7 +169,7 @@ Attendance data is read directly from the Zoho People database. The `AttendanceA
 
 ### Data Flow
 
-1. The `AttendanceAgent` receives a query from the `MasterAgent` (fast-path regex detection or LLM routing).
+1. The `AttendanceAgent` receives a query from the `MasterAgent` (fast-path regex detection, or keyword-scoring fallback if no regex matches).
 2. It queries the Zoho People PostgreSQL database directly with the employee's `user_id`.
 3. It returns clock-in/clock-out records, absences, and monthly summaries.
 4. No attendance data is written to the `squadrons` database. All writes go directly to Zoho People via its API.
@@ -197,21 +200,21 @@ Feedback data is aggregated by the analytics API (`GET /api/analytics/overview`)
 
 ## 8. Document-Chunk Relationships
 
-Every knowledge document ingested from SharePoint is split into overlapping text chunks. Each chunk receives a 384-dimensional embedding vector stored in pgvector.
+Every knowledge document ingested from SharePoint is split into overlapping text chunks. Each chunk receives a 768-dimensional embedding vector stored in pgvector.
 
 | From | Relationship | To | Cardinality |
 |---|---|---|---|
 | Document | splits_into | DocumentChunk | One-to-Many |
 | DocumentChunk | belongs_to | Document | Many-to-One |
-| DocumentChunk | has | Embedding (vector[384]) | One-to-One |
+| DocumentChunk | has | Embedding (vector[768]) | One-to-One |
 | DocumentChunk | retrieved_by | DomainAgent | Many-to-Many |
 
 ### Chunking Parameters
 
-- Chunk size: 500 tokens
-- Overlap: 50 tokens
-- Embedder: `sentence-transformers/all-MiniLM-L6-v2` (HuggingFace)
-- Embedding dimension: 384
+- Chunk size: 1000 characters
+- Overlap: 200 characters
+- Embedder: `sentence-transformers/nomic-embed-text-v1.5` (HuggingFace)
+- Embedding dimension: 768
 - Distance metric: cosine (`<=>` pgvector operator)
 - Similarity threshold for retrieval: 0.10 (inclusive)
 - Top-k returned per query: 3
@@ -280,8 +283,8 @@ Each domain agent owns a specific set of entities and is the authoritative handl
 | OrgAgent | Company Info, Culture, Mission | pgvector (document_chunks) |
 | EmployeeAgent | Employee Directory, Self-Service | Zoho People DB (direct SQL) |
 | AttendanceAgent | Clock-in/out, Monthly Summary | Zoho People DB (direct SQL) |
-| DocumentAgent | Generated HR Documents (11 types) | LLM generation + template |
-| EmailAgent | Email Drafts, Refinement | Ollama LLM |
+| DocumentAgent | Generated HR Documents (12 types + custom) | LLM generation + template |
+| EmailAgent | Email Drafts, Refinement | Configured LLM (Claude / Groq / Ollama) |
 | EscalationAgent | Escalation Forms, Tracking | squadrons.escalations table |
 | QuickAgent | Conversational Replies | No retrieval |
 | FunnyAgent | Jokes, Casual Chat | No retrieval |
@@ -298,11 +301,11 @@ MasterAgent
 │   ├── Attendance → AttendanceAgent
 │   ├── Employee lookup → EmployeeAgent
 │   └── Document generation → DocumentAgent
-├── LLM routing (Ollama, with timeout fallback)
-│   └── Intent classification → domain agent selection
 └── Keyword fallback (DOMAIN_KEYWORDS scoring)
-    └── Best-score domain agent
+    └── Best-score domain agent, defaulting to QuickAgent if no domain scores above zero
 ```
+
+Note: an LLM-based routing method (`_route_llm()`) exists in `supervisor_agent.py` but is never invoked in the current build — it is not a live tier in the routing hierarchy above.
 
 ---
 
@@ -408,7 +411,7 @@ erDiagram
         uuid document_id FK
         text chunk_text
         jsonb metadata
-        vector_384 embedding
+        vector_768 embedding
         timestamp created_at
         bool is_deleted
     }
@@ -476,7 +479,7 @@ The following cardinality rules are enforced by database constraints and applica
 | Message → Feedback | 0 | 1 | `feedback.message_id` is unique; one rating per message per user |
 | Employee → Feedback (per message) | 0 | 1 | `(message_id, user_id)` composite uniqueness |
 | Document → DocumentChunks | 1 | Unlimited | Ingestion job enforces at least one chunk |
-| DocumentChunk → Embedding | 1 | 1 | Every chunk must have a 384-dim vector |
+| DocumentChunk → Embedding | 1 | 1 | Every chunk must have a 768-dim vector |
 | Escalation → AuditLogs | 0 | Unlimited | Every status change produces an audit log entry |
 | Employee → Escalations | 0 | Unlimited | No limit enforced |
 | Document → DomainTags | 1 | Many | At least one domain tag required post-ingestion |
@@ -492,7 +495,7 @@ The following cardinality rules are enforced by database constraints and applica
 | `documents` | `UNIQUE (hash)` | Prevents duplicate document ingestion; hash is SHA of file content |
 | `feedback` | `rating IN (-1, 0, 1)` | Only valid rating values accepted |
 | `messages` | `role IN ('user', 'assistant')` | Only two valid roles |
-| `document_chunks` | `embedding vector(384)` | Fixed-dimension enforced by pgvector type |
+| `document_chunks` | `embedding vector(768)` | Fixed-dimension enforced by pgvector type |
 | All tables | `id UUID DEFAULT gen_random_uuid()` | UUIDs generated at DB level |
 | All tables | `is_deleted BOOLEAN DEFAULT false` | Soft delete pattern; no hard deletes |
 | `conversations` | `user_id NOT NULL` | Every conversation must be owned by an employee |
@@ -504,14 +507,14 @@ The following cardinality rules are enforced by database constraints and applica
 | Rule | Enforced By |
 |---|---|
 | JWT token required on all API calls except `/api/health` | Azure AD JWT middleware (python-jose) |
-| Agent routing must resolve within timeout; fallback to keyword scoring | `supervisor_agent.py` timeout logic |
+| Agent routing resolves via regex fast-paths, then keyword scoring if no regex matches | `supervisor_agent.py` routing logic |
 | Similarity threshold 0.10: chunks below this score are excluded | `base_deep_agent.py` retrieval pipeline |
 | Maximum 3 chunks returned per pgvector query | `rag/retriever.py` top_k=3 |
 | PII must be scanned before message is written to `messages` table | `pii_controller.py` pre-write hook |
 | Soft delete only: `is_deleted = true` instead of `DELETE` | All CRUD endpoints |
 | Connection pool bounded at 8 connections | `ThreadedConnectionPool(min=1, max=8)` |
-| LLM token budget: 800 tokens output, 2048 context | Ollama `num_predict`, `num_ctx` config |
-| Embedding dimension must match 384 at query and storage time | `EMBEDDING_DIMENSION=384` env var check |
+| LLM token budget: 800 tokens output, 2048 context | Configured provider's `num_predict`, `num_ctx` config (Claude/Groq/Ollama, selected by priority via env flags) |
+| Embedding dimension must match 768 at query and storage time | `EMBEDDING_DIMENSION=768` env var check |
 
 ### Referential Integrity
 

@@ -1,7 +1,7 @@
 # Email Agent Specification
 # AA-Hackathon Enterprise AI Platform — Aligned Automation
 # Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/email_agent.py
+# Source File: apps/api-gateway/app/agents/email_agent.py
 # Frontend: frontend/src/pages/EmailAgentPage.jsx
 
 ---
@@ -26,8 +26,8 @@ platform's future mail-send integration.
 |----------|-------|
 | Registry Key | `email` |
 | Class | `EmailAgent` |
-| Base Class | `Standalone` (no BaseDeepAgent) |
-| Source File | `backend/agents/email_agent.py` |
+| Base Class | Plain function wrapped in an adapter class in `supervisor_agent.py` (no BaseDeepAgent) |
+| Source File | `apps/api-gateway/app/agents/email_agent.py` |
 | Frontend | `frontend/src/pages/EmailAgentPage.jsx` |
 | API Endpoint | `POST /api/email-agent/from-chat` |
 | Fallback | Redirect user to compose in Outlook |

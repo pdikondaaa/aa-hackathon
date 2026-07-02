@@ -140,7 +140,7 @@ Exception: SQL queries always use `%s` parameterized placeholders with psycopg2,
 | Function | snake_case | `get_document_chunks()` |
 | Variable | snake_case | `chunk_count = 0` |
 | Class | PascalCase | `DocumentService` |
-| Constant | UPPER_SNAKE_CASE | `MAX_CHUNK_SIZE = 500` |
+| Constant | UPPER_SNAKE_CASE | `MAX_CHUNK_SIZE = 1000` |
 | Private | leading underscore | `_validate_token()` |
 | Type alias | PascalCase | `DocumentChunk = dict[str, Any]` |
 

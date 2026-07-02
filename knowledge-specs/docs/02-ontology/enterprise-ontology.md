@@ -641,11 +641,11 @@ A Document is any file ingested into the platform's knowledge base. Documents ar
 ### 3.15 DocumentChunk
 
 **Description:**
-A DocumentChunk is a semantically coherent text segment produced by splitting a Document for vector storage. Each chunk is embedded using the `all-MiniLM-L6-v2` model (384-dimensional dense vectors) and stored in PostgreSQL with the `pgvector` extension. DocumentChunks are the atomic units retrieved during RAG.
+A DocumentChunk is a semantically coherent text segment produced by splitting a Document for vector storage. Each chunk is embedded using the `nomic-embed-text-v1.5` model (768-dimensional dense vectors) and stored in PostgreSQL with the `pgvector` extension. DocumentChunks are the atomic units retrieved during RAG.
 
 **Chunking Parameters:**
-- Chunk size: 500 tokens
-- Chunk overlap: 50 tokens
+- Chunk size: 1000 characters
+- Chunk overlap: 200 characters
 - Similarity threshold: 0.10 (weak matches included)
 - Top-K returned: 3 per query (configurable)
 
@@ -658,7 +658,7 @@ A DocumentChunk is a semantically coherent text segment produced by splitting a 
 | chunk_text | TEXT | 0 | Raw text content of the chunk |
 | chunk_index | INTEGER | 0 | Position within the document |
 | metadata | JSONB | 0 | Page number, section heading, source URL, tags |
-| embedding | VECTOR(384) | 0 | HuggingFace dense embedding |
+| embedding | VECTOR(768) | 0 | HuggingFace dense embedding |
 | similarity_score | FLOAT | 0 | Computed at query time (cosine similarity) |
 | is_deleted | BOOLEAN | 0 | Soft delete |
 | created_at | TIMESTAMP | 0 | |

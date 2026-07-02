@@ -33,19 +33,19 @@ erDiagram
         uuid document_id FK "NOT NULL REFERENCES documents(id)"
         text chunk_text "NOT NULL"
         jsonb metadata "NOT NULL DEFAULT '{}'"
-        vector_384 embedding "NOT NULL vector(384)"
+        vector embedding "NOT NULL vector(768), nomic-embed-text-v1.5"
         boolean is_deleted "NOT NULL DEFAULT FALSE"
         timestamptz created_at "NOT NULL DEFAULT NOW()"
     }
-    hnsw_index {
-        string name "idx_document_chunks_embedding_hnsw"
-        string type "USING hnsw"
+    ivfflat_index {
+        string name "idx_document_chunks_embedding_ivfflat"
+        string type "USING ivfflat"
         string ops "vector_cosine_ops"
-        int m "16"
-        int ef_construction "64"
+        int lists "100 (approx.)"
+        string query_param "SET ivfflat.probes = 10"
     }
     documents ||--o{ document_chunks : "contains N chunks"
-    document_chunks }|--|| hnsw_index : "indexed by"
+    document_chunks }|--|| ivfflat_index : "indexed by"
 ```
 
 ---
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     document_id UUID    NOT NULL,
     chunk_text  TEXT    NOT NULL,
     metadata    JSONB   NOT NULL DEFAULT '{}',
-    embedding   vector(384) NOT NULL,
+    embedding   vector(768) NOT NULL,
     is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -134,8 +134,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
         ON DELETE RESTRICT
 );
 
-COMMENT ON TABLE document_chunks IS 'Text chunks from documents with 384-dim cosine embeddings for vector similarity search.';
-COMMENT ON COLUMN document_chunks.embedding IS '384-dimensional L2-normalized vector from all-MiniLM-L6-v2. Cosine similarity via <=> operator.';
+COMMENT ON TABLE document_chunks IS 'Text chunks from documents with 768-dim cosine embeddings for vector similarity search.';
+COMMENT ON COLUMN document_chunks.embedding IS '768-dimensional L2-normalized vector from nomic-embed-text-v1.5. Cosine similarity via <=> operator.';
 COMMENT ON COLUMN document_chunks.metadata IS 'JSONB: {chunk_index, page_number, slide_number, sheet_name, section_title, word_count, char_count}';
 
 -- Foreign key index
@@ -151,32 +151,40 @@ CREATE INDEX IF NOT EXISTS idx_document_chunks_active
 
 ---
 
-## 6. HNSW Vector Index DDL
+## 6. IVFFlat Vector Index DDL (current)
+
+The platform's retrieval query pattern (`app/rag/retriever.py`) is documented as running against an **IVFFlat** index with `probes = 10` — this is the current, real index type, not HNSW.
 
 ```sql
--- HNSW index for production (better query performance)
-CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw
-    ON document_chunks
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
-
-COMMENT ON INDEX idx_document_chunks_embedding_hnsw IS
-    'HNSW graph index for approximate nearest neighbor search. '
-    'm=16: graph connections per node. ef_construction=64: build quality. '
-    'Use SET hnsw.ef_search=100 at query time for better recall.';
-```
-
-Alternative IVFFlat index for development or small datasets:
-
-```sql
--- IVFFlat index for development (faster build, slightly lower recall)
--- Run AFTER inserting initial data (IVFFlat needs data to cluster)
+-- IVFFlat index (current production index type)
+-- Must be built AFTER inserting initial data — IVFFlat trains its clusters on existing rows
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_ivfflat
     ON document_chunks
     USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
 
--- lists ≈ sqrt(row_count). Recalculate and REINDEX as data grows.
+-- Query-time parameter
+SET ivfflat.probes = 10;
+
+COMMENT ON INDEX idx_document_chunks_embedding_ivfflat IS
+    'IVFFlat index for approximate nearest neighbor search. '
+    'lists=100: number of inverted-list clusters (approx. sqrt(row_count)). '
+    'ivfflat.probes=10 set at query time controls the recall/speed trade-off.';
+```
+
+### 6.1 Future Alternative: HNSW
+
+HNSW (Hierarchical Navigable Small World) is a pgvector index type that generally offers faster queries and higher recall than IVFFlat at the cost of slower, more memory-intensive builds. It is a plausible **future** upgrade path for this platform but is not confirmed as the index type currently in use — do not describe it as the production index without re-verifying against the live database.
+
+```sql
+-- Illustrative future alternative — not confirmed as currently deployed
+CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw
+    ON document_chunks
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+-- Query-time parameter
+SET hnsw.ef_search = 100;
 ```
 
 ---
@@ -398,7 +406,7 @@ COMMIT;
 | `<->` | Euclidean (L2) distance | `ORDER BY embedding <-> query_vec` | Alternative metric |
 | `<#>` | Negative inner product | `ORDER BY embedding <#> query_vec` | Maximum inner product search |
 
-This platform uses `<=>` (cosine distance) exclusively. Embeddings from `all-MiniLM-L6-v2` are L2-normalized, so cosine similarity and inner product search produce equivalent results.
+This platform uses `<=>` (cosine distance) exclusively. Embeddings from `nomic-embed-text-v1.5` are L2-normalized, so cosine similarity and inner product search produce equivalent results.
 
 **Similarity score from cosine distance:**
 
@@ -413,48 +421,42 @@ This platform uses `<=>` (cosine distance) exclusively. Embeddings from `all-Min
 
 ## 12. Dimension Selection Rationale
 
-The embedding dimension of 384 was selected after evaluation:
+The embedding dimension of 768 was selected after evaluation:
 
 | Dimension | Model Example | Storage per Chunk | Query Speed | Quality |
 |-----------|-------------|-------------------|-------------|---------|
-| 384 | all-MiniLM-L6-v2 | 1.5 KB | Fast | Good |
+| 768 | nomic-embed-text-v1.5 | 1.5 KB | Fast | Good |
 | 768 | all-mpnet-base-v2 | 3.1 KB | Medium | Better |
 | 1536 | text-embedding-ada-002 | 6.1 KB | Slow | Best |
 
-Storage calculation for 10,000 chunks at 384 dimensions: `10,000 × 384 × 4 bytes = 15 MB` — negligible.
+Storage calculation for 10,000 chunks at 768 dimensions: `10,000 × 768 × 4 bytes = 15 MB` — negligible.
 
-384 dimensions provides sufficient quality for HR/IT/Policy document retrieval at the scale of a single organization's knowledge base (estimated 50,000–100,000 chunks maximum).
+768 dimensions provides sufficient quality for HR/IT/Policy document retrieval at the scale of a single organization's knowledge base (estimated 50,000–100,000 chunks maximum).
 
 ---
 
 ## 13. Performance Tuning
 
-### 13.1 HNSW Query Parameters
-
-```sql
--- Set per-session for analytics queries where recall is critical
-SET hnsw.ef_search = 200;  -- More candidates = better recall, slower query
-
--- Default for production (good balance)
-SET hnsw.ef_search = 100;
-
--- Minimum (fastest, lower recall — acceptable for real-time chat)
-SET hnsw.ef_search = 64;
-```
-
-### 13.2 IVFFlat Query Parameters
+### 13.1 IVFFlat Query Parameters (current)
 
 ```sql
 -- Number of inverted lists to probe (higher = better recall, slower)
-SET ivfflat.probes = 10;   -- Good balance for 100 lists
+SET ivfflat.probes = 10;   -- The platform's documented default
 SET ivfflat.probes = 20;   -- Better recall, slower
+```
+
+### 13.2 HNSW Query Parameters (future alternative, not confirmed current)
+
+```sql
+-- Illustrative only — see Section 6.1
+SET hnsw.ef_search = 100;
 ```
 
 ### 13.3 Index Maintenance
 
 ```sql
 -- Reindex after large bulk ingestion (> 10% of total rows added)
-REINDEX INDEX CONCURRENTLY idx_document_chunks_embedding_hnsw;
+REINDEX INDEX CONCURRENTLY idx_document_chunks_embedding_ivfflat;
 
 -- Update statistics for query planner
 ANALYZE document_chunks;
@@ -481,4 +483,4 @@ ORDER BY dc.embedding <=> '[0.1,0.2,...]'::vector
 LIMIT 10;
 ```
 
-Expected execution plan: Index Scan using `idx_document_chunks_embedding_hnsw`. If a Sequential Scan appears, check that the index exists and `hnsw.ef_search` is not too high (which can force seq scan).
+Expected execution plan: Index Scan using `idx_document_chunks_embedding_ivfflat`. If a Sequential Scan appears, check that the index exists and `ivfflat.probes` is set appropriately.

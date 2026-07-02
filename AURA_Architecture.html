@@ -1,0 +1,402 @@
+<title>AA-Hackathon Enterprise Assistant — Architecture Document</title>
+<style>
+  :root{
+    --ink:#14213D;
+    --paper:#F7F5F0;
+    --card:#FFFFFF;
+    --slate:#5B6472;
+    --line:#DDD8CC;
+    --teal:#1B7A72;
+    --teal-dim:#E4EFEC;
+    --amber:#B8842E;
+    --amber-dim:#F5ECDD;
+    --green:#3F7D5C;
+    --code-bg:#101826;
+    --code-fg:#DCE6E3;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --serif:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif;
+    --mono:"Cascadia Code","SF Mono",Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--teal);}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--teal);outline-offset:2px;}
+
+  /* ---------- Layout shell ---------- */
+  .shell{display:flex;max-width:1180px;margin:0 auto;}
+  .rail{
+    width:230px;flex:none;position:sticky;top:0;align-self:flex-start;
+    height:100vh;overflow-y:auto;padding:28px 18px 28px 28px;
+  }
+  .rail-brand{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--slate);text-transform:uppercase;margin-bottom:18px;}
+  .rail nav{display:flex;flex-direction:column;gap:2px;}
+  .rail a{
+    display:flex;gap:10px;color:var(--ink);text-decoration:none;font-size:13px;
+    padding:7px 10px;border-radius:6px;border-left:2px solid transparent;
+  }
+  .rail a:hover{background:var(--teal-dim);}
+  .rail a .n{font-family:var(--mono);color:var(--teal);font-size:11px;padding-top:1px;}
+  .main{flex:1;min-width:0;padding:0 56px 100px 40px;}
+
+  /* ---------- Cover ---------- */
+  .cover{
+    background:linear-gradient(165deg,var(--ink) 0%,#1D3358 100%);
+    color:var(--paper);margin:28px 0 60px 0;padding:64px 56px 48px;
+    border-radius:14px;position:relative;overflow:hidden;
+  }
+  .cover::after{
+    content:"";position:absolute;right:-60px;top:-60px;width:280px;height:280px;
+    border-radius:50%;border:1px solid rgba(247,245,240,.12);
+  }
+  .cover::before{
+    content:"";position:absolute;right:20px;top:40px;width:180px;height:180px;
+    border-radius:50%;border:1px solid rgba(247,245,240,.10);
+  }
+  .cover-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#9FC7C0;}
+  .cover h1{font-family:var(--serif);font-size:42px;margin:14px 0 6px;text-wrap:balance;line-height:1.15;max-width:640px;}
+  .cover .sub{font-size:17px;color:#C9D3E4;max-width:560px;margin-bottom:34px;}
+  .cover-meta{display:flex;gap:36px;flex-wrap:wrap;border-top:1px solid rgba(247,245,240,.18);padding-top:20px;font-size:12.5px;}
+  .cover-meta div span{display:block;color:#8FA0BF;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;font-size:10.5px;margin-bottom:4px;}
+
+  /* ---------- Section scaffolding ---------- */
+  section{padding-top:74px;border-top:1px solid var(--line);margin-top:0;}
+  section:first-of-type{border-top:none;}
+  .eyebrow{font-family:var(--mono);font-size:12px;color:var(--teal);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:10px;}
+  .eyebrow .num{background:var(--teal-dim);color:var(--teal);border-radius:4px;padding:2px 7px;font-weight:600;}
+  h2{font-size:27px;margin:0 0 6px;text-wrap:balance;letter-spacing:-.01em;}
+  .lede{color:var(--slate);font-size:15.5px;max-width:640px;margin-bottom:30px;}
+  h3{font-size:16.5px;margin:32px 0 10px;color:var(--ink);}
+  p{max-width:680px;font-size:15px;}
+  .callout{
+    background:var(--card);border:1px solid var(--line);border-left:3px solid var(--teal);
+    border-radius:8px;padding:16px 20px;max-width:680px;font-size:14px;color:#333;margin:18px 0;
+  }
+  .callout b{color:var(--ink);}
+
+  /* ---------- Diagram system (boxes + arrows) ---------- */
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:34px 30px;margin:20px 0 8px;overflow-x:auto;}
+  .tier-label{font-family:var(--mono);font-size:10.5px;color:var(--slate);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;text-align:center;}
+  .row{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:6px;}
+  .box{
+    border:1.5px solid var(--ink);border-radius:8px;padding:10px 14px;background:var(--paper);
+    font-size:12.5px;font-weight:600;text-align:center;min-width:118px;line-height:1.3;
+  }
+  .box.accent{border-color:var(--teal);background:var(--teal-dim);color:var(--teal);}
+  .box.amber{border-color:var(--amber);background:var(--amber-dim);color:#8a6320;}
+  .box.wide{min-width:100%;}
+  .box small{display:block;font-weight:400;color:var(--slate);font-size:10.5px;margin-top:2px;font-family:var(--mono);}
+  .arrow-down{text-align:center;color:var(--slate);font-size:18px;margin:2px 0;line-height:1;}
+  .agent-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin:8px 0;}
+  .agent-grid .box{min-width:0;font-size:11px;padding:8px 6px;}
+  .bracket{border-top:1.5px dashed var(--line);margin:18px 0 14px;position:relative;}
+  .bracket span{position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:var(--card);padding:0 10px;font-family:var(--mono);font-size:10px;color:var(--slate);text-transform:uppercase;letter-spacing:.06em;}
+
+  /* ---------- Folder tree ---------- */
+  .tree{
+    background:var(--code-bg);color:var(--code-fg);border-radius:10px;padding:24px 28px;
+    font-family:var(--mono);font-size:12.6px;line-height:1.7;overflow-x:auto;margin:18px 0;
+  }
+  .tree .d{color:#8FD6C9;font-weight:600;}
+  .tree .f{color:#B9C4D0;}
+  .tree .c{color:#5C6B7A;}
+
+  /* ---------- Tables ---------- */
+  table{width:100%;border-collapse:collapse;margin:14px 0 8px;font-size:13.5px;}
+  th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--slate);border-bottom:1px solid var(--ink);padding:8px 12px 8px 0;font-weight:600;}
+  td{padding:10px 12px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;}
+  td.mono,.tree,code{font-family:var(--mono);}
+  code{background:var(--teal-dim);color:var(--teal);padding:1px 6px;border-radius:4px;font-size:12.5px;}
+  tr:last-child td{border-bottom:1px solid var(--line);}
+  .table-wrap{overflow-x:auto;}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:20px;background:var(--teal-dim);color:var(--teal);}
+  .tag.live{background:#E4EFE8;color:var(--green);}
+  .tag.next{background:var(--amber-dim);color:#8a6320;}
+
+  /* ---------- Why-grid ---------- */
+  .why-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin:18px 0;}
+  .why-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px;}
+  .why-card h4{margin:0 0 8px;font-size:14.5px;display:flex;align-items:center;gap:8px;}
+  .why-card h4 .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);flex:none;}
+  .why-card p{margin:0;font-size:13.5px;color:#3b4350;}
+
+  /* ---------- Footer ---------- */
+  footer{margin-top:90px;padding-top:24px;border-top:1px solid var(--line);color:var(--slate);font-size:12px;font-family:var(--mono);display:flex;justify-content:space-between;}
+
+  @media (max-width:900px){
+    .rail{display:none;}
+    .main{padding:0 20px 80px;}
+    .agent-grid{grid-template-columns:repeat(3,1fr);}
+    .why-grid{grid-template-columns:1fr;}
+  }
+</style>
+
+<div class="shell">
+  <div class="rail">
+    <div class="rail-brand">AURA · Architecture Doc</div>
+    <nav>
+      <a href="#exec"><span class="n">00</span>Executive Summary</a>
+      <a href="#hla"><span class="n">01</span>High-Level Architecture</a>
+      <a href="#flow"><span class="n">02</span>Request Lifecycle</a>
+      <a href="#folders"><span class="n">03</span>Repository Structure</a>
+      <a href="#techspec"><span class="n">04</span>Technical Specification</a>
+      <a href="#why"><span class="n">05</span>Why This Architecture</a>
+      <a href="#ml"><span class="n">06</span>ML Self-Learning Loop</a>
+      <a href="#roadmap"><span class="n">07</span>Roadmap</a>
+    </nav>
+  </div>
+
+  <div class="main">
+
+    <div class="cover">
+      <div class="cover-eyebrow">Enterprise Architecture Document</div>
+      <h1>AA-Hackathon Enterprise Assistant</h1>
+      <div class="sub">A multi-agent, retrieval-augmented AI platform unifying HR, IT, Administration, PMO, and Finance self-service for Aligned Automation employees.</div>
+      <div class="cover-meta">
+        <div><span>Prepared By</span>Principal Solution Architect</div>
+        <div><span>Client</span>Aligned Automation</div>
+        <div><span>Version</span>1.0</div>
+        <div><span>Date</span>02 July 2026</div>
+        <div><span>Classification</span>Internal — Architecture Review</div>
+      </div>
+    </div>
+
+    <!-- 00 EXEC SUMMARY -->
+    <section id="exec">
+      <div class="eyebrow"><span class="num">00</span>Executive Summary</div>
+      <h2>One assistant, five departments, zero email chains</h2>
+      <p class="lede">Employees today email HR for a leave policy, email IT for a laptop, and email Admin for a visitor pass. This platform replaces all three inboxes with one conversational front door — backed by real company data, not guesses.</p>
+      <div class="callout">
+        <b>In plain English:</b> the system is built from three layers. A <b>front door</b> (the chat interface employees actually use), a <b>brain</b> (a router that decides which specialist should answer, then 13 specialists who each know one domain deeply), and a <b>memory</b> (company documents and HR records, converted into a searchable form the AI can read accurately instead of guessing).
+      </div>
+      <p>It is deliberately <i>not</i> one giant AI trying to know everything — that approach hallucinates under pressure. It is a small team of narrow experts, coordinated by a dispatcher, each backed by verified source documents.</p>
+    </section>
+
+    <!-- 01 HIGH LEVEL ARCHITECTURE -->
+    <section id="hla">
+      <div class="eyebrow"><span class="num">01</span>High-Level Architecture</div>
+      <h2>System diagram — five layers, one flow</h2>
+      <p class="lede">Every request moves top to bottom. Each layer has exactly one job, so a failure or change in one layer never forces a rewrite of the others.</p>
+
+      <div class="diagram">
+        <div class="tier-label">Layer 1 — Experience</div>
+        <div class="row">
+          <div class="box accent">Web UI (React 18 + Vite)<small>Chat · Documents · Analytics · Onboarding</small></div>
+          <div class="box">Azure AD SSO<small>MSAL login</small></div>
+        </div>
+        <div class="arrow-down">↓ HTTPS / SSE stream</div>
+
+        <div class="tier-label">Layer 2 — API Gateway</div>
+        <div class="row">
+          <div class="box wide">FastAPI Gateway<small>Auth · Rate limits · Guardrails (Tier 1 static + Tier 2 LLM) · Audit log</small></div>
+        </div>
+        <div class="arrow-down">↓</div>
+
+        <div class="tier-label">Layer 3 — Orchestration (the "brain")</div>
+        <div class="row">
+          <div class="box accent">MasterAgent — 3-Tier Router<small>Regex fast-path → LLM classify → keyword fallback</small></div>
+        </div>
+        <div class="arrow-down">↓ routes to one of 13 specialists</div>
+
+        <div class="tier-label">Layer 4 — Domain Agents (BaseDeepAgent)</div>
+        <div class="agent-grid">
+          <div class="box">HR Agent</div><div class="box">IT Agent</div><div class="box">Admin Agent</div><div class="box">PMO Agent</div><div class="box">Finance Agent</div><div class="box">Org Agent</div><div class="box">Employee Agent</div>
+          <div class="box">Attendance</div><div class="box">Document<small>11 letter types</small></div><div class="box">Email Agent</div><div class="box">Escalation</div><div class="box">Quick Agent</div><div class="box">Funny Agent</div>
+        </div>
+        <div class="arrow-down">↓ parallel retrieval, single LLM call per query</div>
+
+        <div class="tier-label">Layer 5 — Knowledge &amp; Data</div>
+        <div class="row">
+          <div class="box amber">pgvector<small>384-dim, cosine</small></div>
+          <div class="box amber">FAISS<small>fallback index</small></div>
+          <div class="box amber">Memory Store<small>Markdown + DB</small></div>
+          <div class="box amber">Tavily<small>live web search</small></div>
+        </div>
+        <div class="bracket"><span>external systems of record</span></div>
+        <div class="row">
+          <div class="box">PostgreSQL<small>convos · docs · audit</small></div>
+          <div class="box">Redis<small>session/cache</small></div>
+          <div class="box">SharePoint<small>policy documents</small></div>
+          <div class="box">Zoho People<small>HR records, read-only</small></div>
+          <div class="box">MS Graph<small>email &amp; profile</small></div>
+          <div class="box">Ollama LLM<small>gpt-oss @ ml01</small></div>
+        </div>
+      </div>
+      <p style="font-size:12.5px;color:var(--slate);margin-top:10px;">Reading it in plain English: a message enters through the browser, passes a security check, gets handed to the one specialist who owns that topic, that specialist looks up the real answer in company data before writing a response, and every step is logged for audit.</p>
+    </section>
+
+    <!-- 02 REQUEST LIFECYCLE -->
+    <section id="flow">
+      <div class="eyebrow"><span class="num">02</span>Request Lifecycle</div>
+      <h2>What happens in the ~2 seconds after you hit send</h2>
+      <p class="lede">This is the same diagram, viewed as a timeline instead of a stack — useful for explaining latency and cost to non-technical stakeholders.</p>
+      <div class="diagram">
+        <div class="row"><div class="box">1. Employee asks<small>“How many casual leaves do I have left?”</small></div></div>
+        <div class="arrow-down">→</div>
+        <div class="row"><div class="box">2. Guardrails screen<small>jailbreak / harm / scope check</small></div></div>
+        <div class="arrow-down">→</div>
+        <div class="row"><div class="box accent">3. MasterAgent classifies<small>Tier 1 regex misses → Tier 2 LLM → routes to HR</small></div></div>
+        <div class="arrow-down">→</div>
+        <div class="row"><div class="box">4. HRAgent retrieves in parallel<small>pgvector + FAISS + memory + Tavily</small></div></div>
+        <div class="arrow-down">→</div>
+        <div class="row"><div class="box">5. Similarity check<small>score &lt; 0.10 → reformulate &amp; retry once</small></div></div>
+        <div class="arrow-down">→</div>
+        <div class="row"><div class="box">6. One LLM call<small>grounded in retrieved leave policy + Zoho balance</small></div></div>
+        <div class="arrow-down">→</div>
+        <div class="row"><div class="box amber">7. Response streamed to chat<small>HTML-formatted, logged to audit_logs</small></div></div>
+      </div>
+      <div class="callout"><b>Why "single LLM call" matters:</b> chained, multi-prompt agent designs are slower and 3–5× more expensive per query. One well-grounded call per question keeps cost predictable at enterprise query volume.</div>
+    </section>
+
+    <!-- 03 FOLDER STRUCTURE -->
+    <section id="folders">
+      <div class="eyebrow"><span class="num">03</span>Repository Structure</div>
+      <h2>Where everything lives</h2>
+      <p class="lede">The repository mirrors the architecture diagram — each top-level folder is one layer or one concern. Nothing is scattered.</p>
+      <div class="tree">
+<span class="d">aa-hackathon/</span>
+├── <span class="d">apps/</span><span class="c">                        # everything that runs</span>
+│   ├── <span class="d">web-ui/</span><span class="c">               # Layer 1 — React 18 + Vite front end</span>
+│   │   └── <span class="d">src/</span>
+│   │       ├── <span class="d">components/</span><span class="c">      # ChatWindow, EscalationDrawer, FormsDrawer…</span>
+│   │       ├── <span class="d">modules/</span><span class="c">        # onboarding-guidance, analytics, COO views</span>
+│   │       ├── <span class="d">services/</span><span class="c">       # API clients</span>
+│   │       └── <span class="d">config/</span><span class="c">         # MSAL / env config</span>
+│   ├── <span class="d">api-gateway/</span><span class="c">          # Layer 2+3+4 — FastAPI backend</span>
+│   │   └── <span class="d">app/</span>
+│   │       ├── <span class="f">main.py</span><span class="c">           # app entry point</span>
+│   │       ├── <span class="d">agents/</span><span class="c">         # supervisor_agent.py (MasterAgent) + 12 domain agents</span>
+│   │       ├── <span class="d">api/</span><span class="c">            # auth · controllers · repositories · services</span>
+│   │       ├── <span class="d">rag/</span><span class="c">            # retriever.py — the ONLY module allowed to query pgvector at runtime</span>
+│   │       └── <span class="d">memory/</span><span class="c">         # client.py, md_store.py, complexity.py, enrichment.py</span>
+│   └── <span class="d">jobs/</span><span class="c">                  # Layer 5 — scheduled / batch work, never called live</span>
+│       ├── <span class="d">sharepoint_ingestion/</span><span class="c">  # SharePoint → chunk → embed → pgvector</span>
+│       └── <span class="f">run_all_ingestion.py</span>
+├── <span class="d">integrations/</span><span class="c">                 # thin external-system clients</span>
+│   └── <span class="d">sharepoint/</span><span class="f">client.py</span>
+├── <span class="d">deployments/</span><span class="c">                 # infrastructure as config</span>
+│   └── <span class="d">docker/</span><span class="f">docker-compose.yml</span><span class="c">   # api + postgres(pgvector) + redis</span>
+└── <span class="d">knowledge-specs/</span><span class="c">              # specification-first documentation (11 sections)</span>
+    └── <span class="d">docs/</span><span class="d">00-foundation/</span> … <span class="d">10-reference/</span>
+      </div>
+      <div class="callout"><b>The rule behind the structure:</b> <code>jobs/</code> is the <i>only</i> place allowed to talk to SharePoint. Live agents never call SharePoint directly — they only ever query PostgreSQL/pgvector through <code>app/rag/retriever.py</code>. This one rule is what keeps chat response times fast and SharePoint outages from ever taking down the assistant.</div>
+    </section>
+
+    <!-- 04 TECH SPEC -->
+    <section id="techspec">
+      <div class="eyebrow"><span class="num">04</span>Technical Specification</div>
+      <h2>Stack, data model, and interfaces</h2>
+
+      <h3>Technology stack</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Layer</th><th>Technology</th><th>Purpose</th></tr>
+        <tr><td>Frontend</td><td class="mono">React 18 · Vite · Redux Toolkit · MSAL</td><td>Chat UI, dashboards, Azure AD login</td></tr>
+        <tr><td>Backend</td><td class="mono">FastAPI · Python 3.11 · LangChain</td><td>API gateway, agent orchestration</td></tr>
+        <tr><td>LLM Runtime</td><td class="mono">Ollama (gpt-oss) @ ml01.alignedautomation.com</td><td>Self-hosted inference, no external LLM API dependency</td></tr>
+        <tr><td>Embeddings</td><td class="mono">all-MiniLM-L6-v2 (384-dim)</td><td>Converts text to vectors for semantic search</td></tr>
+        <tr><td>Vector store</td><td class="mono">PostgreSQL + pgvector (primary) · FAISS (fallback)</td><td>Semantic document retrieval</td></tr>
+        <tr><td>Cache / session</td><td class="mono">Redis</td><td>Fast ephemeral state</td></tr>
+        <tr><td>Identity</td><td class="mono">Azure AD · Microsoft Graph · MSAL</td><td>SSO, profile, email dispatch</td></tr>
+        <tr><td>Ingestion</td><td class="mono">SharePoint pipeline · 500-tok chunks / 50-tok overlap</td><td>Keeps knowledge base current</td></tr>
+        <tr><td>HR data</td><td class="mono">Zoho People DB (read-only)</td><td>Attendance, leave, payroll facts</td></tr>
+        <tr><td>Web search</td><td class="mono">Tavily API</td><td>Parallel real-time retrieval source</td></tr>
+        <tr><td>Deployment</td><td class="mono">Docker Compose</td><td>api · postgres(pgvector) · redis containers</td></tr>
+      </table></div>
+
+      <h3>Core database schema (PostgreSQL)</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Table</th><th>Purpose</th></tr>
+        <tr><td class="mono">conversations</td><td>Session and conversation metadata</td></tr>
+        <tr><td class="mono">messages</td><td>Individual message records (role, content)</td></tr>
+        <tr><td class="mono">documents / document_chunks</td><td>Ingested files + 384-dim pgvector chunks with IVFFlat index</td></tr>
+        <tr><td class="mono">escalations</td><td>Escalation records — status, assignment</td></tr>
+        <tr><td class="mono">feedback</td><td>Thumbs up/down on agent responses — feeds the self-learning loop, see §06</td></tr>
+        <tr><td class="mono">audit_logs</td><td>Full action trail for compliance</td></tr>
+        <tr><td class="mono">pii_redactions / pii_events</td><td>PII detection + redaction audit trail</td></tr>
+      </table></div>
+
+      <h3>Representative API surface</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr>
+        <tr><td class="mono">/api/chat/stream</td><td>POST</td><td>SSE streaming chat</td></tr>
+        <tr><td class="mono">/api/conversations</td><td>CRUD</td><td>Conversation management</td></tr>
+        <tr><td class="mono">/api/documents</td><td>CRUD</td><td>Request / generate one of 11 document types</td></tr>
+        <tr><td class="mono">/api/escalations</td><td>CRUD</td><td>Create and track escalations</td></tr>
+        <tr><td class="mono">/api/feedback</td><td>POST</td><td>Capture response quality signal</td></tr>
+        <tr><td class="mono">/api/analytics/overview</td><td>GET</td><td>Usage &amp; performance metrics</td></tr>
+        <tr><td class="mono">/api/health</td><td>GET</td><td>Liveness / readiness probe</td></tr>
+      </table></div>
+
+      <h3>Agent roster</h3>
+      <p style="font-size:13px;color:var(--slate);max-width:680px;">All 13 agents extend one shared base class — <code>BaseDeepAgent</code> — so every agent gets parallel retrieval, adaptive retry, and consistent output formatting for free. A new domain agent is a configuration exercise, not a rewrite.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Agent</th><th>Owns</th><th>Status</th></tr>
+        <tr><td>MasterAgent</td><td>Routing, session state, escalation lifecycle</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>HR / IT / Admin / PMO / Org</td><td>Domain policy &amp; process Q&amp;A</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>Employee / Attendance</td><td>Personal profile, attendance data</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>Document (11 types)</td><td>Offer / Experience / NOC / Bonafide letters, etc.</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>Email / Escalation</td><td>Drafting via MS Graph, ticket routing</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>Quick / Funny</td><td>Fast deterministic replies, tone modulation</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>Finance</td><td>Expense &amp; budget visibility</td><td><span class="tag next">Phase 2</span></td></tr>
+      </table></div>
+    </section>
+
+    <!-- 05 WHY -->
+    <section id="why">
+      <div class="eyebrow"><span class="num">05</span>Why This Architecture</div>
+      <h2>Five properties an enterprise buyer checks for</h2>
+      <div class="why-grid">
+        <div class="why-card"><h4><span class="dot"></span>Scalable</h4><p>Agents are added, not rewired — a new domain (Finance, in Phase 2) is a new agent extending <code>BaseDeepAgent</code> plus a routing rule, not a change to the other 13. Retrieval, LLM inference, and the database each scale independently since they're separate services.</p></div>
+        <div class="why-card"><h4><span class="dot"></span>Maintainable</h4><p>One rule — "SharePoint is only touched inside <code>jobs/</code>" — means a SharePoint outage or schema change never breaks live chat. Shared base classes mean a bug fix in retrieval logic fixes it for all 13 agents at once, not 13 separate patches.</p></div>
+        <div class="why-card"><h4><span class="dot"></span>Enterprise-ready</h4><p>Identity runs through Azure AD/MSAL — no parallel password system. Every action writes to <code>audit_logs</code>. PII has its own detection and redaction trail. Guardrails run in two tiers before any model call.</p></div>
+        <div class="why-card"><h4><span class="dot"></span>Easy to onboard into</h4><p>Specification-first: every capability is documented under <code>knowledge-specs/</code> before it's coded, so a new engineer reads intent before reading Python. The folder layout <i>is</i> the architecture diagram — there's no hidden mental map to transfer.</p></div>
+        <div class="why-card"><h4><span class="dot"></span>Reduces technical debt</h4><p>Skills (retrieval, generation, integration actions) are defined once and composed inside agents rather than copy-pasted — the same pgvector search skill backs all 13 agents. One shared interface contract per skill means fixes don't fork.</p></div>
+        <div class="why-card"><h4><span class="dot"></span>Cost-disciplined</h4><p>Single LLM call per query and a self-hosted model (Ollama, not a per-token external API) keep the platform's unit economics predictable at scale — a deliberate architectural constraint, not an afterthought.</p></div>
+      </div>
+    </section>
+
+    <!-- 06 ML SELF LEARNING -->
+    <section id="ml">
+      <div class="eyebrow"><span class="num">06</span>ML Self-Learning Loop</div>
+      <h2>The system gets better from being used</h2>
+      <p class="lede">This is the "good thinking" layer non-technical stakeholders usually ask about last but care about most: does this thing improve on its own, or does it stay exactly this smart forever?</p>
+      <div class="diagram">
+        <div class="row"><div class="box">Employee rates a response 👍/👎<small>writes to <code>feedback</code> table</small></div></div>
+        <div class="arrow-down">↓</div>
+        <div class="row"><div class="box accent">Evaluation framework aggregates signal<small>per-agent accuracy, low-confidence clusters</small></div></div>
+        <div class="arrow-down">↓</div>
+        <div class="row"><div class="box">Retrieval threshold already self-corrects live<small>similarity &lt; 0.10 → automatic query reformulation + retry</small></div></div>
+        <div class="arrow-down">↓</div>
+        <div class="row"><div class="box amber">Low-confidence clusters flagged for SharePoint content owners<small>closes gaps in the knowledge base, not just the model</small></div></div>
+        <div class="arrow-down">↓</div>
+        <div class="row"><div class="box">Phase 3 — fine-tuned domain LLM<small>trained on accumulated HR/IT query-answer pairs</small></div></div>
+      </div>
+      <p>Two feedback loops run today, and one is planned. <b>Fast loop (live):</b> every single query already self-corrects — if retrieval confidence is below the 0.10 similarity floor, the agent automatically reformulates and retries before ever calling the LLM. <b>Slow loop (weekly):</b> thumbs-up/down feedback plus escalation outcomes are aggregated by the evaluation framework to find which question types the assistant answers worst — that becomes a prioritized content backlog for HR/IT document owners, not a mystery. <b>Planned loop (Phase 3):</b> once enough real query/answer/feedback triples accumulate, they become training data for a domain fine-tuned model, reducing reliance on generic prompting over time.</p>
+      <div class="callout"><b>Why this is the right shape for "self-learning" here:</b> a support assistant that silently retrains itself on live traffic is a governance risk in HR/IT — wrong answers could get reinforced. Human-reviewed, evaluation-gated improvement is slower but auditable, which matters more for a system touching payroll and access provisioning.</div>
+    </section>
+
+    <!-- 07 ROADMAP -->
+    <section id="roadmap">
+      <div class="eyebrow"><span class="num">07</span>Roadmap</div>
+      <h2>From v1.0 to enterprise scale</h2>
+      <div class="table-wrap"><table>
+        <tr><th>Phase</th><th>Focus</th><th>Status</th></tr>
+        <tr><td>v1.0 — Current</td><td>13 agents, 11 document types, 8-step onboarding, pgvector + FAISS retrieval, Azure AD SSO live</td><td><span class="tag live">Live</span></td></tr>
+        <tr><td>Phase 1</td><td>Full SharePoint policy coverage, routing-accuracy tuning, confidence scoring on every response</td><td><span class="tag next">Next</span></td></tr>
+        <tr><td>Phase 2</td><td>Finance agent, IT helpdesk ticket sync, multi-turn form flows, manager analytics</td><td><span class="tag next">Planned</span></td></tr>
+        <tr><td>Phase 3</td><td>Multi-tenant support, fine-tuned domain LLM, real-time SharePoint sync, SLA-tracked escalations</td><td><span class="tag next">Planned</span></td></tr>
+      </table></div>
+    </section>
+
+    <footer>
+      <span>AA-Hackathon Enterprise Assistant — Architecture Document v1.0</span>
+      <span>Aligned Automation · Internal</span>
+    </footer>
+  </div>
+</div>

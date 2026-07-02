@@ -48,8 +48,8 @@ The assistant favors accurate, grounded responses over verbose hallucinations. E
 **NSP-3 — Privacy as Infrastructure**  
 PII is treated as a first-class architectural concern, not an afterthought. Detection, redaction, and audit trail capabilities are embedded at the data ingestion layer, the query processing layer, and the response generation layer.
 
-**NSP-4 — Self-Hosted Intelligence, Enterprise Control**  
-LLM inference runs on Aligned Automation's own infrastructure (ml01.alignedautomation.com via Ollama). No employee query, document content, or organizational data leaves the organization's controlled compute boundary for inference purposes.
+**NSP-4 — Self-Hosted Intelligence, Enterprise Control (configuration-dependent)**  
+The platform's LLM layer is built to run on Aligned Automation's own infrastructure (ml01.alignedautomation.com via Ollama), and this is the default/fallback provider in the shipped code. However, the code also supports Anthropic Claude and Groq as configurable cloud LLM providers (selected by priority via environment flags), so self-hosted-only inference is not an architectural guarantee today — it is the outcome of a specific deployment configuration. Where "no employee query, document content, or organizational data leaves the organization's controlled compute boundary" is a hard requirement, it must be enforced through deployment policy and configuration lockdown (disabling the cloud-provider flags), not assumed from the architecture alone.
 
 **NSP-5 — Progressive Autonomy with Human Oversight**  
 The assistant earns increased autonomy as confidence and accuracy metrics improve. High-risk actions (document issuance, escalations, form submissions) always require explicit confirmation or route through a human-in-the-loop approval step.
@@ -62,7 +62,7 @@ Every routing decision, retrieval result, and LLM generation is logged. The plat
 ## 4. Guiding Architecture Principles
 
 **GAP-1 — Supervisor-Agent Hierarchy**  
-A MasterAgent supervisor coordinates all domain agents. Fast-path regex detection handles well-defined intents (greetings, escalations, attendance) at zero LLM cost. LLM-based routing handles ambiguous intents with a timeout fallback to keyword scoring — ensuring graceful degradation under LLM latency or failure.
+A MasterAgent supervisor coordinates all domain agents. Fast-path regex detection handles well-defined intents (greetings, escalations, attendance) at zero LLM cost. Ambiguous intents currently fall back to keyword scoring against a domain-keyword dictionary — a live LLM-based classification method exists in the codebase but is not wired into the routing path today, so routing in the current build is a two-tier system (regex, then keywords), not a three-tier one. Activating LLM-based routing for ambiguous queries remains a near-term improvement, not a shipped capability.
 
 **GAP-2 — Retrieval-Augmented Generation as the Default**  
 No agent answers from parametric LLM memory alone. All domain agents (HR, IT, Admin, PMO, Finance, Org) retrieve from pgvector-indexed document chunks before invoking the LLM for generation. This grounds answers in current, organization-specific content.
@@ -77,19 +77,19 @@ Backend API endpoints are stateless and horizontally scalable. Conversation stat
 Guardrails operate at two tiers: generic (jailbreak, harm, security threats) handled with static rejection before any LLM call, and organizational (distress signals, scope violations) handled with empathetic or redirecting LLM responses. Neither tier allows bypassing authentication or PII controls.
 
 **GAP-6 — Embedding Stability and Reproducibility**  
-All vector embeddings use the same fixed model (sentence-transformers/all-MiniLM-L6-v2, 384 dimensions). Model version pinning prevents silent embedding drift that would corrupt retrieval quality without visible errors.
+All vector embeddings use the same fixed model (sentence-transformers/nomic-embed-text-v1.5, 768 dimensions). Model version pinning prevents silent embedding drift that would corrupt retrieval quality without visible errors.
 
 ---
 
 ## 5. Platform Evolution
 
 ### Current State (2025-2026) — Conversational Self-Service
-- 13 domain agents behind a supervisor router
+- 13 domain agents behind a supervisor router (regex fast-paths plus keyword-scoring fallback; see GAP-1)
 - pgvector RAG over SharePoint-ingested documents
 - Azure AD SSO with JWT validation
 - Zoho People read integration (employees, attendance)
-- Escalation and HR document generation (11 document types)
-- Self-hosted LLM (Ollama / gpt-oss) at ml01.alignedautomation.com
+- Escalation and HR document generation (12 document types)
+- Configurable LLM provider (Anthropic Claude or Groq, or self-hosted Ollama/gpt-oss at ml01.alignedautomation.com as the default/fallback)
 - Single-tenant deployment, Docker Compose infrastructure
 
 ### Target State (2026-2027) — Proactive Enterprise Intelligence
@@ -164,8 +164,8 @@ All vector embeddings use the same fixed model (sentence-transformers/all-MiniLM
 ### Grounded Generation, Not Freeform Generation
 The platform treats LLM generation as the final step in a retrieval pipeline, not the first. The LLM's role is to synthesize, explain, and communicate — not to invent facts. Every response is grounded in documents, database records, or structured knowledge before the LLM composes the final answer.
 
-### Self-Hosted First, Cloud as Exception
-Organizational data does not leave Aligned Automation's compute boundary for LLM inference. The Ollama deployment at ml01.alignedautomation.com running the gpt-oss model enforces this. Cloud LLM APIs may be evaluated for specific non-sensitive tasks but will never be the default path for employee queries.
+### Self-Hosted First, Cloud as Exception (aspirational — configuration required)
+The platform's design intent is that organizational data should not leave Aligned Automation's compute boundary for LLM inference, with the Ollama deployment at ml01.alignedautomation.com (running the gpt-oss model) as the default/fallback path. As shipped, however, the code already supports switching the active provider to Anthropic Claude or Groq via environment configuration — cloud LLM APIs are not merely "evaluated for specific non-sensitive tasks," they are a fully implemented, selectable path for the same employee-facing generation used by Ollama. Enforcing "self-hosted first" as a hard guarantee therefore requires deliberate deployment policy (locking the cloud-provider flags off), not just relying on the default configuration.
 
 ### Confidence-Aware Responses
 The retrieval layer surfaces similarity scores alongside retrieved chunks. The assistant is designed to acknowledge uncertainty when similarity scores fall below threshold (0.10) or when no relevant chunks are found — routing to escalation rather than fabricating an answer.
@@ -194,7 +194,7 @@ gantt
     pgvector RAG + SharePoint Ingestion  :done, 2025-07, 2025-10
     Azure AD SSO + JWT Auth              :done, 2025-08, 2025-10
     Zoho People Read Integration         :done, 2025-09, 2025-11
-    HR Document Generation (11 types)   :done, 2025-10, 2026-01
+    HR Document Generation (12 types)   :done, 2025-10, 2026-01
     Escalation + Feedback Pipeline       :done, 2025-11, 2026-02
     COO Analytics Dashboard              :done, 2026-01, 2026-04
     Onboarding Guidance (8 steps)        :done, 2026-02, 2026-05
@@ -266,7 +266,7 @@ Adding new domain agents without registering their intent signatures in the supe
 Setting num_ctx to excessively large values to avoid context management creates latency spikes, resource contention on ml01, and unpredictable response quality. Context must be managed through chunk selection and memory summarization, not by expanding the window indefinitely.
 
 **AP-04 — Schema Drift Without Migration Tracking**  
-The pgvector schema (document_chunks, embedding vector[384]) must not be altered without a corresponding embedding model change and re-indexing job. Mismatched embedding dimensions cause silent retrieval failures — chunks are stored but never retrieved because cosine distance comparisons are undefined.
+The pgvector schema (document_chunks, embedding vector[768]) must not be altered without a corresponding embedding model change and re-indexing job. Mismatched embedding dimensions cause silent retrieval failures — chunks are stored but never retrieved because cosine distance comparisons are undefined.
 
 **AP-05 — Bypassing Guardrails for Development Speed**  
 Disabling or short-circuiting the two-tier guardrail system (guardrails.py) for development convenience creates security exposure in production. Guardrails must be active in all environments including staging.
@@ -275,7 +275,7 @@ Disabling or short-circuiting the two-tier guardrail system (guardrails.py) for 
 Aggregating analytics without user_id linkage prevents effective debugging of individual failure cases and blocks manager-tier personalization features. All analytics events must retain user_id (hashed or pseudonymized per data policy) for traceability.
 
 **AP-07 — Monolithic Document Chunks**  
-Ingesting documents as single large chunks (> 1,000 tokens) degrades retrieval precision because a chunk may match a query on one sentence but dilute relevance with irrelevant paragraphs. The 500-token / 50-overlap chunking strategy must be maintained during ingestion.
+Ingesting documents as single large chunks degrades retrieval precision because a chunk may match a query on one sentence but dilute relevance with irrelevant paragraphs. The 1000-character / 200-character-overlap chunking strategy must be maintained during ingestion.
 
 **AP-08 — Soft Deletes Without Reindexing**  
 Marking documents as is_deleted=true in the documents table without removing their associated document_chunks from the vector index allows soft-deleted content to continue surfacing in retrieval. The SharePoint ingestion job must purge vector entries when documents are marked deleted.
@@ -306,7 +306,7 @@ Leverage Azure AD group membership (returned from Microsoft Graph User.Read scop
 Replace synchronous SharePoint ingestion with an event-driven pipeline where document change events trigger async ingestion workers via a message queue (e.g., Azure Service Bus). This decouples ingestion from the main API process, supports parallel processing of large document batches, and provides per-document ingestion status tracking.
 
 ### RNI-08: Multi-Language Support
-Extend the embedding and generation pipeline to support Hindi, Tamil, and other languages spoken by Aligned Automation employees. Use a multilingual embedding model (e.g., paraphrase-multilingual-MiniLM-L12-v2, 384-dim compatible) as a drop-in replacement for the current all-MiniLM-L6-v2 model to preserve vector dimension compatibility with the existing pgvector schema.
+Extend the embedding and generation pipeline to support Hindi, Tamil, and other languages spoken by Aligned Automation employees. Use a multilingual embedding model (e.g., paraphrase-multilingual-nomic-embed-text-v1.5-L12-v2, 768-dim compatible) as a drop-in replacement for the current nomic-embed-text-v1.5 model to preserve vector dimension compatibility with the existing pgvector schema.
 
 ---
 

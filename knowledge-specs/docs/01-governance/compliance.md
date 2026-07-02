@@ -39,7 +39,7 @@ This compliance specification applies to all components of the Enterprise Assist
 |---|---|
 | FastAPI backend (Python 3.11) | API security, authentication, PII handling |
 | PostgreSQL 16 + pgvector | Data residency, retention, encryption at rest |
-| Ollama LLM (gpt-oss) | AI ethics, data privacy, no external data egress |
+| LLM provider (Claude > Groq > Ollama gpt-oss, selected by priority via env flags) | AI ethics, data privacy; no external data egress only when Ollama is the active provider |
 | React 18 frontend (Vite 5.4.0) | Consent presentation, MSAL authentication, RBAC enforcement |
 | SharePoint ingestion job | Document classification, hash-based change detection |
 | Zoho People integration | Employee data privacy, read-only access, PII controls |
@@ -128,7 +128,7 @@ All data subject rights requests must be logged in the audit_logs table under ac
 
 While the organization's specific jurisdictional obligations vary, the platform is designed to satisfy GDPR-equivalent standards as a baseline:
 
-- No personal data is transferred to external LLM providers; gpt-oss runs entirely on the self-hosted Ollama instance at ml01.alignedautomation.com.
+- This holds true only when Ollama is the configured LLM provider, in which case gpt-oss runs entirely on the self-hosted instance at ml01.alignedautomation.com and no personal data is transferred externally. The platform also supports Anthropic Claude and Groq as higher-priority providers (selected via env flags in `agents/working/config.py`); when either is active, query and context data is sent to that external API, and this GDPR-aligned claim does not hold without additional review.
 - Pseudonymization is applied in analytics aggregations: the COO Dashboard and Analytics Dashboard present aggregate counts and do not expose individual user interactions.
 - A Data Protection Impact Assessment (DPIA) equivalent review is required before any new integration that processes employee personal data is added to the platform.
 - Breach notification: if a data breach involving employee personal data is detected, the Compliance Officer and AI Governance Owner are notified within 24 hours and remediation begins within 72 hours.
@@ -163,7 +163,7 @@ The platform conducts quarterly bias reviews as defined in the AI Governance Spe
 
 - No AI output may treat an employee differently on the basis of protected characteristics (gender, age, religion, disability, nationality, or any characteristic protected under applicable employment law).
 - The feedback mechanism (rating [-1, 0, 1] plus comment) provides an ongoing fairness signal. Patterns of negative feedback correlated with specific query types or user groups are investigated by the Platform Lead.
-- Document templates maintained by DocumentAgent (11 HR document types) are reviewed by HR for gendered or exclusionary language on a semi-annual basis.
+- Document templates maintained by DocumentAgent (12 HR document types, plus a free-text custom mode) are reviewed by HR for gendered or exclusionary language on a semi-annual basis.
 
 ### 3.4 Human Oversight Obligation
 
@@ -206,7 +206,7 @@ The HR, Finance, and Org agents interact with employment law-sensitive content: 
 
 ### 4.4 Employment Documentation Compliance
 
-The DocumentAgent generates 11 HR document types. Compliance requirements for each:
+The DocumentAgent generates 12 HR document types (loan_proof, experience_letter, employment_verification, offer_letter, relieving_letter, address_proof, bonafide, internship_certificate, promotion_letter, noc, confirmation_letter, id_card_request), plus a free-text custom mode. Compliance requirements for each:
 
 | Document Type | Compliance Requirement |
 |---|---|
@@ -219,7 +219,8 @@ The DocumentAgent generates 11 HR document types. Compliance requirements for ea
 | NOC Certificate | HR approval required; must not conflict with active employment obligations |
 | Bonafide Certificate | HR approval required |
 | Address Proof | HR approval required; must reflect current address from employee records |
-| Loan Proof / Employment Verification | HR approval required; must accurately state employment status |
+| Loan Proof | HR approval required; must accurately state employment status |
+| Employment Verification | HR approval required; must accurately state employment status |
 | ID Card Request | Admin approval required |
 
 All generated documents are AI-assisted drafts only. No document is issued without the human approval gate specified above.
@@ -257,7 +258,7 @@ The EscalationAgent facilitates formal grievance and support escalations. The pl
 ### 5.3 Data at Rest
 
 - The PostgreSQL 16 database on hackathon.alignedautomation.com must have filesystem-level encryption enabled on the host.
-- The pgvector extension stores 384-dimensional embeddings in the document_chunks table; these vectors do not contain raw PII but are subject to the same access controls as the documents they represent.
+- The pgvector extension stores 768-dimensional embeddings in the document_chunks table; these vectors do not contain raw PII but are subject to the same access controls as the documents they represent.
 - Database credentials (SQL_HOST, SQL_PORT, SQL_DB, ZOHO_DB_*) must be stored as environment variables and never committed to the application source repository.
 
 ### 5.4 Vulnerability Management
@@ -304,7 +305,7 @@ All personal data, organizational knowledge, and AI-generated content processed 
 | Employee personal data (Zoho People) | Internal PostgreSQL (ZOHO_DB_HOST) | Any external cloud service |
 | Chat messages and conversation history | hackathon.alignedautomation.com (PostgreSQL, database: squadrons) | Any external cloud service |
 | Document embeddings (pgvector) | hackathon.alignedautomation.com | Any external cloud service |
-| LLM inference (query + context) | ml01.alignedautomation.com (Ollama, self-hosted) | OpenAI, Anthropic, Google, or any external LLM API |
+| LLM inference (query + context) | ml01.alignedautomation.com (Ollama, self-hosted, default/fallback provider) — or Anthropic Claude / Groq APIs when configured as the active provider via env flags | OpenAI, Google, or any other unconfigured external LLM API |
 | Audit logs | hackathon.alignedautomation.com | Any external cloud service |
 | FAISS local vector store | Application host filesystem | Any external cloud service |
 
@@ -420,7 +421,8 @@ All onboarding completions (AllSetStep reached in OnboardingGuidancePage.jsx) ar
 | Microsoft Graph API | User profile, Forms creation | User profile (name, email), form definitions | App credentials, least-privilege | Low |
 | SharePoint | Document ingestion | Document content (PDF, DOCX, XLSX, PPTX) | App credentials, designated site path only | Medium |
 | Zoho People DB | Employee directory, attendance | Employee records, attendance logs | Read-only PostgreSQL credentials | High |
-| Ollama (ml01.alignedautomation.com) | LLM inference | Query + context (no raw PII after redaction) | Internal network only | Low |
+| Ollama (ml01.alignedautomation.com) | LLM inference (default/fallback provider) | Query + context (no raw PII after redaction) | Internal network only | Low |
+| Anthropic Claude / Groq (when configured as active provider) | LLM inference (higher-priority providers) | Query + context (no raw PII after redaction) | External hosted API; credentials via env flags | Medium |
 | HuggingFace Transformers | Embedding model | Model weights downloaded at deployment only | No runtime egress | Low |
 | FAISS | Local vector fallback | Document embeddings | In-process, no network | Low |
 | Tavily | Optional web search | Sanitized query string | API key, PII-redacted queries only | Medium |
@@ -480,7 +482,7 @@ flowchart TD
     end
 
     subgraph RESIDENCY["Data Residency"]
-        AGENT --> OLLAMA[Ollama gpt-oss\nml01.alignedautomation.com\nInternal only]
+        AGENT --> OLLAMA[Configured LLM\nClaude / Groq / Ollama gpt-oss\nOllama is internal-only; Claude/Groq are external APIs when active]
         AGENT --> PG[(PostgreSQL\nhackathon.alignedautomation.com\nAll data stays internal)]
         AGENT -->|PII-redacted query only\nif API key present| TAVILY[Tavily\nExternal - query string only]
     end

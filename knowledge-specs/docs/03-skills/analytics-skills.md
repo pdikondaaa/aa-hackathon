@@ -3,6 +3,8 @@
 
 This document defines the full specification for the analytics platform including data collection, dashboard components, and all analytics-related skills available to various user roles.
 
+> **Accuracy note:** The general-purpose usage analytics dashboard (`modules/analytics/` in the frontend) currently returns hardcoded mock data and is not wired to a live backend endpoint — treat the data flow, endpoints, and metrics below as a target design, not confirmed current-state behavior. The COO analytics dashboard (`modules/coo-analytics/`) is real and backend-driven. This document also references a Redis cache; a `redis` service is defined in `docker-compose.yml` but no application code currently uses it — treat Redis as not-yet-active infrastructure.
+
 ---
 
 ## Analytics Data Flow Diagram
@@ -25,7 +27,7 @@ flowchart LR
 
     subgraph PROCESSING[Processing Layer]
         AGG[Aggregation\nQueries]
-        CACHE[Redis Cache\n5-minute TTL]
+        CACHE[Redis Cache\n5-minute TTL\nplanned - not currently wired up]
         COMPUTE[Metric\nComputation]
     end
 
@@ -98,7 +100,7 @@ CREATE TABLE messages (
     role            VARCHAR(20) CHECK (role IN ('user', 'assistant', 'system')),
     content         TEXT NOT NULL,
     agent_type      VARCHAR(50),      -- Which agent produced this message
-    routing_method  VARCHAR(30),      -- regex / llm / keyword (MasterAgent tier used)
+    routing_method  VARCHAR(30),      -- regex / keyword (MasterAgent tier used; an "llm" value is defined for the dead-code _route_llm() path but is never produced)
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     processing_ms   INTEGER,          -- Response time in milliseconds
     token_count     INTEGER,          -- Approximate token usage
@@ -764,13 +766,11 @@ Agent: Feedback Analysis — Last 30 Days:
 {
   "total_queries": 4521,
   "by_routing_method": {
-    "regex_fast_path": {"count": 2134, "pct": 47.2},
-    "llm_classification": {"count": 1876, "pct": 41.5},
-    "keyword_fallback": {"count": 511, "pct": 11.3}
+    "regex_fast_path": {"count": 2134, "pct": 65.4},
+    "keyword_fallback": {"count": 2387, "pct": 34.6}
   },
   "avg_routing_time_ms": {
     "regex": 12,
-    "llm": 445,
     "keyword": 28
   },
   "unresolved_queries": {
@@ -850,7 +850,7 @@ Agent: Feedback Analysis — Last 30 Days:
 |----------|-------|
 | Dashboard Route | /analytics |
 | COO Dashboard Route | /coo-analytics |
-| Data Refresh Interval | 5 minutes (cached via Redis) |
+| Data Refresh Interval | 5 minutes (target design: cached via Redis; Redis is defined in `docker-compose.yml` but not currently used by application code) |
 | Real-time Activities | 30 seconds poll |
 | Feedback Scale | -1 / 0 / 1 (thumbs down / none / thumbs up) |
 | Default Date Range | Last 30 days |

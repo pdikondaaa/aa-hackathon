@@ -9,9 +9,8 @@ This document defines the full specification for all Admin-domain skills handled
 
 ```mermaid
 flowchart TD
-    USER([User Message]) --> MASTER[MasterAgent\n3-Tier Router]
+    USER([User Message]) --> MASTER[MasterAgent\n2-Tier Router: regex + keyword\nLLM classification defined but never invoked]
     MASTER -->|regex fast-path| REGEX{Pattern Match}
-    MASTER -->|LLM classification| LLM_CLASS[LLM Classifier]
     MASTER -->|keyword fallback| KW[Keyword Fallback]
 
     REGEX -->|travel / flight / hotel| ADM_TRAVEL[admin-travel-request]
@@ -23,17 +22,14 @@ flowchart TD
     REGEX -->|supply / stationery / office item| ADM_SUP[admin-supply-request]
     REGEX -->|escalate / complaint / admin issue| ADM_ESC[admin-escalation]
 
-    LLM_CLASS --> ADM_TRAVEL
-    LLM_CLASS --> ADM_CAB
-    LLM_CLASS --> ADM_PARK
-    LLM_CLASS --> ADM_FAC
-    LLM_CLASS --> ADM_POL
-    LLM_CLASS --> ADM_FORM
-    LLM_CLASS --> ADM_SUP
-    LLM_CLASS --> ADM_ESC
-
     KW --> ADM_TRAVEL
     KW --> ADM_CAB
+    KW --> ADM_PARK
+    KW --> ADM_FAC
+    KW --> ADM_POL
+    KW --> ADM_FORM
+    KW --> ADM_SUP
+    KW --> ADM_ESC
 
     ADM_TRAVEL --> RESP([Response to User])
     ADM_CAB --> RESP
@@ -444,7 +440,7 @@ Answers employee questions about administrative policies, office rules, HR proce
 | requester_id | UUID | Yes | Employee ID (for role-specific policy) |
 
 ### Outputs
-- Policy excerpt from RAG knowledge base (384-dim HuggingFace embeddings)
+- Policy excerpt from RAG knowledge base (768-dim HuggingFace embeddings)
 - Plain-language summary of relevant policy
 - Document reference and version number
 - Link to full policy document
@@ -862,14 +858,14 @@ Agent: Service quality escalation raised against cab vendor.
 |----------|-------|
 | Agent Class | AdminAgent |
 | Email Default | admin@alignedautomation.com |
-| Routing Method | 3-tier (regex → LLM → keyword) |
+| Routing Method | 2 live tiers: regex fast-path → keyword scoring (an LLM classification method exists in code but is never invoked) |
 | Escalation Integration | escalations table (type='Admin') |
 | Knowledge Base | Admin policies, procedures, FAQs |
 | Forms Integration | Microsoft Graph API (POST /api/ms-forms/create) |
 | FormsDrawer Component | FormsDrawer.jsx (right-side panel) |
-| Embedding Model | HuggingFace 384-dim |
+| Embedding Model | HuggingFace 768-dim |
 | Vector Store | pgvector (primary) / FAISS (fallback) |
-| LLM | Ollama (gpt-oss) |
+| LLM | Configured provider, selected by priority — Anthropic Claude, then Groq, then Ollama (gpt-oss) as the default/fallback |
 | Cab Policy | Vendor-integrated booking system |
 | Travel Policy | TMC integration + approval workflow |
 | Supply Approval Threshold | INR 2,000 (manager approval required) |

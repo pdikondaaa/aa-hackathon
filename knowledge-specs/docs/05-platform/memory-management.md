@@ -422,7 +422,7 @@ Note: Character limits are enforced at write time by the MarkdownStore's rotatio
 
 Replace the flat `history.md` file with a dedicated vector store for long-term episodic memory:
 
-- Each significant event embedded with `all-MiniLM-L6-v2`.
+- Each significant event embedded with `nomic-embed-text-v1.5`.
 - Retrieval: semantic search against long-term memory using the current query as the probe.
 - Enables: "Do you remember when we discussed the parking policy two months ago?"
 

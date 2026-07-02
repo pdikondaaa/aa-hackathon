@@ -1,123 +1,149 @@
 # Agent Framework Specification
-# AA-Hackathon Enterprise AI Platform — Aligned Automation
-# Document Version: 1.0 | Last Updated: 2026-06-07
+# AURA (AA-Hackathon Enterprise Assistant) — Aligned Automation
+# Document Version: 2.0 — Corrected against live codebase | Last Updated: 2026-07-02
+
+> **Accuracy note:** This document was rewritten after a code audit found significant fabrications in the previous version — an invented "13-agent" roster, a working "3-tier" LLM-classification router that does not exist in code, wrong file paths (`backend/agents/...` instead of the real `apps/api-gateway/app/agents/...`), and a parallel 4-source retrieval design that the code does not implement. Every claim below is checked against `apps/api-gateway/app/agents/supervisor_agent.py`, `agents/working/base_deep_agent.py`, and the individual agent files. Where this document conflicts with anything else in `knowledge-specs/docs/`, treat `README.md` and `10-reference/folder-structure.md` as authoritative and update the other document.
 
 ---
 
 ## 1. Overview
 
-The AA-Hackathon platform is built on a multi-agent AI architecture where specialized agents
-collaborate to handle employee queries, document requests, escalations, and operational tasks.
-This document defines the canonical agent framework that governs how all agents are designed,
-registered, discovered, executed, and monitored across the platform.
+AURA is built on a multi-agent architecture where a single orchestrator (`MasterAgent`, in
+`apps/api-gateway/app/agents/supervisor_agent.py`) routes each incoming query to a handler. "Handler"
+is a deliberately loose word here: unlike the clean, uniform picture in earlier drafts of this
+document, the real agent roster is a mix of three genuinely different kinds of objects — retrieval
+agents built on a shared base class, lightweight direct-LLM agents, and plain classes/functions that
+do not use an LLM-retrieval pipeline at all. This document describes the roster, the base retrieval
+pipeline, the lifecycle, and the routing logic as they actually exist in code today.
 
-Every agent in the system is either a subclass of `BaseDeepAgent` or a standalone functional
-module integrated via the `MasterAgent` registry. The framework is asynchronous by design,
-leveraging Python `asyncio` for concurrent retrieval and generation, and Server-Sent Events
-(SSE) for streaming responses to the frontend.
+There is no LangGraph in this system. `langgraph` appears in `requirements.txt` but has **zero
+imports anywhere** in `apps/api-gateway`. Routing is a straight-line Python function, not a graph.
 
 ---
 
 ## 2. Agent Taxonomy
 
-### 2.1 Agent Types
+### 2.1 Agent Types (as they actually exist in code)
 
-| Type | Base Class | Examples | Description |
-|------|-----------|---------|-------------|
-| Deep Retrieval | BaseDeepAgent | HRAgent, ITAgent, AdminAgent, PMOAgent | Full retrieval pipeline with pgvector + FAISS |
-| Orchestrator | MasterAgent | supervisor_agent.py | Routes queries to correct agent |
-| Functional | Standalone | EscalationAgent, DocumentAgent | Domain-specific logic, minimal retrieval |
-| Integration | Standalone | EmailAgent, MSFormsAgent | External system connectors |
-| Data | Service | AnalyticsService, OnboardingController | Data aggregation, no LLM inference |
+| Type | Base | Examples | Description |
+|------|------|---------|-------------|
+| Deep Retrieval | `BaseDeepAgent` subclass | HRAgent, ITAgent, AdminAgent, FinanceAgent, PMOAgent, OrgDeepAgent | pgvector RAG, with a local FAISS/keyword fallback and a single LLM call |
+| Lightweight LLM | Does **not** inherit `BaseDeepAgent` | FunnyAgent, QuickAgent | Direct LLM call, no retrieval pipeline. FunnyAgent's own source comment says it "mirrors `BaseDeepAgent`'s public surface" but it does not subclass it. QuickAgent is the default fallback when routing finds no domain match. |
+| Plain class (no LLM-retrieval pipeline) | Ordinary Python class | DocumentAgent, AllocationAgent, MSFormsAgent | DocumentAgent is a stateful, in-memory, multi-turn session generator for HR letters. AllocationAgent is a thin wrapper over `allocation_service.py` plus an `ask_aura()` LLM Q&A method. MSFormsAgent is a pure REST client for the Microsoft Forms API — it does not call an LLM at all. |
+| Plain function, adapter-wrapped | Function + small adapter class in `supervisor_agent.py` | employee_agent, attendance_agent, escalation_agent, the email-draft function in `email_agent.py`, license_agent | These are not classes in their own source files — they are functions. `supervisor_agent.py` wraps each in a minimal adapter class purely so the dispatch code has a uniform `.process(...)`-style call site. |
+| Orchestrator | — | MasterAgent (`supervisor_agent.py`) | Routing, session state, dispatch |
 
-### 2.2 Agent Hierarchy
+**There is no `GeneralAgent` class.** The general/catch-all role in the real system is filled by
+`QuickAgent`. There is also no separate "Integration" category distinct from what's listed above —
+MSFormsAgent is simply a REST client agent with no LLM involvement, described plainly in its own row.
+
+### 2.2 Agent Roster (actual, not a fixed "13")
 
 ```
-MasterAgent (Orchestrator)
-├── HRAgent          (BaseDeepAgent)
-├── ITAgent          (BaseDeepAgent)
-├── AdminAgent       (BaseDeepAgent)
-├── PMOAgent         (BaseDeepAgent)
-├── FinanceAgent     (BaseDeepAgent)
-├── OrgAgent         (BaseDeepAgent)
-├── DocumentAgent    (Functional)
-├── EscalationAgent  (Functional)
-├── EmailAgent       (Integration)
-├── MSFormsAgent     (Integration)
-├── FunnyAgent       (BaseDeepAgent, lightweight)
-├── QuickAgent       (BaseDeepAgent, fallback)
-└── GeneralAgent     (BaseDeepAgent, catch-all)
+MasterAgent (Orchestrator, supervisor_agent.py)
+├── HRAgent            (BaseDeepAgent)              agents/working/hr_agent.py
+├── ITAgent            (BaseDeepAgent)               agents/working/it_agent.py
+├── AdminAgent         (BaseDeepAgent, + static      agents/working/admin_agent.py
+│                        parking-rate context)
+├── FinanceAgent       (BaseDeepAgent)                agents/working/finance_agent.py
+├── PMOAgent           (BaseDeepAgent)                agents/working/pmo_agent.py
+├── OrgDeepAgent       (BaseDeepAgent, no local        agents/org_agent.py
+│                        data folders)
+├── FunnyAgent         (lightweight, direct LLM)       agents/working/funny_agent.py
+├── QuickAgent         (lightweight, direct LLM,        agents/working/quick_agent.py
+│                        default/general fallback)
+├── DocumentAgent      (plain class, stateful           agents/document_agent.py
+│                        in-memory sessions)
+├── AllocationAgent    (plain class + ask_aura())        agents/allocation_agent.py
+├── MSFormsAgent       (plain class, REST client,         agents/ms_forms_agent.py
+│                        no LLM)
+├── employee_agent     (plain function, adapter-wrapped)   agents/employee/employee_agent.py
+├── attendance_agent   (plain function, adapter-wrapped)    agents/employee/attendance_agent.py
+├── escalation_agent   (plain function, adapter-wrapped)    agents/escalation_agent.py
+├── email draft fn     (plain function, adapter-wrapped)     agents/email_agent.py
+└── license_agent      (plain function, adapter-wrapped)      agents/license_agent.py
 ```
+
+This is not a document that should be read as "here are the 13 agents" — the roster mixes classes and
+functions of materially different shapes, and the count is not a governance constant. Treat the table
+in Section 2.1 as the accurate mental model instead of a headline number.
 
 ---
 
 ## 3. BaseDeepAgent — Core Retrieval Architecture
 
-All domain agents inherit from `base_deep_agent.py`. This class encapsulates the full
+Only the six agents in the "Deep Retrieval" row above inherit `BaseDeepAgent`
+(`apps/api-gateway/app/agents/working/base_deep_agent.py`). This class encapsulates the shared
 retrieval-augmented generation (RAG) pipeline.
 
-### 3.1 Retrieval Sources (Parallel Async)
+### 3.1 Retrieval Is a Sequential/Conditional Fallback Chain — Not a Parallel `asyncio.gather`
+
+Earlier drafts of this document described `retrieve_context()` firing pgvector, FAISS, conversation
+memory, and Tavily web search simultaneously via `asyncio.gather` across "4 sources." That is not what
+the code does. The real pipeline is:
+
+1. **Embed the query and search pgvector** (via `apps/api-gateway/app/rag/retriever.py`) — this is the
+   primary and normally sufficient source.
+2. **Only if pgvector returns nothing**, fall back to the agent's own **local** FAISS-or-keyword
+   knowledge base (`agents/working/knowledge_base.py`), built at runtime from local per-domain document
+   folders (e.g. "HR Policies", "HR Document" folders for HRAgent). This local corpus is smaller than,
+   and different from, the pgvector database — it is not a mirror of it.
+3. **A single LLM call** via an LCEL chain (`prompt | llm | StrOutputParser`), with
+   `GENERIC_GUARDRAIL`/`ORG_GUARDRAIL` text injected into the system prompt, self-verification
+   instructions, and an inline citation request.
+4. **Tavily web search** is an optional further supplement, used only when configured — not a
+   simultaneous fourth retrieval source.
 
 ```python
-async def retrieve_context(self, query: str) -> RetrievalResult:
-    results = await asyncio.gather(
-        self._retrieve_pgvector(query),      # PostgreSQL + pgvector cosine similarity
-        self._retrieve_faiss(query),         # Local FAISS fallback
-        self._retrieve_memory(query),        # MemoryClient conversation history
-        self._retrieve_tavily(query),        # Tavily web search (if enabled)
-        return_exceptions=True
-    )
-    return self._merge_and_rank(results)
+# Illustrative shape of the real conditional flow — not literal source
+async def answer(self, query: str) -> AgentResponse:
+    chunks = await self._retrieve_pgvector(query)      # primary
+    if not chunks:
+        chunks = self._retrieve_local_knowledge_base(query)  # fallback only if pgvector is empty
+    if self.tavily_enabled:
+        chunks += self._retrieve_tavily(query)          # optional supplement
+    return await self._generate(query, chunks)           # single LCEL chain call
 ```
 
-All four sources run concurrently. Results are merged by relevance score. The adaptive retry
-threshold is 0.10 — if the best retrieved chunk scores below this cosine similarity threshold,
-the agent retries with a rephrased query before falling back to a generic response.
+There is no parallel fan-out, no conversation-memory retrieval source inside `BaseDeepAgent` itself,
+and no adaptive-retry-with-rephrasing loop documented in the code.
 
 ### 3.2 pgvector Configuration
 
-- Database: PostgreSQL at `hackathon.alignedautomation.com`, database `squadrons`
+- Database: PostgreSQL at `hackathon.alignedautomation.com` (default), database `squadrons`
 - Table: `document_chunks`
-- Embedding column: `embedding vector(384)`
-- Distance operator: `<=>` (cosine distance)
-- Query pattern:
-  ```sql
-  SELECT content, source, 1 - (embedding <=> $1::vector) AS score
-  FROM document_chunks
-  WHERE domain = $2
-  ORDER BY score DESC
-  LIMIT 5
-  ```
+- Embedding column: `vector(768)`
+- Distance operator: `<=>` (cosine distance), `ivfflat` index, `probes = 10`
+- Embedding model: `nomic-embed-text-v1.5`, 768 dimensions (same model at query time and ingestion time)
 
-### 3.3 FAISS Fallback
+### 3.3 Local FAISS/Keyword Fallback
 
-`knowledge_base.py` maintains a local FAISS index loaded at startup. It provides sub-10ms
-retrieval for cached embeddings and is the fallback when pgvector is unreachable. The index
-is rebuilt nightly from the same source documents.
+`agents/working/knowledge_base.py` builds a **local, per-domain** fallback index from local document
+folders at runtime — it is not a global mirror of the pgvector corpus, and it is only consulted when
+pgvector returns zero results for a query. This is a smaller, agent-specific safety net, not a
+parallel high-availability path.
 
-### 3.4 Ollama LLM Configuration
+### 3.4 LLM Configuration (Configurable — Not Ollama-Only)
 
-Every BaseDeepAgent makes exactly one Ollama call per query (single-call design):
+`agents/working/config.py`'s `create_llm()` selects the active provider at startup by priority order:
 
-```python
-OLLAMA_CONFIG = {
-    "model": "gpt-oss",
-    "base_url": "http://ml01.alignedautomation.com:11434",
-    "temperature": 0.1,
-    "num_predict": 800,
-    "num_ctx": 2048,
-}
-```
+1. **Claude** (Anthropic) — if `USE_Claude_API_Key` is set. Default model: `claude-sonnet-4-6`.
+2. **Groq** — if `USE_Groq_API_Key` is set. Default model: `llama3-70b-8192`.
+3. **Ollama** — the **default/fallback** when neither cloud flag is on. Model `gpt-oss` at
+   `ml01.alignedautomation.com:11434`.
 
-The low temperature (0.1) produces deterministic, factual responses consistent with enterprise
-policy content. The 2048-token context window is sufficient for most HR/IT policy queries
-when combined with top-5 retrieved chunks.
+This is a genuinely multi-provider, configurable system. Any claim that "the platform only uses a
+self-hosted LLM for data privacy" describes one possible configuration, not a hard constraint enforced
+by the code — Claude or Groq can be, and often are, the active provider.
+
+Every `BaseDeepAgent` makes exactly one LLM call per query (single-call design), regardless of which
+provider is active.
 
 ---
 
 ## 4. Agent Lifecycle
 
-Every agent request follows a strict 6-phase lifecycle:
+A request follows this real path:
 
 ```mermaid
 sequenceDiagram
@@ -125,122 +151,116 @@ sequenceDiagram
     participant M as MasterAgent
     participant A as Domain Agent
     participant P as pgvector
-    participant F as FAISS
-    participant O as Ollama
+    participant K as Local FAISS/Keyword KB
+    participant L as LLM (Claude / Groq / Ollama)
 
     C->>M: POST /api/chat/stream {query, user_id, role}
-    M->>M: Phase 1 — Init (validate JWT, extract context)
-    M->>M: Phase 2 — Route (3-tier routing)
-    M->>A: Phase 3 — Dispatch (pass context bundle)
-    A->>P: Phase 4 — Retrieve (parallel async)
-    A->>F: Phase 4 — Retrieve (parallel async)
-    P-->>A: chunks + scores
-    F-->>A: chunks + scores
-    A->>O: Phase 5 — Generate (single LLM call)
-    O-->>A: HTML response
-    A-->>M: Phase 6 — Respond (answer + sources + metadata)
-    M-->>C: SSE stream (chunked HTML)
+    M->>M: Guardrails (static regex tier, then LLM tier for distress/org-scope)
+    M->>M: Route (regex fast-paths, then keyword scoring — see Section 6)
+    M->>A: Dispatch (pass context bundle)
+    A->>P: Query pgvector (primary)
+    alt pgvector returns chunks
+        P-->>A: chunks + scores
+    else pgvector returns nothing
+        A->>K: Fall back to local knowledge base
+        K-->>A: chunks (or none)
+    end
+    A->>L: Single LLM call (prompt | llm | StrOutputParser)
+    L-->>A: response text
+    A-->>M: answer + sources + metadata
+    M-->>C: SSE stream
 ```
 
-### 4.1 Phase Descriptions
-
-| Phase | Responsibility | Owner | Max Duration |
-|-------|---------------|-------|-------------|
-| Init | JWT decode, context assembly, guardrails Tier1 | MasterAgent | 50ms |
-| Route | 3-tier routing decision | MasterAgent | 200ms |
-| Dispatch | Agent selection and context injection | MasterAgent | 10ms |
-| Retrieve | Parallel pgvector + FAISS + memory queries | Domain Agent | 500ms |
-| Generate | Ollama LLM call with constructed prompt | Domain Agent | 3000ms |
-| Respond | Response assembly, metadata tagging, SSE emit | MasterAgent | 100ms |
-
-Total P95 SLA target: **4 seconds end-to-end**.
+Only agents that inherit `BaseDeepAgent` execute the pgvector/fallback/LLM sequence above. Plain
+classes and plain functions (Section 2.1) follow their own, much shorter, logic — e.g. MSFormsAgent
+never touches an LLM at all; DocumentAgent walks an in-memory session state machine instead of calling
+a retrieval pipeline.
 
 ---
 
 ## 5. Agent Registration
 
-### 5.1 _AGENT_REGISTRY
+### 5.1 Registration in `supervisor_agent.py`
 
-All agents are registered in `supervisor_agent.py` at module load time:
+Agents are constructed once at startup, but — reflecting the real mixed roster — not all registry
+entries are simple singleton instances of clean classes. Some are functions wrapped in small adapter
+objects created purely for dispatch purposes:
 
 ```python
-_AGENT_REGISTRY = {
-    "hr":         HRAgent(),
-    "it":         ITAgent(),
-    "admin":      AdminAgent(),
-    "pmo":        PMOAgent(),
-    "finance":    FinanceAgent(),
-    "org":        OrgAgent(),
-    "document":   DocumentAgent(),
-    "escalation": EscalationAgent(),
-    "email":      EmailAgent(),
-    "msforms":    MSFormsAgent(),
-    "funny":      FunnyAgent(),
-    "quick":      QuickAgent(),
-    "general":    GeneralAgent(),
-}
+# Illustrative — reflects the real mix of classes, plain classes, and function adapters
+_hr_agent = HRAgent()
+_it_agent = ITAgent()
+_admin_agent = AdminAgent()
+_finance_agent = FinanceAgent()
+_pmo_agent = PMOAgent()
+_org_agent = OrgDeepAgent()
+_funny_agent = FunnyAgent()
+_quick_agent = QuickAgent()
+_document_agent = DocumentAgent()
+_allocation_agent = AllocationAgent()
+_ms_forms_agent = MSFormsAgent()
+
+# Plain functions from agents/employee/*.py, escalation_agent.py, email_agent.py,
+# license_agent.py are not classes — they are wrapped in minimal adapter objects
+# so dispatch code can call them uniformly:
+_employee_adapter = _FunctionAgentAdapter(employee_agent)
+_attendance_adapter = _FunctionAgentAdapter(attendance_agent)
+_escalation_adapter = _FunctionAgentAdapter(escalation_agent)
+_email_adapter = _FunctionAgentAdapter(draft_email)
+_license_adapter = _FunctionAgentAdapter(license_agent)
 ```
 
-Agents are instantiated once at startup (singleton pattern). Stateful agents (DocumentAgent,
-EscalationAgent) maintain per-user session dictionaries internally.
-
-### 5.2 Agent Registration Contract
-
-Any new agent must satisfy:
-1. Implement `async def process(self, query: str, context: AgentContext) -> AgentResponse`
-2. Define `DOMAIN` class attribute (string, matches registry key)
-3. Define `DESCRIPTION` class attribute (for LLM routing prompt)
-4. Expose `personality` property returning system prompt string from `personalities.py`
-5. Return `AgentResponse` dataclass with `answer` (HTML string), `sources` (list), `confidence` (float)
+There is no single tidy `_AGENT_REGISTRY = {"hr": HRAgent(), ...}` dict of uniform objects as earlier
+drafts implied — the real dispatch code has to account for the fact that several of its "agents" are
+functions, not instances of an agent class, and wraps them accordingly. QuickAgent is dispatched to
+directly as the default when routing produces no domain match; there is no `"general": GeneralAgent()`
+entry because no such class exists.
 
 ---
 
-## 6. Agent Discovery — 3-Tier Routing
+## 6. Routing — Real Behavior (Not a Clean 3-Tier Design)
 
-The MasterAgent routes each incoming query through three successive tiers:
+Earlier documentation described a clean regex → LLM → keyword three-tier router. **That is not what
+the code does.** The real `_route()` method in `supervisor_agent.py` evaluates, in order:
+
+1. **Active document-generation session check** — if the user has an in-progress multi-turn document
+   session, the query routes straight back to `DocumentAgent` regardless of content.
+2. **Escalation keyword check.**
+3. **Several regex fast-paths**, evaluated in sequence: Microsoft Forms intent, email-draft intent,
+   attendance query, employee-directory query, document-request query — plus apply-leave and
+   name-query regexes that are actually checked even earlier in the pipeline than this list suggests.
+4. **A greeting / small-talk fast-path.**
+5. **A keyword-scoring fallback** against a `DOMAIN_KEYWORDS` dictionary. If every domain scores zero,
+   the query defaults to the general-purpose `QuickAgent`.
+
+A `_route_llm()` method **does exist** in `supervisor_agent.py` and would perform LLM-based intent
+classification if it were wired in — but grep confirms **it is never called from anywhere in the
+codebase**. It is dead code today, not a dormant feature flag waiting to be flipped on; there is no
+config switch that activates it.
 
 ```mermaid
 flowchart TD
-    Q[Incoming Query] --> T1{Tier 1\nRegex Fast-Path}
-    T1 -->|Match| DA[Direct Agent Dispatch]
-    T1 -->|No Match| T2{Tier 2\nOllama LLM Classification}
-    T2 -->|Confident| DA
-    T2 -->|Low confidence| T3{Tier 3\nDOMAIN_KEYWORDS}
-    T3 -->|Match| DA
-    T3 -->|No Match| GA[GeneralAgent fallback]
-    DA --> EXEC[Agent Execution]
+    Q[Incoming Query] --> DS{Active document\nsession?}
+    DS -->|Yes| DOC[Route to DocumentAgent]
+    DS -->|No| ESC{Escalation\nkeyword match?}
+    ESC -->|Yes| ESCA[Route to escalation_agent]
+    ESC -->|No| RGX{Regex fast-paths\nforms / email / attendance /\ndirectory / document / leave / name}
+    RGX -->|Match| DA[Dispatch matched agent]
+    RGX -->|No match| GRT{Greeting /\nsmall-talk fast-path?}
+    GRT -->|Yes| DA
+    GRT -->|No| KW{DOMAIN_KEYWORDS\nscoring}
+    KW -->|Best score > 0| DA
+    KW -->|All scores 0| QUICK[QuickAgent - default fallback]
+
+    subgraph DeadCode [Written but never invoked]
+        LLMROUTE["_route_llm() — LLM-based\nclassification method.\nExists in source, but grep\nconfirms zero call sites."]
+    end
 ```
 
-### 6.1 Tier 1 — Regex Fast-Path
-
-Deterministic patterns evaluated in O(1) time. Examples:
-- `r"(leave|pto|vacation|sick day)"` → HRAgent
-- `r"(vpn|password reset|access request|ticket)"` → ITAgent
-- `r"(cab|travel|parking|facilities)"` → AdminAgent
-- `r"(generate.*letter|request.*document|experience letter)"` → DocumentAgent
-- `r"(email.*draft|write.*email|compose)"` → EmailAgent
-
-### 6.2 Tier 2 — LLM Classification
-
-When regex produces no match, the MasterAgent submits the query and agent descriptions to
-Ollama with a zero-shot classification prompt. Returns agent key or `"unknown"`.
-
-### 6.3 Tier 3 — DOMAIN_KEYWORDS
-
-Static keyword dictionary as final fallback:
-
-```python
-DOMAIN_KEYWORDS = {
-    "hr":      ["leave", "salary", "benefits", "policy", "holiday", "appraisal"],
-    "it":      ["laptop", "software", "vpn", "access", "email", "azure", "security"],
-    "admin":   ["cab", "travel", "parking", "stationery", "pantry", "facilities"],
-    "pmo":     ["project", "sprint", "milestone", "allocation", "resource"],
-    "finance": ["invoice", "reimbursement", "expense", "budget", "payment"],
-    "org":     ["org chart", "team structure", "who is", "reporting to"],
-    "funny":   ["joke", "fun", "funny", "entertain", "laugh"],
-    "general": ["help", "what can you", "capabilities"],
-}
-```
+In practice there are **two live routing tiers** — regex fast-paths, then keyword scoring — plus a
+dormant, unreferenced LLM-classification method. There is no functioning LLM-based routing tier in the
+current build. Any diagram or prose elsewhere describing "3-tier routing" as a working pipeline should
+be treated as inaccurate.
 
 ---
 
@@ -248,259 +268,82 @@ DOMAIN_KEYWORDS = {
 
 ### 7.1 Context Bundle
 
-The MasterAgent assembles and passes an `AgentContext` to every dispatched agent:
+The MasterAgent assembles context (JWT claims, role, department, recent conversation turns) and passes
+it to whichever handler it dispatches to. The exact shape varies slightly by handler type since plain
+functions and plain classes do not all share one dataclass contract the way `BaseDeepAgent` subclasses
+do.
 
-```python
-@dataclass
-class AgentContext:
-    user_id: str
-    email: str
-    role: str                        # employee / hr_admin / it_admin / manager / coo
-    department: str
-    conversation_history: list[dict] # last 10 turns
-    session_id: str
-    request_timestamp: datetime
-    jwt_claims: dict                 # full decoded JWT payload
-```
+### 7.2 Redirects Between Agents
 
-### 7.2 Agent Response
-
-```python
-@dataclass
-class AgentResponse:
-    answer: str          # HTML string, never markdown
-    sources: list[str]   # document names / URLs
-    confidence: float    # 0.0 to 1.0
-    agent_key: str       # which agent produced this
-    latency_ms: int      # time taken
-    escalation_triggered: bool
-    follow_up_actions: list[str]
-```
-
-### 7.3 Inter-Agent Calls
-
-Agents may delegate to sibling agents by calling `MasterAgent.dispatch()` directly:
-
-```python
-# DocumentAgent redirecting to EscalationAgent
-if user_context_requires_escalation:
-    return await master_agent.dispatch("escalation", query, context)
-```
-
-This is the only supported inter-agent communication pattern. Direct agent-to-agent calls
-are prohibited to maintain audit traceability.
+Redirects (e.g. an HR query about a document turning into a DocumentAgent session) happen through the
+MasterAgent's own routing logic re-evaluating on the next turn or via an explicit dispatch call — not
+through a formal agent-to-agent RPC layer. There is no LangGraph-style shared graph state; this remains
+a flat dispatch model.
 
 ---
 
-## 8. Agent Ownership Matrix
+## 8. Guardrails (`apps/api-gateway/app/agents/guardrails.py`)
 
-| Agent | Primary Owner | Secondary Owner | Escalation Contact |
-|-------|-------------|----------------|-------------------|
-| HRAgent | HR Operations | Platform Team | hr@alignedautomation.com |
-| ITAgent | IT Support | Platform Team | it.support@alignedautomation.com |
-| AdminAgent | Admin Team | Platform Team | admin@alignedautomation.com |
-| PMOAgent | PMO / Delivery | Engineering Leads | management@alignedautomation.com |
-| FinanceAgent | Finance Team | Admin | management@alignedautomation.com |
-| DocumentAgent | HR Operations | Platform Team | hr@alignedautomation.com |
-| EscalationAgent | All Teams | Platform Team | management@alignedautomation.com |
-| EmailAgent | Platform Team | — | it.support@alignedautomation.com |
-| AnalyticsService | COO / Platform | — | management@alignedautomation.com |
-| OnboardingModule | HR Operations | IT Support | hr@alignedautomation.com |
+A single `check_input()` function evaluates, in order:
 
----
+1. **Jailbreak regex** → static, immediate block, no LLM.
+2. **Harmful-content regex** → static, immediate block, no LLM.
+3. **Security-threat regex** → static, immediate block, no LLM.
+4. **Distress signals** → LLM-generated empathetic response.
+5. **Org-scope violations** (e.g. asking about another employee's salary/PII, legal advice, competitor
+   intelligence, medical diagnosis) → LLM-generated contextual redirect.
 
-## 9. Agent Security
-
-### 9.1 JWT Context Propagation
-
-Every agent request carries the decoded JWT as part of `AgentContext.jwt_claims`. Agents must
-not re-decode or trust user-supplied identity claims. The JWT is decoded once by the MasterAgent
-gateway and propagated downstream as a trusted object.
-
-### 9.2 Role-Based Execution Guards
-
-Sensitive agent operations check role before executing:
-
-```python
-def _check_role(self, context: AgentContext, required_roles: list[str]):
-    if context.role not in required_roles:
-        raise PermissionError(f"Role '{context.role}' not authorized for this operation")
-```
-
-Role hierarchy: `employee < manager < hr_admin / it_admin < coo < platform_admin`
-
-### 9.3 Guardrails Pipeline
-
-Before any agent executes, the query passes through `guardrails.py`:
-
-- **Tier 1 — Static**: Regex patterns detecting jailbreak attempts, harmful instructions,
-  data exfiltration, prompt injection, and security bypasses. Blocking is immediate with no
-  LLM involvement.
-- **Tier 2 — LLM**: Ollama-based analysis for distress signals (employee wellness), out-of-scope
-  requests, and ambiguous policy violations. Returns `allow / escalate / block` classification.
-
-Guardrails run synchronously before the routing phase.
+This is **two tiers total**: a static regex tier (checks 1–3), then an LLM-contextual tier used only
+for distress and org-scope handling (checks 4–5). It is not a three-way `allow/escalate/block`
+classifier running on every message.
 
 ---
 
-## 10. Agent Escalation Triggers
+## 9. Escalation
 
-Any domain agent may trigger an escalation by returning `escalation_triggered=True` in its
-`AgentResponse`. The MasterAgent then automatically invokes the `EscalationAgent` in a
-chained call.
-
-Escalation trigger conditions:
-
-| Trigger | Examples | Default Priority |
-|---------|---------|-----------------|
-| Welfare keywords | "overwhelmed", "unsafe", "harassment" | Critical |
-| Policy breach detected | Legal / compliance keywords | High |
-| Three retries exhausted | LLM confidence < 0.3 | Medium |
-| User explicitly requests | "escalate this", "need HR" | Medium |
-| Sensitive data patterns | PII detection in query | High |
+Any handler can trigger escalation, which dispatches to the `escalation_agent` function (wrapped in an
+adapter as described in Section 2.1/5.1). There is no separate "EscalationAgent class" in the codebase
+— `escalation_agent.py` defines a function, not a class.
 
 ---
 
-## 11. Agent KPIs and SLAs
+## 10. Future Evolution — LangGraph (Aspirational Only)
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| End-to-end P95 latency | < 4 seconds | SSE first-byte to last-byte |
-| Routing accuracy | > 92% | Human-labelled query sample |
-| Retrieval relevance | > 0.10 cosine | pgvector score threshold |
-| LLM fallback rate | < 8% | Proportion reaching GeneralAgent |
-| Escalation false-positive | < 5% | HR team review |
-| User feedback positive rate | > 75% | Thumbs up / total rated |
-| Agent uptime | > 99.5% | Health check endpoint |
+`langgraph` is listed in `apps/api-gateway/requirements.txt`. There is **no import of it anywhere in
+the codebase** — zero implementation progress has been made. Any document describing a LangGraph
+migration as "in progress" or "underway" is inaccurate. It is a genuinely future/aspirational item with
+no committed timeline reflected in code; see `09-roadmap/target-state.md` for how this should be framed
+going forward.
 
 ---
 
-## 12. Agent Architecture Diagram
-
-```mermaid
-graph TB
-    subgraph Frontend
-        CW[ChatWindow.jsx]
-        ED[EscalationDrawer.jsx]
-        FD[FormsDrawer.jsx]
-        EA[EmailAgentPage.jsx]
-        DP[DocumentsPage.jsx]
-    end
-
-    subgraph Gateway
-        API[FastAPI SSE Endpoint\nPOST /api/chat/stream]
-        GRD[guardrails.py\nTier1 + Tier2]
-    end
-
-    subgraph Orchestration
-        MA[MasterAgent\nsupervisor_agent.py]
-        RT[3-Tier Router\nRegex → LLM → Keywords]
-    end
-
-    subgraph DeepAgents [Deep Retrieval Agents - BaseDeepAgent]
-        HRA[HRAgent]
-        ITA[ITAgent]
-        ADMA[AdminAgent]
-        PMOA[PMOAgent]
-        FINA[FinanceAgent]
-        ORGA[OrgAgent]
-        GENA[GeneralAgent]
-        FUNN[FunnyAgent]
-        QUIK[QuickAgent]
-    end
-
-    subgraph FunctionalAgents [Functional Agents]
-        DOCA[DocumentAgent]
-        ESCA[EscalationAgent]
-        EMAI[EmailAgent]
-        MSFA[MSFormsAgent]
-    end
-
-    subgraph DataLayer
-        PGV[(pgvector\nPostgreSQL)]
-        FSS[(FAISS\nLocal Index)]
-        MEM[(MemoryClient\nConversation)]
-        TAV[(Tavily\nWeb Search)]
-    end
-
-    subgraph LLM
-        OLL[Ollama\ngpt-oss\nml01:11434]
-    end
-
-    CW -->|SSE| API
-    API --> GRD
-    GRD --> MA
-    MA --> RT
-    RT --> DeepAgents
-    RT --> FunctionalAgents
-    DeepAgents --> PGV
-    DeepAgents --> FSS
-    DeepAgents --> MEM
-    DeepAgents --> TAV
-    DeepAgents --> OLL
-    FunctionalAgents --> OLL
-    ESCA --> ED
-    MSFA --> FD
-    EMAI --> EA
-    DOCA --> DP
-```
-
----
-
-## 13. Testing Standards
-
-### 13.1 Unit Tests
-
-Each agent must have unit tests covering:
-- Correct routing (mock MasterAgent, verify agent key)
-- Retrieval fallback (mock pgvector failure, verify FAISS activation)
-- Guardrail blocking (known jailbreak strings → assert blocked)
-- Role enforcement (forbidden role → assert PermissionError)
-- HTML output (assert response contains `<` and no raw markdown)
-
-### 13.2 Integration Tests
-
-End-to-end tests using `pytest-asyncio` against a test database (`squadrons_test`) and a
-mocked Ollama endpoint returning canned responses. SSE streaming is tested via `httpx`
-async client.
-
-### 13.3 Performance Tests
-
-Locust load tests targeting the `/api/chat/stream` endpoint with 50 concurrent users.
-P95 latency must remain below 4 seconds. Agent timeout is set to 10 seconds; beyond that
-the MasterAgent returns a graceful fallback response via QuickAgent.
-
----
-
-## 14. Future Evolution — LangGraph Migration
-
-The current framework uses direct Python async calls for agent orchestration. The planned
-migration to LangGraph will introduce:
-
-- **State graphs** replacing the linear lifecycle
-- **Conditional edges** replacing the 3-tier routing if/else
-- **Checkpointers** for durable conversation state across sessions
-- **Tool nodes** wrapping each agent's retrieve/generate steps
-- **Human-in-the-loop** nodes for escalation approval workflows
-
-Migration is planned for Q3 2026. The `AgentContext` and `AgentResponse` dataclasses are
-designed to be LangGraph-compatible with minimal refactoring.
-
----
-
-## 15. Appendix — Agent File Map
+## 11. Appendix — Agent File Map (Real Paths)
 
 | Component | File Path |
 |-----------|-----------|
-| MasterAgent | `backend/agents/supervisor_agent.py` |
-| BaseDeepAgent | `backend/agents/base_deep_agent.py` |
-| Personalities | `backend/agents/personalities.py` |
-| Guardrails | `backend/agents/guardrails.py` |
-| Knowledge Base | `backend/agents/knowledge_base.py` |
-| HRAgent | `backend/agents/hr_agent.py` |
-| ITAgent | `backend/agents/it_agent.py` |
-| AdminAgent | `backend/agents/admin_agent.py` |
-| DocumentAgent | `backend/agents/document_agent.py` |
-| EscalationAgent | `backend/agents/escalation_agent.py` |
-| EmailAgent | `backend/agents/email_agent.py` |
-| MSFormsAgent | `backend/agents/ms_forms_agent.py` |
+| MasterAgent | `apps/api-gateway/app/agents/supervisor_agent.py` |
+| BaseDeepAgent | `apps/api-gateway/app/agents/working/base_deep_agent.py` |
+| Personalities | `apps/api-gateway/app/agents/working/personalities.py` |
+| LLM provider selection | `apps/api-gateway/app/agents/working/config.py` (`create_llm()`) |
+| Local knowledge base fallback | `apps/api-gateway/app/agents/working/knowledge_base.py` |
+| Guardrails | `apps/api-gateway/app/agents/guardrails.py` |
+| RAG retriever (pgvector, query-time) | `apps/api-gateway/app/rag/retriever.py` |
+| HRAgent | `apps/api-gateway/app/agents/working/hr_agent.py` |
+| ITAgent | `apps/api-gateway/app/agents/working/it_agent.py` |
+| AdminAgent (+ parking rate config) | `apps/api-gateway/app/agents/working/admin_agent.py`, `apps/api-gateway/app/agents/working/parking_config.py` |
+| FinanceAgent | `apps/api-gateway/app/agents/working/finance_agent.py` |
+| PMOAgent | `apps/api-gateway/app/agents/working/pmo_agent.py` |
+| OrgDeepAgent | `apps/api-gateway/app/agents/org_agent.py` |
+| FunnyAgent | `apps/api-gateway/app/agents/working/funny_agent.py` |
+| QuickAgent | `apps/api-gateway/app/agents/working/quick_agent.py` |
+| DocumentAgent | `apps/api-gateway/app/agents/document_agent.py` |
+| AllocationAgent | `apps/api-gateway/app/agents/allocation_agent.py` |
+| MSFormsAgent | `apps/api-gateway/app/agents/ms_forms_agent.py` |
+| employee_agent (function) | `apps/api-gateway/app/agents/employee/employee_agent.py` |
+| attendance_agent (function) | `apps/api-gateway/app/agents/employee/attendance_agent.py` |
+| escalation_agent (function) | `apps/api-gateway/app/agents/escalation_agent.py` |
+| email draft function | `apps/api-gateway/app/agents/email_agent.py` |
+| license_agent (function) | `apps/api-gateway/app/agents/license_agent.py` |
+
+There is no `backend/` directory in this repository. Every backend file lives under
+`apps/api-gateway/app/`. See `10-reference/folder-structure.md` for the full annotated tree.

@@ -7,13 +7,13 @@
 
 ## 1. Overview
 
-The Routing Engine is the decision layer inside `MasterAgent` (`supervisor_agent.py`) that maps each inbound user query to the correct domain agent or direct response. It operates in three sequential tiers, each more computationally expensive than the last, with earlier tiers short-circuiting when a confident match is found.
+The Routing Engine is the decision layer inside `MasterAgent` (`supervisor_agent.py`) that maps each inbound user query to the correct domain agent or direct response. Earlier documentation described this as a clean three-tier design (regex → LLM classification → keyword fallback). Against the live code, only **two tiers actually run**: fast-path regex, then keyword scoring. A `_route_llm()` method exists in the same file to do LLM-based intent classification, but it is **never called anywhere** in `_route()` — it is dead code, not a live routing step. Sections 4 and the "Tier 2" references below describe that dead code path for completeness, not an active part of the pipeline.
 
 **Design goal:** Maximize routing accuracy while minimizing latency and LLM cost. The vast majority of common enterprise queries (leave, attendance, email, escalation) should be handled by fast-path regex in under 5 ms.
 
 ---
 
-## 2. Three-Tier Architecture
+## 2. Two-Tier Architecture (plus dead LLM-classification code)
 
 ```
 Query
@@ -28,21 +28,18 @@ Query
                          │ no match
                          ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Tier 2: LLM Intent Classification (200–500 ms)         │
-│  • Ollama routing prompt → JSON domain label            │
-│  • 13 valid output labels                               │
-│  • Timeout fallback to Tier 3                           │
-└────────────────────────┬────────────────────────────────┘
-                         │ timeout / invalid JSON / unknown label
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│ Tier 3: Keyword Scoring Fallback (<10 ms)              │
+│ Tier 2: Keyword Scoring Fallback (<10 ms)              │
 │  • DOMAIN_KEYWORDS dict scoring                         │
 │  • Highest domain score wins                            │
 │  • Tie-break by priority order                          │
+│  • Defaults to QuickAgent if no domain scores > 0        │
 └────────────────────────┬────────────────────────────────┘
                          ▼
                    Domain Agent / Static Response
+
+(A `_route_llm()` JSON-classification method exists in `supervisor_agent.py`
+ but is never invoked by `_route()` — it sits between the two live tiers in
+ the code file, but not in the execution path. See Section 4.)
 ```
 
 ---
@@ -150,11 +147,13 @@ Static welcome HTML:
 
 ---
 
-## 4. Tier 2 — LLM Intent Classification
+## 4. Tier 2 — LLM Intent Classification (Dead Code — Not Invoked)
+
+> **Accuracy note:** Everything in this section describes `_route_llm()`, a method that exists in `supervisor_agent.py` but is **never called** from `_route()`. It does not run in the current build. It is documented here for completeness (in case it is wired up in the future), not as a description of live behavior. In the actual pipeline, a Tier 1 regex miss falls straight through to keyword scoring (Section 5).
 
 ### 4.1 Routing Prompt
 
-When no Tier 1 pattern matches, MasterAgent sends the following prompt to Ollama at `ml01.alignedautomation.com:11434`:
+If it were invoked, MasterAgent would send the following prompt to Ollama at `ml01.alignedautomation.com:11434`:
 
 ```
 You are a routing classifier for an enterprise AI assistant at Aligned Automation.
@@ -201,22 +200,22 @@ def parse_routing_response(raw: str) -> str:
             return label
     except Exception:
         pass
-    return None  # triggers Tier 3
+    return None  # would trigger keyword scoring, if this dead code path were ever invoked
 ```
 
 ### 4.3 Timeout Handling
 
-The Ollama routing call is wrapped with a timeout of **3 seconds**. If the call:
-- Times out (aiohttp `asyncio.TimeoutError`)
-- Returns malformed JSON
-- Returns an invalid label
-- Raises a connection error
+The code for this dead path wraps the Ollama routing call with a timeout of **3 seconds**. If the call were to run and:
+- Time out (aiohttp `asyncio.TimeoutError`)
+- Return malformed JSON
+- Return an invalid label
+- Raise a connection error
 
-...the system logs a `routing_llm_timeout` event and immediately proceeds to Tier 3. No retry is performed on the routing call itself (Tier 3 is the fallback, not a retry).
+...it would log a `routing_llm_timeout` event and fall through to keyword scoring. In practice this code path is unreachable — `_route()` never calls `_route_llm()`, so keyword scoring (Section 5) is reached directly on any Tier 1 miss, not as a timeout fallback.
 
 ---
 
-## 5. Tier 3 — Keyword Scoring
+## 5. Tier 2 (live) — Keyword Scoring
 
 ### 5.1 DOMAIN_KEYWORDS Dictionary
 
@@ -382,31 +381,31 @@ Some queries score equally across multiple domains. Resolution strategy:
 
 - Input: empty string or whitespace only
 - Fast-path: no match
-- LLM: not invoked
+- LLM: not invoked (dead code path, never called regardless of query)
 - Fallback: QuickAgent with "Please type your question and I'll be happy to help."
 
 ### 9.2 Very Long Query (> 500 characters)
 
 - Truncated to 500 characters for routing purposes only (full query sent to agent).
-- LLM routing uses the truncated version.
-- Keyword scoring uses the full text.
+- LLM routing (dead code, never invoked) would have used the truncated version if it ran.
+- Keyword scoring — the actual live fallback — uses the full text.
 
 ### 9.3 Non-English Input
 
 - Fast-path: regex patterns may partially match transliterated text.
-- LLM routing: Ollama handles Hindi/regional language classification reasonably well.
-- Keyword scoring: limited effectiveness.
+- LLM routing: dead code, never invoked; Ollama's handling of Hindi/regional language classification is not exercised in production.
+- Keyword scoring: limited effectiveness, and it is the actual fallback used (not LLM routing).
 - Fallback: `general` → QuickAgent with a note that the platform is optimized for English queries.
 
 ### 9.4 Code or SQL in Query
 
 - Tier 1 security check catches SQL injection patterns first.
-- If it passes Tier 1 (e.g., code snippet for IT help): LLM routing classifies as `it`.
+- If it passes Tier 1 (e.g., code snippet for IT help): keyword scoring — not LLM routing, which is dead code — classifies it, typically as `it` if IT-related keywords are present.
 - ITAgent handles code-related technical queries.
 
 ### 9.5 Agent Override in Request
 
-If the frontend sends `"agent_type": "<specific_agent>"` in the POST body (used by the quick-access panel), all three routing tiers are bypassed and the specified agent is dispatched directly. RBAC validation still applies.
+If the frontend sends `"agent_type": "<specific_agent>"` in the POST body (used by the quick-access panel), both live routing tiers (fast-path regex and keyword scoring) are bypassed and the specified agent is dispatched directly. RBAC validation still applies.
 
 ---
 
@@ -440,16 +439,13 @@ flowchart TD
     M -- Yes --> ITA[ITAgent]
     M -- No --> N{Joke/funny\npattern?}
     N -- Yes --> FunnyA[FunnyAgent]
-    N -- No --> O[Tier 2: Ollama\nRouting Prompt]
-    O --> P{Valid JSON\nlabel returned\nwithin 3s?}
-    P -- Yes --> Q{Label in\nvalid set?}
-    Q -- Yes --> R[Dispatch to\nLabeled Agent]
-    Q -- No --> S[Tier 3: Keyword\nScoring]
-    P -- No / Timeout --> S
+    N -- No --> S[Tier 2: Keyword\nScoring]
     S --> T{Max keyword\nscore > 0?}
     T -- Yes --> U[Dispatch to\nTop-Scoring Agent]
     T -- No --> V[general →\nQuickAgent / HRAgent]
 ```
+
+**Note:** An earlier version of this diagram showed an intermediate "Tier 2: Ollama Routing Prompt" step between the fast-path checks and keyword scoring. That step corresponds to `_route_llm()` in `supervisor_agent.py`, which is never called by `_route()`. It has been removed from the decision tree above because it does not execute in the live pipeline — a Tier 1 miss goes directly to keyword scoring.
 
 ---
 
@@ -458,13 +454,12 @@ flowchart TD
 | Tier | Mechanism | Typical Latency | P99 Latency |
 |---|---|---|---|
 | Tier 1 Fast-Path | Compiled regex | < 1 ms | < 5 ms |
-| Tier 2 LLM | Ollama inference | 200 ms | 500 ms |
-| Tier 3 Keyword | Dict lookup + scoring | < 2 ms | < 10 ms |
+| Tier 2 Keyword | Dict lookup + scoring | < 2 ms | < 10 ms |
+| ~~LLM routing~~ | Dead code (`_route_llm()`), never invoked | N/A | N/A |
 
-**Routing hit rate targets:**
-- Tier 1: >= 60% of all queries (high-frequency enterprise intents)
-- Tier 2: ~35% of queries
-- Tier 3: ~5% of queries (LLM timeout / ambiguous queries)
+**Routing hit rate targets (two live tiers):**
+- Tier 1 (fast-path regex): >= 60% of all queries (high-frequency enterprise intents)
+- Tier 2 (keyword scoring): remainder of queries not caught by a fast-path pattern, including ambiguous queries that fall through to `general` → QuickAgent
 
 ---
 
@@ -478,10 +473,10 @@ Every routing decision is logged:
     "session_id": "uuid",
     "user_id": "oid",
     "query_length": 45,
-    "tier_used": 1,           # 1, 2, or 3
+    "tier_used": 1,           # 1 (fast-path) or 2 (keyword scoring); an "llm" value would
+                              # indicate the dead _route_llm() path and should not occur
     "fast_path_group": "leave_apply",   # if Tier 1
-    "llm_label": null,                  # if Tier 2
-    "keyword_scores": {},               # if Tier 3
+    "keyword_scores": {},               # if Tier 2
     "routed_agent": "AttendanceAgent",
     "routing_latency_ms": 2.1
 }

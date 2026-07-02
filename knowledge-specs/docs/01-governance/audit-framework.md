@@ -116,7 +116,7 @@ All events below are mandatory. The `action` field uses dot-notation: `<domain>.
 | `chat.response.generated` | `message` | Agent produces and returns a response |
 | `chat.response.failed` | `message` | Agent or LLM call fails to produce a response |
 | `chat.routing.decided` | `conversation` | MasterAgent assigns a domain agent to handle the request |
-| `chat.routing.fallback` | `conversation` | Routing fell back to keyword scoring after LLM routing timeout |
+| `chat.routing.fallback` | `conversation` | Routing fell back to keyword scoring after regex fast-paths found no match (there is no live LLM routing tier to time out — an `_route_llm()` method exists in code but is never called) |
 
 ### 3.2 Conversation Management Events
 
@@ -146,8 +146,8 @@ All events below are mandatory. The `action` field uses dot-notation: `<domain>.
 | `agent.retrieval.pgvector` | `message` | pgvector similarity search executed |
 | `agent.retrieval.faiss` | `message` | FAISS fallback search executed |
 | `agent.retrieval.web` | `message` | Tavily web search executed |
-| `agent.llm.called` | `message` | Ollama LLM inference call initiated |
-| `agent.llm.failed` | `message` | Ollama call timed out or returned an error |
+| `agent.llm.called` | `message` | LLM inference call initiated against the configured provider (Claude, Groq, or Ollama — selected by priority via env flags) |
+| `agent.llm.failed` | `message` | LLM call timed out or returned an error |
 
 ---
 
@@ -158,10 +158,10 @@ All events below are mandatory. The `action` field uses dot-notation: `<domain>.
 Every `chat.message.sent` and `chat.response.generated` audit record must be supplemented in the `messages` table with the following metadata stored in the `sources` JSONB column:
 
 - `agent_name`: the domain agent that handled the request (e.g., `HRAgent`, `ITAgent`)
-- `routing_method`: one of `regex_fast_path`, `llm_routing`, `keyword_fallback`
+- `routing_method`: one of `regex_fast_path`, `keyword_fallback` (a third value, `llm_routing`, is defined for the dead-code `_route_llm()` path but is never produced in the current build)
 - `retrieval_sources`: array of source types used (`pgvector`, `faiss`, `web`, `memory`)
-- `llm_model`: model identifier (`gpt-oss`)
-- `llm_latency_ms`: elapsed time for the Ollama call in milliseconds
+- `llm_model`: model identifier (`gpt-oss` when Ollama is the active provider; `claude-sonnet-4-6` or `llama3-70b-8192` when Claude or Groq is configured as the higher-priority provider)
+- `llm_latency_ms`: elapsed time for the LLM call in milliseconds
 - `guardrail_tier`: `none`, `tier1`, or `tier2` if a guardrail was evaluated
 - `guardrail_outcome`: `passed`, `blocked`, or `redirected`
 
@@ -186,8 +186,7 @@ When a guardrail evaluation is triggered:
 The MasterAgent supervisor must emit a `chat.routing.decided` audit entry for every request, recording:
 
 - The selected domain agent
-- The routing method used (regex fast-path, LLM classification, keyword fallback)
-- Whether the routing LLM call timed out
+- The routing method used (regex fast-path or keyword-scoring fallback — the current build has no live LLM classification tier)
 
 ---
 
@@ -456,7 +455,7 @@ flowchart TD
     PII -->|Clean| RAG[RAG Retrieval\npgvector + FAISS]
 
     RAG --> ARAG[audit_logs\nagent.retrieval.pgvector\nor .faiss or .web]
-    RAG --> LLM[Ollama LLM\nml01.alignedautomation.com\nmodel: gpt-oss]
+    RAG --> LLM[Configured LLM\nClaude / Groq / Ollama\nml01.alignedautomation.com when Ollama active]
 
     LLM -->|Response| AMSG[audit_logs\nchat.response.generated\nmessages table]
     LLM -->|Failure| AFAIL2[audit_logs\nagent.llm.failed\nstatus=FAILURE]

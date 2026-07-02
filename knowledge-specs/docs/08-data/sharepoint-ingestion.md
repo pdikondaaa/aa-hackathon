@@ -16,33 +16,36 @@ This document specifies the SharePoint document ingestion pipeline for the AA-Ha
 
 ## 2. Ingestion Pipeline Overview
 
+**This is a full purge-and-rebuild pipeline, not an incremental-only process.** At the start of every run, `main.py` calls `db.purge_all()`, which deletes all existing `documents`/`document_chunks` rows, then does a complete re-ingest of everything currently discoverable in SharePoint. The pipeline still computes a per-file NEW/CHANGED/UNCHANGED/DELETED classification during the run (for logging and summary stats), but that classification does **not** cause unchanged files to be skipped at the database level — because the database was just wiped, every file is re-extracted, re-chunked, and re-embedded on every run.
+
 ```mermaid
 flowchart TD
-    Start(["Ingestion Job Start\n(cron or manual trigger)"]) --> Auth["Authenticate to SharePoint\nAzure AD app credentials\nSHAREPOINT_CLIENT_ID + CLIENT_SECRET"]
-    Auth --> Enumerate["Enumerate Document Libraries\nGet all files with metadata\n(name, path, modified_date, size)"]
-    Enumerate --> ForEach["For Each File\n(PDF / DOCX / XLSX / PPTX)"]
+    Start(["Ingestion Job Start\n(IngestionService in main.py)"]) --> Purge["db.purge_all()\nDeletes ALL rows from\ndocuments + document_chunks"]
+    Purge --> Auth["Authenticate to SharePoint\nconnectors/sharepoint.py\nmsal.ConfidentialClientApplication\n(app-only Graph auth)"]
+    Auth --> Enumerate["services/sync_service.py\nRecursively discover subsites\nList + download files via Graph API\n(.pdf .txt .csv .docx .pptx .doc .xlsx)"]
+    Enumerate --> ForEach["For Each File"]
 
-    ForEach --> Hash["Compute SHA-256 Hash\nof file content"]
-    Hash --> DBLookup["Query documents table\nSELECT hash WHERE source_path = %s"]
-    DBLookup --> Status{File Status}
+    ForEach --> Hash["Compute content hash"]
+    Hash --> Status{"Classify file\n(for logging/stats only)"}
+    Status -- NEW --> Extract
+    Status -- CHANGED --> Extract
+    Status -- UNCHANGED --> Extract
+    Status -- DELETED --> LogDel["Logged as deleted\n(already absent — table was purged)"]
 
-    Status -- "Not in DB\n(NEW)" --> Extract
-    Status -- "Hash changed\n(CHANGED)" --> SoftDelete["Soft-delete old chunks\nUPDATE document_chunks\nSET is_deleted=true\nWHERE document_id=old_id"]
-    Status -- "Hash same\n(UNCHANGED)" --> Skip["Skip — no action"]
-    Status -- "In DB but not in SP\n(DELETED)" --> SoftDeleteDoc["Soft-delete document\n+ chunks\nis_deleted=true"]
+    Extract["Extract Text\nextractors/html_extractor.py\nextractors/text_extractor.py"]
+    Extract --> Chunk["Chunk Text\nchunking/chunker.py\nsection-aware pre-split, then\nRecursiveCharacterTextSplitter\nsize=1000 chars, overlap=200 chars"]
+    Chunk --> Embed["Generate Embeddings\nembeddings/embedder.py\nHuggingFaceEmbeddings\nnomic-embed-text-v1.5 (768-dim)"]
+    Embed --> InsertDoc["INSERT INTO documents"]
+    InsertDoc --> InsertChunks["INSERT INTO document_chunks"]
+    InsertChunks --> Log["Log result\n(NEW / CHANGED / UNCHANGED / ERROR)"]
+    LogDel --> Log
 
-    SoftDelete --> Extract
-    Extract["Extract Text\nTextExtractor.extract(file_bytes, file_type)"]
-    Extract --> Chunk["Chunk Text\nRecursiveCharacterTextSplitter\nsize=500, overlap=50"]
-    Chunk --> Embed["Generate Embeddings\nSentenceTransformer\nall-MiniLM-L6-v2\nbatch_size=32"]
-    Embed --> InsertDoc["INSERT INTO documents\n(document_name, source_path, tags, hash)"]
-    InsertDoc --> InsertChunks["INSERT INTO document_chunks\n(document_id, chunk_text, metadata, embedding)"]
-    InsertChunks --> Log["Log result\n(NEW / CHANGED / ERROR)"]
-    Skip --> Log
-    SoftDeleteDoc --> Log
+    Log --> Summary["Print Summary\nX new, Y changed, Z unchanged, W errors"]
+    Summary --> End(["Job Complete — full rebuild finished"])
 
-    Log --> Summary["Print Summary\nX new, Y changed, Z deleted, W errors"]
-    Summary --> End(["Job Complete"])
+    subgraph Phase2["Phase 2 — disabled by default, commented out in main.py"]
+        Scrape["services/web_scraper_service.py\nconnectors/sharepoint_web_scraper.py\nPlaywright browser automation\n+ SharePoint REST API (_api/web) fallback for cookies"]
+    end
 ```
 
 ---
@@ -51,28 +54,31 @@ flowchart TD
 
 | Component | Path | Description |
 |-----------|------|-------------|
-| Job entry point | `apps/jobs/sharepoint_ingestion/main.py` | Orchestrates the full ingestion run |
-| SharePoint client | `integrations/sharepoint/client.py` | Connects to SharePoint, lists and downloads files |
-| Text extractor | `apps/jobs/sharepoint_ingestion/extractor.py` | Extracts plain text from PDF/DOCX/XLSX/PPTX |
-| Text chunker | `apps/jobs/sharepoint_ingestion/chunker.py` | RecursiveCharacterTextSplitter wrapper |
-| Embedder | `apps/api-gateway/app/rag/embedder.py` | Shared with API — all-MiniLM-L6-v2 |
-| Document service | `apps/api-gateway/app/services/document_service.py` | DB insert/update/soft-delete operations |
-| Config | `apps/jobs/sharepoint_ingestion/config.py` | Reads env vars, validates config on startup |
+| Job entry point | `apps/jobs/sharepoint_ingestion/main.py` | Orchestrates the full run: purges all documents/chunks, then re-ingests everything found via the primary connector |
+| Primary SharePoint connector | `apps/jobs/sharepoint_ingestion/connectors/sharepoint.py` | Microsoft Graph API + `msal.ConfidentialClientApplication` (app-only auth). Recursively discovers subsites, lists/downloads files. This is the connector actually invoked in the live pipeline, via `services/sync_service.py` |
+| Sync orchestration | `apps/jobs/sharepoint_ingestion/services/sync_service.py` | Primary/live pipeline logic invoked by `IngestionService` in `main.py` |
+| Secondary connector (disabled by default) | `apps/jobs/sharepoint_ingestion/connectors/sharepoint_web_scraper.py` | Playwright-based browser automation with a SharePoint REST API (`_api/web`) fallback for cookies. Used by `services/web_scraper_service.py` for "Phase 2" (site pages + list scraping). Gated by `SCRAPE_PAGES_ENABLED` / `SCRAPE_LISTS_ENABLED` (both default `false`) and commented out in `main.py` |
+| Text extractors | `apps/jobs/sharepoint_ingestion/extractors/html_extractor.py`, `extractors/text_extractor.py` | Type-specific extractors that convert downloaded file bytes to plain text. (Note: the exact set of third-party parsing libraries behind these extractors — e.g. for PDF/DOCX/XLSX/PPTX — was not independently confirmed in the last code audit; do not assume specific libraries without checking the ingestion job's own `requirements.txt`.) |
+| Text chunker | `apps/jobs/sharepoint_ingestion/chunking/chunker.py` | File-type-aware section pre-split + `RecursiveCharacterTextSplitter` — see [`chunking-strategy.md`](chunking-strategy.md) for the full algorithm |
+| Embedder | `apps/jobs/sharepoint_ingestion/embeddings/embedder.py` | `HuggingFaceEmbeddings` wrapping `nomic-embed-text-v1.5` (`model_kwargs={"trust_remote_code": True}`) — the same model and library used at query time in `apps/api-gateway/app/rag/retriever.py` |
+| Schema creation | `apps/jobs/sharepoint_ingestion/create_schema.py` | Standalone DDL script — creates ~28 tables including `documents`, `document_chunks`. No ORM, no migration framework; raw SQL only |
+| Config | `apps/jobs/sharepoint_ingestion/config/settings.py` | Reads env vars, defines `CHUNK_SIZE`, `CHUNK_OVERLAP`, and other ingestion parameters |
 
 ---
 
-## 4. SharePoint Client
+## 4. SharePoint Connectors
 
-### 4.1 Authentication
+There are **two** SharePoint connectors in the codebase, serving different purposes. Do not conflate them, and note that `integrations/sharepoint/client.py` at the repository root is a separate, older/shared connector that is distinct from either of the ingestion job's own connectors under `apps/jobs/sharepoint_ingestion/connectors/`.
 
-The SharePoint client authenticates using an Azure AD app registration with `Sites.Read.All` permission (app-level, not delegated).
+### 4.1 Primary connector — Microsoft Graph API (`connectors/sharepoint.py`)
+
+This is the connector that actually runs in the live pipeline today. It authenticates via an Azure AD app registration using app-only (not delegated) auth, through Python's `msal.ConfidentialClientApplication`. It is invoked by `services/sync_service.py`, which is the primary pipeline logic driven by `IngestionService` in `main.py`. It recursively discovers subsites and lists/downloads files with these extensions: `.pdf .txt .csv .docx .pptx .doc .xlsx`.
 
 ```python
-# integrations/sharepoint/client.py
+# apps/jobs/sharepoint_ingestion/connectors/sharepoint.py (illustrative)
 import msal
-import requests
 
-class SharePointClient:
+class SharePointGraphConnector:
     def __init__(self, tenant_id: str, client_id: str, client_secret: str, site_url: str):
         self.site_url = site_url
         self.graph_base = "https://graph.microsoft.com/v1.0"
@@ -92,156 +98,73 @@ class SharePointClient:
             raise RuntimeError(f"Token acquisition failed: {result.get('error_description')}")
         return result["access_token"]
 
-    def list_documents(self, library_name: str) -> list[dict]:
-        """List all files in a SharePoint document library via Microsoft Graph."""
-        ...
-
-    def download_file(self, item_id: str) -> bytes:
-        """Download file bytes for a SharePoint item."""
+    # Recursively discovers subsites, then lists/downloads files via Graph
+    def discover_and_download(self) -> list[dict]:
         ...
 ```
 
-### 4.2 Supported File Types
+### 4.2 Secondary connector — Playwright web scraper (`connectors/sharepoint_web_scraper.py`), disabled by default
 
-| Extension | Library | Notes |
-|-----------|---------|-------|
-| `.pdf` | `pypdf2` or `pdfplumber` | Extracts text per page, preserves page numbers |
-| `.docx` | `python-docx` | Extracts paragraphs and tables, preserves heading structure |
-| `.xlsx` | `openpyxl` | Extracts sheet by sheet, includes column headers in each row |
-| `.pptx` | `python-pptx` | Extracts slide-by-slide, includes slide number in metadata |
+This connector is used only for the optional "Phase 2" scope (site pages + SharePoint list scraping), via `services/web_scraper_service.py`. It uses Playwright-driven browser automation, with a fallback to the SharePoint REST API (`_api/web`) for obtaining cookies. It is gated by `SCRAPE_PAGES_ENABLED` and `SCRAPE_LISTS_ENABLED`, both of which **default to `false`**, and its invocation is commented out in `main.py`. In the live pipeline today, only the Graph API connector (4.1) actually runs.
+
+### 4.3 Supported File Types (primary connector)
+
+`.pdf .txt .csv .docx .pptx .doc .xlsx` are downloaded by the primary connector. Extraction to plain text is handled downstream by the type-specific extractors under `apps/jobs/sharepoint_ingestion/extractors/` (see Section 6) — do not assume a specific third-party parsing library per format without checking the ingestion job's own `requirements.txt`.
 
 ---
 
-## 5. Hash-Based Change Detection
+## 5. Change Classification — Not a Skip-Unchanged Mechanism
 
-The ingestion pipeline avoids reprocessing unchanged documents using SHA-256 content hashing.
+The pipeline still computes a per-file hash/status classification (`NEW` / `CHANGED` / `UNCHANGED` / `DELETED`) while walking SharePoint, and this classification is written to the run summary/log for observability. **However, this does not translate into "skip reprocessing of unchanged files" at the database level.** `main.py` calls `db.purge_all()` at the very start of every run, deleting all rows from `documents` and `document_chunks`. Every file discovered in the run is therefore re-extracted, re-chunked, and re-embedded regardless of whether its hash changed since the last run. Treat the classification as a stats/logging feature, not an incremental-processing optimization.
 
 ```python
-import hashlib
-
-def compute_file_hash(file_bytes: bytes) -> str:
-    return hashlib.sha256(file_bytes).hexdigest()
-
-def determine_file_status(
-    source_path: str,
-    new_hash: str,
-    db_pool: ThreadedConnectionPool,
-) -> tuple[str, str | None]:
+# Illustrative — status is computed for logging, not to gate reprocessing
+def classify_file(source_path: str, new_hash: str, previously_seen: dict) -> str:
     """
-    Returns (status, existing_document_id)
-    status: 'NEW' | 'CHANGED' | 'UNCHANGED'
+    Returns 'NEW' | 'CHANGED' | 'UNCHANGED' | 'DELETED'
+    Used for the run summary only — every discovered file is still
+    extracted, chunked, and embedded this run because the tables
+    were purged at job start.
     """
-    conn = db_pool.getconn()
-    try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            "SELECT id, hash FROM documents WHERE source_path = %s AND is_deleted = false",
-            (source_path,)
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return "NEW", None
-        if row["hash"] == new_hash:
-            return "UNCHANGED", row["id"]
-        return "CHANGED", row["id"]
-    finally:
-        db_pool.putconn(conn)
+    prior_hash = previously_seen.get(source_path)
+    if prior_hash is None:
+        return "NEW"
+    if prior_hash == new_hash:
+        return "UNCHANGED"
+    return "CHANGED"
 ```
 
 ---
 
 ## 6. Text Extraction
 
-Each file type has a dedicated extractor that returns plain text with structural metadata preserved.
+Text extraction lives under `apps/jobs/sharepoint_ingestion/extractors/`, which contains two extractor modules: `html_extractor.py` and `text_extractor.py`. These convert downloaded file bytes into plain text for the chunker (Section 7).
 
-### 6.1 PDF Extraction
+The exact third-party libraries used inside these extractors for each file format (PDF, DOCX, XLSX, PPTX) were **not independently confirmed** in the most recent code audit — a prior version of this document asserted specific libraries (`pdfplumber`, `python-docx`, `openpyxl`, `python-pptx`) with confidence that turned out to be unverifiable, since the ingestion job maintains its own `requirements.txt` separate from `apps/api-gateway/requirements.txt`. Until that file is checked directly, describe extraction by function rather than by implementation library:
 
-```python
-import pdfplumber
-
-def extract_pdf(file_bytes: bytes) -> list[dict]:
-    """Returns list of {text, page_number} dicts."""
-    pages = []
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        for page_num, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text() or ""
-            if text.strip():
-                pages.append({"text": text, "page_number": page_num})
-    return pages
-```
-
-### 6.2 DOCX Extraction
-
-```python
-from docx import Document
-
-def extract_docx(file_bytes: bytes) -> str:
-    """Extracts full text preserving paragraph structure."""
-    doc = Document(io.BytesIO(file_bytes))
-    paragraphs = []
-    for para in doc.paragraphs:
-        if para.text.strip():
-            prefix = f"[{para.style.name}] " if "Heading" in para.style.name else ""
-            paragraphs.append(prefix + para.text)
-    return "\n\n".join(paragraphs)
-```
-
-### 6.3 XLSX Extraction
-
-```python
-from openpyxl import load_workbook
-
-def extract_xlsx(file_bytes: bytes) -> str:
-    """Extracts each row as text with column headers prepended."""
-    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-    all_text = []
-    for sheet in wb.worksheets:
-        rows = list(sheet.iter_rows(values_only=True))
-        if not rows:
-            continue
-        headers = [str(h or "") for h in rows[0]]
-        for row in rows[1:]:
-            row_text = " | ".join(
-                f"{headers[i]}: {str(val or '').strip()}"
-                for i, val in enumerate(row)
-                if val is not None
-            )
-            if row_text.strip():
-                all_text.append(row_text)
-    return "\n".join(all_text)
-```
-
-### 6.4 PPTX Extraction
-
-```python
-from pptx import Presentation
-
-def extract_pptx(file_bytes: bytes) -> list[dict]:
-    """Returns list of {text, slide_number} dicts."""
-    prs = Presentation(io.BytesIO(file_bytes))
-    slides = []
-    for slide_num, slide in enumerate(prs.slides, start=1):
-        texts = []
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                texts.append(shape.text_frame.text)
-        full_text = "\n".join(t for t in texts if t.strip())
-        if full_text:
-            slides.append({"text": full_text, "slide_number": slide_num})
-    return slides
-```
+- Each supported file type has a dedicated extraction path that returns plain text.
+- Structural cues that survive into the extracted text are used by the chunker to detect section boundaries — e.g. `[Slide N]` markers for presentations and `[Sheet: X]` markers for spreadsheets (see [`chunking-strategy.md`](chunking-strategy.md)).
+- Where a heading structure exists in the source document, it is expected to be detectable in the extracted plain text (e.g. ALL-CAPS lines, numbered headings, "Section"/"Chapter" markers) rather than carried as separate rich metadata.
 
 ---
 
 ## 7. Chunking
 
-After extraction, text is chunked using LangChain's `RecursiveCharacterTextSplitter`.
+Chunking happens in `apps/jobs/sharepoint_ingestion/chunking/chunker.py`, configured by `CHUNK_SIZE = 1000` (characters) and `CHUNK_OVERLAP = 200` (characters) in `config/settings.py`. This is character-based, not token-based, and is **file-type-aware**: the chunker first pre-splits the extracted text into sections, then applies LangChain's `RecursiveCharacterTextSplitter` within each section:
+
+1. **PPTX text** is pre-split on `[Slide N]` markers.
+2. **XLSX text** is pre-split on `[Sheet: X]` markers.
+3. **Everything else** is pre-split on detected section headings (ALL-CAPS lines, numbered headings, "Section"/"Chapter" markers).
+4. Within each resulting section, `RecursiveCharacterTextSplitter` further splits long sections into ≤1000-character chunks with 200-character overlap.
+5. The section heading (or slide/sheet marker) is **prepended to every chunk** produced from that section, so each chunk carries its own context even after splitting.
+
+See [`chunking-strategy.md`](chunking-strategy.md) for the full algorithm and code-level detail. Full chunking configuration:
 
 ```python
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
+CHUNK_SIZE = 1000       # characters, not tokens
+CHUNK_OVERLAP = 200     # characters
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
@@ -250,19 +173,26 @@ splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
-def chunk_text(text: str, base_metadata: dict) -> list[dict]:
-    chunks = splitter.split_text(text)
-    return [
-        {
-            "chunk_text": chunk,
-            "metadata": {
-                **base_metadata,
-                "chunk_index": i,
-                "word_count": len(chunk.split()),
-            }
-        }
-        for i, chunk in enumerate(chunks)
-    ]
+def chunk_extracted_text(text: str, base_metadata: dict) -> list[dict]:
+    """
+    text is already-extracted plain text (from extractors/html_extractor.py
+    or extractors/text_extractor.py), which may contain [Slide N] / [Sheet: X]
+    markers or heading-like lines depending on source file type.
+    """
+    sections = split_into_sections(text)  # by slide/sheet markers, or detected headings
+    all_chunks = []
+    for section in sections:
+        full_text = f"{section['heading']}\n\n{section['body']}" if section["heading"] else section["body"]
+        for chunk in splitter.split_text(full_text):
+            all_chunks.append({
+                "chunk_text": chunk,
+                "metadata": {
+                    **base_metadata,
+                    "chunk_index": len(all_chunks),
+                    "section_heading": section["heading"],
+                }
+            })
+    return all_chunks
 ```
 
 ---
@@ -329,7 +259,7 @@ def insert_document_and_chunks(
 
 ## 10. Job Run Summary
 
-At the end of every run, the job logs a structured summary:
+At the end of every run, the job logs a structured summary. Because `main.py` purges all documents/chunks at job start, `chunks_created` reflects the **entire rebuilt corpus** for the run, not just chunks from new/changed files — the `files_new` / `files_changed` / `files_unchanged` breakdown is retained purely as a classification stat for observability (e.g. to spot how much of SharePoint actually changed since the last run), not as an indicator of what was skipped:
 
 ```json
 {
@@ -340,26 +270,25 @@ At the end of every run, the job logs a structured summary:
   "files_enumerated": 248,
   "files_new": 12,
   "files_changed": 3,
-  "files_deleted": 1,
-  "files_unchanged": 232,
+  "files_unchanged": 233,
   "files_error": 0,
-  "chunks_created": 487,
-  "chunks_deleted": 89
+  "chunks_created": 5140,
+  "note": "chunks_created reflects the full rebuilt corpus (all 248 files were re-processed after purge_all()), not only new/changed files"
 }
 ```
 
 ---
 
-## 11. Phase 2: Web Scraping (Optional)
+## 11. Phase 2: Web Scraping (disabled by default)
 
-If enabled via environment variables, the ingestion job also scrapes internal web pages and SharePoint lists.
+The ingestion job includes a second, optional connector — `connectors/sharepoint_web_scraper.py`, invoked via `services/web_scraper_service.py` — that can scrape internal SharePoint site pages and SharePoint list data. **It is disabled by default and its invocation is commented out in `main.py`**, so it does not run as part of the live pipeline unless both explicitly re-enabled in code and turned on via environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SCRAPE_PAGES_ENABLED` | `false` | Enable scraping of SharePoint site pages |
 | `SCRAPE_LISTS_ENABLED` | `false` | Enable extraction of SharePoint list data |
 
-Scraping uses `requests-html` or `playwright` for JS-rendered pages. Scraped content follows the same chunking and embedding pipeline as file-based documents.
+This connector uses Playwright for browser automation, with a fallback to the SharePoint REST API (`_api/web`) to obtain cookies. When enabled, scraped content is intended to follow the same chunking and embedding pipeline as file-based documents. In the current default configuration, only the Microsoft Graph API connector (Section 4.1) contributes documents to the knowledge base.
 
 ---
 

@@ -1,269 +1,163 @@
 # Orchestrator Agent Specification — MasterAgent
-# AA-Hackathon Enterprise AI Platform — Aligned Automation
-# Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/supervisor_agent.py
+# AURA (AA-Hackathon Enterprise Assistant) — Aligned Automation
+# Document Version: 2.0 — Corrected against live codebase | Last Updated: 2026-07-02
+# Source File: apps/api-gateway/app/agents/supervisor_agent.py
+
+> **Accuracy note:** This document was rewritten after a code audit found fabrications in the previous
+> version — a fictional "3-tier" router with a working LLM-classification step, a fixed 13-agent
+> registry of uniform singleton objects, `backend/agents/...` file paths that don't exist in this
+> repository, and an Ollama-only LLM claim. See `04-agents/agent-framework.md` and `README.md` for the
+> platform-wide corrected facts this document is built on.
 
 ---
 
 ## 1. Overview
 
-The MasterAgent is the single entry point for all user queries on the AA-Hackathon platform.
-It acts as an intelligent orchestrator that classifies incoming requests, selects the most
-appropriate specialized agent, assembles context, and streams the response back to the client
-via Server-Sent Events (SSE).
+The MasterAgent is the single entry point for chat queries on AURA. It classifies incoming requests,
+selects a handler, assembles context, dispatches, and streams the response back to the client via
+Server-Sent Events (SSE).
 
-The MasterAgent is not a user-facing agent — it has no personality and produces no answer text
-of its own. It is purely an orchestration layer. All answer generation is delegated to the
-thirteen registered domain agents.
+The MasterAgent itself has no personality and generates no answer text — it is purely orchestration.
+Answer generation is delegated to whichever handler it dispatches to. Not every handler is a
+retrieval-and-LLM agent, though: some are plain classes (DocumentAgent, AllocationAgent, MSFormsAgent)
+and some are plain functions wrapped in small adapter objects purely so the dispatch code can call them
+uniformly (employee_agent, attendance_agent, escalation_agent, the email-draft function, license_agent).
+See `04-agents/agent-framework.md` Section 2 for the full breakdown.
 
 ---
 
 ## 2. Module Location and Instantiation
 
 ```
-File:     backend/agents/supervisor_agent.py
+File:     apps/api-gateway/app/agents/supervisor_agent.py
 Class:    MasterAgent
 Pattern:  Singleton (one instance per FastAPI worker process)
-Init:     Called at application startup via lifespan event
+Init:     Instantiated at application startup
 ```
 
-At startup, the MasterAgent instantiates all thirteen domain agents and stores them in the
-`_AGENT_REGISTRY` dictionary. This ensures that embedding models, FAISS indices, and pgvector
-connection pools are initialized once and reused across all requests.
+At startup, the MasterAgent constructs the `BaseDeepAgent` subclasses (HRAgent, ITAgent, AdminAgent,
+FinanceAgent, PMOAgent, OrgDeepAgent), the lightweight agents (FunnyAgent, QuickAgent), the plain
+classes (DocumentAgent, AllocationAgent, MSFormsAgent), and wraps the plain functions
+(employee_agent, attendance_agent, escalation_agent, the email-draft function, license_agent) in
+adapter objects. This is done once so embedding clients, local knowledge-base indices, and database
+connection pools are initialized once and reused across requests. There is no `GeneralAgent` class —
+the catch-all role is filled by `QuickAgent`.
 
 ---
 
-## 3. Agent Registry
+## 3. Routing — Real Behavior (Not a Clean 3-Tier Design)
 
-```python
-_AGENT_REGISTRY: dict[str, BaseAgent] = {
-    "hr":         HRAgent(),
-    "it":         ITAgent(),
-    "admin":      AdminAgent(),
-    "pmo":        PMOAgent(),
-    "finance":    FinanceAgent(),
-    "org":        OrgAgent(),
-    "document":   DocumentAgent(),
-    "escalation": EscalationAgent(),
-    "email":      EmailAgent(),
-    "msforms":    MSFormsAgent(),
-    "funny":      FunnyAgent(),
-    "quick":      QuickAgent(),
-    "general":    GeneralAgent(),
-}
-```
+The previous version of this document described a clean regex → LLM → keyword three-tier router. That
+does not match `_route()` in `supervisor_agent.py`. The real evaluation order is:
 
-The registry is immutable after startup. Adding a new agent requires a server restart.
-All keys are lowercase, single-word identifiers matching the `DOMAIN` class attribute of
-each agent class.
+1. **Active document-generation session check** — if the user already has an in-progress multi-turn
+   document session, the query routes straight back to `DocumentAgent`, bypassing everything below.
+2. **Escalation keyword check.**
+3. **Regex fast-paths**, evaluated in sequence: Microsoft Forms intent, email-draft intent, attendance
+   query, employee-directory query, document-request query — plus apply-leave and name-query regexes
+   that are actually checked even earlier in the pipeline.
+4. **Greeting / small-talk fast-path.**
+5. **Keyword-scoring fallback** against a `DOMAIN_KEYWORDS` dictionary. If every domain scores zero,
+   the query defaults to `QuickAgent`.
 
----
-
-## 4. Request Processing — Step by Step
+A `_route_llm()` method exists in the same file and would do LLM-based intent classification — but
+grep confirms it is **never called from anywhere**. It is dead code, not a feature behind a flag. There
+is no functioning LLM classification step in the live routing path today.
 
 ```mermaid
 flowchart TD
     A[POST /api/chat/stream] --> B[Extract JWT + Payload]
-    B --> C[Assemble AgentContext]
-    C --> D[Guardrails Tier 1 - Static Regex]
+    B --> C[Assemble context]
+    C --> D[Guardrails - static regex tier]
     D -->|Blocked| E[Return guardrail block response]
-    D -->|Pass| F[Guardrails Tier 2 - LLM Analysis]
-    F -->|Escalate| G[EscalationAgent - welfare priority]
-    F -->|Block| E
-    F -->|Allow| H{Tier 1 Routing\nRegex Fast-Path}
-    H -->|Pattern Match| I[Select Agent from Registry]
-    H -->|No Match| J{Tier 2 Routing\nOllama LLM Classification}
-    J -->|Confident result| I
-    J -->|Low confidence| K{Tier 3 Routing\nDOMAIN_KEYWORDS}
-    K -->|Keyword match| I
-    K -->|No match| L[GeneralAgent]
-    I --> M[Dispatch - inject context]
-    L --> M
-    M --> N[Agent Retrieval - parallel async]
-    N --> O[Agent LLM Generation]
+    D -->|Pass| F[Guardrails - LLM tier\ndistress / org-scope only]
+    F -->|Escalate| G[Dispatch to escalation_agent]
+    F -->|Allow| H{Active document\nsession?}
+    H -->|Yes| DOC[Route to DocumentAgent]
+    H -->|No| I{Escalation keyword\nmatch?}
+    I -->|Yes| G
+    I -->|No| J{Regex fast-paths:\nforms / email / attendance /\ndirectory / document / leave / name}
+    J -->|Match| K[Dispatch matched handler]
+    J -->|No match| L{Greeting / small-talk\nfast-path?}
+    L -->|Yes| K
+    L -->|No| M{DOMAIN_KEYWORDS scoring}
+    M -->|Best score > 0| K
+    M -->|All scores 0| N[QuickAgent - default fallback]
+    K --> O[Handler executes]
+    N --> O
+    DOC --> O
     O --> P{Escalation triggered?}
-    P -->|Yes| Q[Chain EscalationAgent call]
-    P -->|No| R[Assemble AgentResponse]
+    P -->|Yes| Q[Dispatch to escalation_agent]
+    P -->|No| R[Assemble response]
     Q --> R
-    R --> S[SSE Stream to Client]
+    R --> S[SSE stream to client]
+
+    subgraph DeadCode [Exists in source, never invoked]
+        LLMR["_route_llm() — would classify\nvia LLM if wired in. Zero call\nsites found by grep."]
+    end
 ```
+
+There are **two live routing tiers** (regex fast-paths, then keyword scoring), not three, and no
+working LLM-based classification step in the current build.
 
 ---
 
-## 5. Tier 1 — Regex Fast-Path Rules
+## 4. Guardrails (`apps/api-gateway/app/agents/guardrails.py`)
 
-Regex patterns are evaluated in order against the lowercased query string. First match wins.
-All patterns are compiled at module load time for performance.
+A single `check_input()` function evaluates, in order:
 
-```python
-FAST_PATH_RULES: list[tuple[re.Pattern, str]] = [
-    # Document generation — highest specificity first
-    (re.compile(r"(generate|create|request|need|want).{0,30}(letter|certificate|noc|id card|offer letter|experience letter|relieving|bonafide|promotion|internship|confirmation|address proof|loan proof)"), "document"),
-    (re.compile(r"(letter|certificate)\s+(request|needed|required)"), "document"),
+1. Jailbreak regex → static, immediate block.
+2. Harmful-content regex → static, immediate block.
+3. Security-threat regex → static, immediate block.
+4. Distress signals → LLM-generated empathetic response.
+5. Org-scope violations (another employee's salary/PII, legal advice, competitor intelligence, medical
+   diagnosis) → LLM-generated contextual redirect.
 
-    # Email composition
-    (re.compile(r"(draft|write|compose|create|help me write).{0,20}(email|mail|message to)"), "email"),
-    (re.compile(r"(email).{0,10}(draft|template|format)"), "email"),
-
-    # IT access and security
-    (re.compile(r"(vpn|password reset|forgot password|access request|account locked|mfa|2fa|two.factor)"), "it"),
-    (re.compile(r"(laptop|computer|hardware|software install|application access|azure ad|active directory)"), "it"),
-    (re.compile(r"(security incident|phishing|malware|breach|suspicious email|hacked)"), "it"),
-
-    # HR leave and benefits
-    (re.compile(r"(apply.{0,10}leave|leave balance|pto|vacation days|sick leave|maternity|paternity|comp off)"), "hr"),
-    (re.compile(r"(payslip|salary slip|ctc|compensation|benefits|medical insurance|pf|provident fund|gratuity)"), "hr"),
-    (re.compile(r"(holiday list|public holiday|work from home policy|wfh policy|notice period|exit process)"), "hr"),
-
-    # Admin / facilities
-    (re.compile(r"(cab|taxi|transport|travel request|flight|hotel booking|business travel)"), "admin"),
-    (re.compile(r"(parking|visitor pass|access card|pantry|cafeteria|stationery|office supplies)"), "admin"),
-    (re.compile(r"(facilities|office maintenance|air conditioning|seating|desk allocation)"), "admin"),
-
-    # PMO / project
-    (re.compile(r"(project allocation|resource allocation|sprint|milestone|project status|timesheet)"), "pmo"),
-    (re.compile(r"(allocation board|bench|billable|shadow resource|project assignment)"), "pmo"),
-
-    # Finance / reimbursement
-    (re.compile(r"(reimbursement|expense claim|invoice|purchase order|vendor payment|budget approval)"), "finance"),
-
-    # Org chart / people
-    (re.compile(r"(who is|org chart|team structure|reporting to|head of|department head|ceo|cto|coo)"), "org"),
-
-    # Forms
-    (re.compile(r"(fill.{0,10}form|submit.{0,10}form|ms forms|microsoft form|request form)"), "msforms"),
-
-    # Escalation — explicit
-    (re.compile(r"(escalate|raise.{0,10}ticket|need human|speak to hr|speak to it|this is urgent|formal complaint)"), "escalation"),
-
-    # Entertainment
-    (re.compile(r"^(tell me a joke|make me laugh|something funny|entertain me|joke)"), "funny"),
-]
-```
-
-Regex matching runs in under 1ms for all patterns combined on modern hardware.
+This is two tiers: a static regex tier (1–3) and an LLM-contextual tier used only for distress and
+org-scope handling (4–5) — not a three-way allow/escalate/block classifier on every message.
 
 ---
 
-## 6. Tier 2 — LLM Routing Prompt
+## 5. Dispatch and the Deep-Retrieval Pipeline
 
-When no regex pattern matches, the MasterAgent constructs a classification prompt and submits
-it to Ollama using the same `gpt-oss` model at temperature=0.1:
+For the six `BaseDeepAgent` subclasses (HR, IT, Admin, Finance, PMO, OrgDeepAgent), dispatch triggers a
+**sequential/conditional** pipeline, not a parallel fan-out:
 
-```python
-ROUTING_PROMPT_TEMPLATE = """
-You are an AI query router for an enterprise HR and IT platform.
-Given an employee query, determine which agent should handle it.
+1. Embed the query and search pgvector (primary source, via `apps/api-gateway/app/rag/retriever.py`).
+2. **Only if pgvector returns nothing**, fall back to the agent's own local FAISS/keyword knowledge
+   base (`agents/working/knowledge_base.py`), built from local per-domain document folders — a smaller,
+   different corpus from pgvector, not a mirror of it.
+3. A single LLM call via an LCEL chain (`prompt | llm | StrOutputParser`) with guardrail text injected
+   into the system prompt, self-verification instructions, and an inline citation request.
+4. Tavily web search as an optional further supplement, only when configured.
 
-Available agents:
-- hr: Leave management, payroll, benefits, HR policies, employee support
-- it: IT access, VPN, passwords, hardware, software, security incidents
-- admin: Travel, cab booking, parking, facilities, office admin tasks
-- pmo: Project allocation, resource planning, timesheets, sprint tracking
-- finance: Expense claims, reimbursements, invoices, budget queries
-- org: Org chart questions, team structure, who reports to whom
-- document: Generating HR documents like letters, certificates, NOC
-- email: Drafting professional emails
-- msforms: Submitting Microsoft Forms requests
-- escalation: Formal complaints, urgent issues, welfare concerns
-- funny: Jokes and entertainment
-- general: Any other query not fitting above categories
-
-Employee query: "{query}"
-
-Respond with ONLY the agent key (one word, lowercase). No explanation.
-"""
-```
-
-The response is validated against the registry keys. If the response is not a valid key or
-is empty, routing falls through to Tier 3.
-
-Tier 2 adds approximately 150-300ms to routing latency. This is acceptable because it only
-activates for queries that did not match any fast-path regex.
+There is no `asyncio.gather` across pgvector + FAISS + conversation memory + Tavily run
+simultaneously. For non-`BaseDeepAgent` handlers (DocumentAgent, AllocationAgent, MSFormsAgent, and the
+function-based agents), this pipeline does not apply at all — each has its own, much simpler logic
+(e.g. MSFormsAgent is a pure REST client with no LLM call whatsoever).
 
 ---
 
-## 7. Tier 3 — DOMAIN_KEYWORDS Fallback
+## 6. LLM Provider Selection (Not Ollama-Only)
 
-```python
-DOMAIN_KEYWORDS: dict[str, list[str]] = {
-    "hr": [
-        "leave", "pto", "vacation", "salary", "payroll", "payslip",
-        "benefits", "insurance", "policy", "holiday", "appraisal",
-        "performance", "kra", "kpi", "exit", "notice", "resignation",
-        "maternity", "paternity", "gratuity", "pf", "esic", "bonus"
-    ],
-    "it": [
-        "laptop", "computer", "software", "vpn", "access", "password",
-        "email", "azure", "security", "antivirus", "firewall", "network",
-        "wifi", "printer", "monitor", "keyboard", "mfa", "sso",
-        "active directory", "ticket", "helpdesk", "it support"
-    ],
-    "admin": [
-        "cab", "taxi", "travel", "flight", "hotel", "parking",
-        "visitor", "facilities", "stationery", "pantry", "cafeteria",
-        "maintenance", "housekeeping", "access card", "id card"
-    ],
-    "pmo": [
-        "project", "sprint", "milestone", "allocation", "resource",
-        "timesheet", "delivery", "client", "engagement", "bench",
-        "billable", "utilization", "deadline", "jira", "confluence"
-    ],
-    "finance": [
-        "reimbursement", "expense", "invoice", "budget", "payment",
-        "purchase", "vendor", "petty cash", "advance", "receipt"
-    ],
-    "org": [
-        "org chart", "team", "structure", "hierarchy", "reports to",
-        "head of", "department", "division", "practice", "bu"
-    ],
-    "funny": [
-        "joke", "funny", "laugh", "humor", "entertain", "fun",
-        "amusing", "hilarious", "bored"
-    ],
-    "general": [
-        "help", "what can you do", "capabilities", "features", "how to use"
-    ],
-}
-```
+`apps/api-gateway/app/agents/working/config.py`'s `create_llm()` selects the active provider at
+startup, in priority order:
 
-Keyword matching uses simple `in` substring check against the lowercased query. The first
-domain with any keyword match is selected. `"general"` is always the last resort.
+1. **Claude** (Anthropic), if `USE_Claude_API_Key` is set — default model `claude-sonnet-4-6`.
+2. **Groq**, if `USE_Groq_API_Key` is set — default model `llama3-70b-8192`.
+3. **Ollama** — the default/fallback when neither cloud flag is on. Model `gpt-oss` at
+   `ml01.alignedautomation.com:11434`.
+
+This is genuinely configurable, multi-provider infrastructure — describing the platform as
+"self-hosted-LLM-only" describes one possible configuration, not an architectural constraint enforced
+in code.
 
 ---
 
-## 8. Context Assembly
+## 7. SSE Streaming Flow
 
-Before dispatching to any agent, the MasterAgent assembles the `AgentContext`:
-
-```python
-async def _build_context(self, request: ChatRequest, jwt_payload: dict) -> AgentContext:
-    history = await db.get_conversation_history(
-        user_id=jwt_payload["sub"],
-        session_id=request.session_id,
-        limit=10  # last 10 turns only, to stay within context window
-    )
-    return AgentContext(
-        user_id=jwt_payload["sub"],
-        email=jwt_payload["email"],
-        role=jwt_payload.get("role", "employee"),
-        department=jwt_payload.get("department", ""),
-        conversation_history=history,
-        session_id=request.session_id,
-        request_timestamp=datetime.utcnow(),
-        jwt_claims=jwt_payload,
-    )
-```
-
-The conversation history (last 10 turns) is included in every agent prompt to support
-follow-up questions and multi-turn workflows such as document generation.
-
----
-
-## 9. SSE Streaming Flow
-
-The `/api/chat/stream` endpoint uses FastAPI's `StreamingResponse` with `text/event-stream`
-content type. The streaming protocol is:
+The `/api/chat/stream` endpoint uses FastAPI's `StreamingResponse` with `text/event-stream` content
+type. Illustrative event shape:
 
 ```
 event: start
@@ -272,139 +166,56 @@ data: {"agent": "hr", "session_id": "abc123"}
 event: chunk
 data: {"content": "<p>Based on the HR policy...</p>"}
 
-event: chunk
-data: {"content": "<p>Your leave balance is...</p>"}
-
 event: sources
 data: {"sources": ["HR Leave Policy 2025.pdf", "Employee Handbook v3.pdf"]}
 
 event: end
-data: {"latency_ms": 2340, "confidence": 0.87}
+data: {"latency_ms": 2340}
 ```
 
-The frontend `ChatWindow.jsx` consumes this SSE stream and progressively renders the HTML
-content into the chat bubble. The `sources` event triggers the source citation panel.
+The frontend `ChatWindow.jsx` consumes this stream and progressively renders content into the chat
+bubble.
 
 ---
 
-## 10. Error Handling
+## 8. Error Handling
 
 | Error Condition | Behavior | Fallback |
 |----------------|---------|---------|
-| Agent timeout (> 10s) | MasterAgent catches asyncio.TimeoutError | QuickAgent with generic response |
-| Agent raises exception | Log to console, capture stack trace | QuickAgent with "something went wrong" |
-| All retrievals fail | Agent generates from LLM context only | No sources cited |
-| Ollama unreachable | HTTPConnectionError caught | Static error message HTML |
-| JWT decode failure | 401 Unauthorized before routing | No agent dispatched |
-| Guardrail block | Immediate return, no agent dispatched | Static block message HTML |
-| Unknown agent key | Registry KeyError caught | GeneralAgent |
+| Handler timeout | MasterAgent catches the timeout | QuickAgent with generic response |
+| Handler raises exception | Logged with stack trace | QuickAgent with "something went wrong" |
+| Retrieval fails (pgvector unreachable) | Falls through to local knowledge base | Generic answer if that also fails |
+| LLM provider unreachable | Connection error caught | Static error message |
+| JWT decode failure | 401 Unauthorized before routing | No handler dispatched |
+| Guardrail block | Immediate return, no handler dispatched | Static block message |
+| Unknown/unmatched intent | Falls through keyword scoring | QuickAgent |
 
-The `QuickAgent` is a minimal BaseDeepAgent with a very short retrieval timeout and a
-system prompt instructing it to give helpful generic guidance. It acts as the last-resort
-fallback when all other mechanisms fail.
-
----
-
-## 11. Performance Optimization
-
-### 11.1 Registry Singleton
-
-Instantiating all agents once at startup avoids repeated embedding model loading, FAISS
-index reads, and database pool creation per request. Cold start is ~3 seconds; warm
-requests execute within the SLA.
-
-### 11.2 Fast-Path Priority
-
-The regex fast-path handles approximately 70% of all queries without any LLM involvement.
-This reduces average routing latency from ~250ms (LLM classification) to <1ms for the
-majority of requests.
-
-### 11.3 Parallel Retrieval
-
-BaseDeepAgent runs all four retrieval sources concurrently using `asyncio.gather`. This
-converts a sequential 2-second retrieval into a ~500ms parallel retrieval.
-
-### 11.4 Context Window Discipline
-
-Conversation history is capped at 10 turns. Retrieved chunks are trimmed to the top 5 by
-cosine score. The system prompt is kept under 200 tokens. This ensures Ollama's 2048-token
-context window is never exceeded.
+`QuickAgent` is the last-resort fallback used both when routing finds no domain match and when a
+handler fails unexpectedly.
 
 ---
 
-## 12. MasterAgent Orchestration Flow Diagram
+## 9. Monitoring and Observability
 
-```mermaid
-sequenceDiagram
-    participant Browser
-    participant FastAPI
-    participant MasterAgent
-    participant Guardrails
-    participant Router
-    participant DomainAgent
-    participant Ollama
-
-    Browser->>FastAPI: POST /api/chat/stream
-    FastAPI->>MasterAgent: route(query, jwt)
-    MasterAgent->>Guardrails: check_tier1(query)
-    alt Tier1 Blocked
-        Guardrails-->>MasterAgent: BLOCK
-        MasterAgent-->>Browser: SSE error event
-    else Tier1 Pass
-        Guardrails-->>MasterAgent: PASS
-        MasterAgent->>Guardrails: check_tier2(query, context)
-        alt Tier2 Escalate
-            MasterAgent->>DomainAgent: dispatch("escalation", ...)
-        else Tier2 Allow
-            MasterAgent->>Router: classify(query)
-            Router-->>MasterAgent: agent_key
-            MasterAgent->>DomainAgent: process(query, context)
-            DomainAgent->>Ollama: generate(prompt + chunks)
-            Ollama-->>DomainAgent: HTML response
-            DomainAgent-->>MasterAgent: AgentResponse
-            MasterAgent-->>Browser: SSE stream chunks
-        end
-    end
-```
+There is no OpenTelemetry instrumentation or Prometheus/Grafana dashboard wired into the MasterAgent
+today (see `09-roadmap/technical-debt.md`). Structured request logging exists at a basic level via
+Python's standard logging; there is no distributed tracing across MasterAgent → handler → pgvector/LLM
+calls.
 
 ---
 
-## 13. Monitoring and Observability
+## 10. Configuration Reference
 
-The MasterAgent logs the following structured fields for every request:
+| Parameter | Value / Location |
+|-----------|-------------------|
+| LLM provider priority | Claude > Groq > Ollama, selected by `USE_Claude_API_Key` / `USE_Groq_API_Key` / `Use_Ollama_LLM` in `agents/working/config.py` |
+| Ollama base URL / model | `ml01.alignedautomation.com:11434` / `gpt-oss` |
+| Claude model | `claude-sonnet-4-6` (default) |
+| Groq model | `llama3-70b-8192` (default) |
+| Embedding model | `nomic-embed-text-v1.5`, 768 dimensions |
+| pgvector distance | cosine (`<=>`), `ivfflat` index, `probes = 10` |
+| Chunking | 1000 characters / 200 overlap, section-aware pre-split + `RecursiveCharacterTextSplitter` |
+| `_route_llm()` | Defined in `supervisor_agent.py`, **never called** — dead code |
 
-```json
-{
-    "timestamp": "2026-06-07T10:23:45Z",
-    "request_id": "req_abc123",
-    "user_id": "emp_456",
-    "query_hash": "sha256:...",
-    "routing_tier_used": "regex|llm|keyword|general",
-    "agent_selected": "hr",
-    "routing_latency_ms": 2,
-    "agent_latency_ms": 2180,
-    "total_latency_ms": 2245,
-    "confidence": 0.87,
-    "escalation_triggered": false,
-    "guardrail_result": "pass"
-}
-```
-
-These logs are consumed by the AnalyticsService for the COO dashboard and platform KPI
-tracking. The `query_hash` (not the raw query) is stored to preserve employee privacy.
-
----
-
-## 14. Configuration Reference
-
-| Parameter | Value | Location |
-|-----------|-------|---------|
-| Ollama base URL | http://ml01.alignedautomation.com:11434 | supervisor_agent.py |
-| Ollama model | gpt-oss | supervisor_agent.py |
-| Ollama temperature | 0.1 | base_deep_agent.py |
-| Ollama num_predict | 800 | base_deep_agent.py |
-| Ollama num_ctx | 2048 | base_deep_agent.py |
-| Agent timeout | 10 seconds | supervisor_agent.py |
-| Retrieval threshold | 0.10 cosine | base_deep_agent.py |
-| History limit | 10 turns | supervisor_agent.py |
-| Retrieval top-k | 5 chunks | base_deep_agent.py |
+See `04-agents/agent-framework.md` for the full agent roster and file map, and `README.md` for the
+platform-wide technology stack table.

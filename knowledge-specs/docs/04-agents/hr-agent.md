@@ -1,7 +1,7 @@
 # HR Agent Specification
 # AA-Hackathon Enterprise AI Platform — Aligned Automation
 # Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/hr_agent.py
+# Source File: apps/api-gateway/app/agents/working/hr_agent.py
 
 ---
 
@@ -25,8 +25,8 @@ harassment, or a formal complaint, it immediately routes to the EscalationAgent.
 | Registry Key | `hr` |
 | Class | `HRAgent` |
 | Base Class | `BaseDeepAgent` |
-| Source File | `backend/agents/hr_agent.py` |
-| Personality File | `backend/agents/personalities.py` |
+| Source File | `apps/api-gateway/app/agents/working/hr_agent.py` |
+| Personality File | `apps/api-gateway/app/agents/working/personalities.py` |
 | Fallback Email | `hr@alignedautomation.com` |
 | Owner | HR Operations Team |
 
@@ -109,7 +109,7 @@ The HRAgent does not generate documents itself.
 
 ```mermaid
 flowchart TD
-    Q[HR Query] --> EMB[Embed query\nall-MiniLM-L6-v2\n384 dimensions]
+    Q[HR Query] --> EMB[Embed query\nnomic-embed-text-v1.5\n768 dimensions]
     EMB --> PAR[Parallel Retrieval]
     PAR --> PGV[pgvector\nSELECT from document_chunks\nWHERE domain = 'hr'\nORDER BY embedding <=> query_vec]
     PAR --> FSS[FAISS Local Index\nHR document subset]
@@ -303,6 +303,7 @@ The following documents populate the HR domain in `document_chunks`:
 9. Probation and Confirmation Policy
 10. Work From Home Guidelines
 
-Documents are ingested via the admin document upload pipeline, chunked at 512 tokens with
-128-token overlap, embedded using `all-MiniLM-L6-v2`, and stored in `document_chunks`
-with `domain='hr'`.
+Documents are ingested via the admin document upload pipeline, chunked into 1000-character
+segments with 200-character overlap (after a section-aware pre-split step) using
+RecursiveCharacterTextSplitter, embedded using `nomic-embed-text-v1.5`, and stored in
+`document_chunks` with `domain='hr'`.

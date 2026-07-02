@@ -105,10 +105,10 @@ This separation ensures guardrails cannot be overridden by domain-specific perso
 
 `supervisor_agent.py` contains two routing mechanisms:
 
-- **Fast-path regex patterns** — compiled `re.compile` patterns for high-confidence intents (leave application, email draft, Microsoft Forms, greetings, attendance, employee lookup, document generation). These bypass LLM routing entirely, eliminating latency and hallucination risk.
-- **LLM intent classification** — an optional Ollama call with a classification prompt that maps user queries to agent names. This path has a configurable timeout and falls back to keyword scoring if Ollama is unavailable.
+- **Fast-path regex patterns** — compiled `re.compile` patterns for high-confidence intents (leave application, email draft, Microsoft Forms, greetings, attendance, employee lookup, document generation). These are evaluated first and, on a match, bypass all further routing.
+- **Keyword-scoring fallback** — when no fast-path regex matches, the query is scored against the `DOMAIN_KEYWORDS` dictionary, defaulting to `QuickAgent` if no domain scores above zero.
 
-Routing prompts are governed under the same review process as personality prompts. Changes to the classification prompt must be regression-tested against the full routing test suite before deployment.
+A `_route_llm()` method for LLM-based intent classification with a classification prompt exists in `supervisor_agent.py`, but it is never invoked anywhere in the current codebase — it is dead code, not a live routing tier. If it is activated in a future release, routing prompts for it must be governed under the same review process as personality prompts, and any change to the classification prompt must be regression-tested against the full routing test suite before deployment.
 
 ### 2.4 Guardrail Prompt Architecture
 
@@ -561,7 +561,7 @@ Every agent personality contains a labeled `## OUT OF SCOPE — Redirect Without
 
 ### 10.2 Supervisor-Level Routing Enforcement
 
-The `MasterAgent` in `supervisor_agent.py` enforces domain routing before any agent receives a query. Fast-path regex patterns handle high-confidence intents deterministically. LLM routing and keyword fallback handle ambiguous queries. This pre-routing step reduces the likelihood of a query reaching the wrong agent.
+The `MasterAgent` in `supervisor_agent.py` enforces domain routing before any agent receives a query. Fast-path regex patterns handle high-confidence intents deterministically; keyword scoring against `DOMAIN_KEYWORDS` handles ambiguous queries that no regex matches (an LLM-based classification method exists in code but is not currently invoked). This pre-routing step reduces the likelihood of a query reaching the wrong agent.
 
 ### 10.3 Cross-Domain Redirect Language
 
@@ -718,7 +718,7 @@ Prompt audit records are retained for a minimum of 3 years in the `audit_logs` t
 
 ### 14.3 Model Evolution Considerations
 
-The current AURA platform uses `gpt-oss` via a self-hosted Ollama instance at `ml01.alignedautomation.com`. As model capabilities evolve:
+The current AURA platform selects its LLM provider by priority — Anthropic Claude (`claude-sonnet-4-6` default), then Groq (`llama3-70b-8192` default), then self-hosted Ollama (`gpt-oss` at `ml01.alignedautomation.com`) as the default/fallback — via environment flags in `agents/working/config.py`. As model capabilities evolve:
 
 - Prompt simplification may be possible as instruction-following improves; domain lists may be expressible in fewer tokens
 - Temperature and token count parameters (`temperature: 0.1`, `num_predict: 800`, `num_ctx: 2048`) must be re-evaluated for any replacement model

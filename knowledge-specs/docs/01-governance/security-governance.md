@@ -48,7 +48,7 @@ The platform operates under the following foundational security principles:
 | Defense in Depth | Guardrails operate at prompt, routing, LLM, and output layers independently |
 | Data Minimization | Only user_id (Azure AD OID) is stored; full PII is never persisted in message content |
 | Auditability | Every authenticated action writes a record to the audit_logs table |
-| Self-Containment | The LLM is self-hosted; no employee data is transmitted to external AI providers |
+| Self-Containment (conditional) | The platform's default/fallback LLM (Ollama, self-hosted) transmits no employee data externally. The platform also supports Anthropic Claude and Groq as higher-priority providers (selected by env flag in `agents/working/config.py`); when either is active, query and context data is sent to that external API |
 
 ### 1.3 Scope
 
@@ -57,8 +57,8 @@ This governance framework applies to:
 - The FastAPI backend (api-gateway) at apps/api-gateway
 - The React frontend (web-ui) at apps/web-ui
 - The PostgreSQL 16 database at hackathon.alignedautomation.com:5432 (database: squadrons)
-- The self-hosted Ollama instance at ml01.alignedautomation.com:11434
-- All 13 domain agents operating under the MasterAgent supervisor
+- The configured LLM provider (Anthropic Claude, Groq, or the self-hosted Ollama instance at ml01.alignedautomation.com:11434, selected by priority via env flags)
+- All domain agents operating under the MasterAgent supervisor
 - SharePoint ingestion jobs and Microsoft Graph integrations
 - Zoho People read-only database connections
 
@@ -377,7 +377,7 @@ This connection is strictly read-only. No writes, updates, or deletes are perfor
 
 ### 6.4 Vector Embedding Security
 
-Document chunks and their 384-dimensional embeddings are stored in the `document_chunks` table. The embedding data represents document content in numerical form. Access to this table is governed by the application database user's permissions. Embedding vectors are not reversible to original text without the source chunk, which is also stored and protected.
+Document chunks and their 768-dimensional embeddings are stored in the `document_chunks` table. The embedding data represents document content in numerical form. Access to this table is governed by the application database user's permissions. Embedding vectors are not reversible to original text without the source chunk, which is also stored and protected.
 
 ### 6.5 Secrets Management
 
@@ -407,9 +407,9 @@ Soft-deleted records (`is_deleted = true`) are retained in the database for audi
 
 ## 7. LLM Security
 
-### 7.1 Self-Hosted Architecture
+### 7.1 LLM Provider Architecture (Ollama Self-Hosted by Default, Cloud Providers Supported)
 
-The platform uses a self-hosted Ollama instance at `http://ml01.alignedautomation.com:11434` running the `gpt-oss` model. This architecture eliminates the risk of employee data being transmitted to external AI providers. No conversation content, document text, or PII ever leaves the Aligned Automation network boundary through the LLM pipeline.
+The platform selects its LLM provider at startup by priority — Anthropic Claude (`claude-sonnet-4-6` default) first, then Groq (`llama3-70b-8192` default), then a self-hosted Ollama instance at `http://ml01.alignedautomation.com:11434` running the `gpt-oss` model as the default/fallback — via the `USE_Claude_API_Key` / `USE_Groq_API_Key` / `Use_Ollama_LLM` environment flags in `agents/working/config.py`. Only when Ollama is the active provider does conversation content, document text, and PII stay entirely within the Aligned Automation network boundary through the LLM pipeline; when Claude or Groq is configured as the active provider, query and context data is sent to that external hosted API. This is a configuration choice, not a hard architectural guarantee, and should be verified against the live environment configuration before being cited as a security control.
 
 ### 7.2 LLM Configuration Parameters
 
@@ -623,7 +623,7 @@ graph TB
 
     subgraph "AI Layer"
         OLLAMA[Ollama LLM<br/>gpt-oss model<br/>ml01:11434]
-        EMBED[Sentence Transformers<br/>all-MiniLM-L6-v2<br/>384-dim]
+        EMBED[Sentence Transformers<br/>nomic-embed-text-v1.5<br/>768-dim]
     end
 
     subgraph "External Integrations"

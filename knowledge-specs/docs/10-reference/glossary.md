@@ -19,11 +19,11 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 **Access Token** — A short-lived cryptographic token (JWT) issued by Azure Active Directory after a successful login. Sent in the `Authorization: Bearer` header with every API request. Expires after 1 hour; MSAL silently refreshes it using a refresh token.
 
-**Agent** — A specialized AI component responsible for a specific business domain. Each agent (HR Agent, IT Agent, Finance Agent, etc.) receives a routed query, retrieves relevant information, constructs a prompt, calls the LLM, and returns a formatted response. Agents inherit from a BaseAgent class.
+**Agent** — A specialized AI component responsible for a specific business domain. The "deep retrieval" agents (HR, IT, Admin, Finance, PMO, Org) inherit from `BaseDeepAgent` and follow a retrieve-then-generate pattern. Other agents (Funny, Quick) are lightweight and call the LLM directly without inheriting `BaseDeepAgent`. Still others (Document, Allocation, MS Forms) are plain classes with no LLM-retrieval pipeline, and some (Employee, Attendance, Escalation, License) are plain Python functions wrapped in adapter classes for dispatch. There is no single shared `BaseAgent` parent class across all agents.
 
 **Agent Marketplace** — A planned Phase 2 feature enabling third-party or department-built agents to be registered and activated in the platform through a versioned plugin contract.
 
-**all-MiniLM-L6-v2** — The HuggingFace Sentence Transformers model used for generating 384-dimensional semantic embeddings. Used by the RAG pipeline for both document ingestion and query encoding. Lightweight, fast, and well-suited for domain-specific similarity tasks.
+**nomic-embed-text-v1.5** — The HuggingFace Sentence Transformers model used for generating 768-dimensional semantic embeddings. Used by the RAG pipeline for both document ingestion and query encoding. Lightweight, fast, and well-suited for domain-specific similarity tasks.
 
 **Allocation Board** — A frontend module showing resource allocation across employees and projects. Allows managers and admins to view and update project staffing percentages.
 
@@ -43,7 +43,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 ### B
 
-**BaseAgent** — The parent Python class from which all 13 domain agents inherit. Defines the standard interface: `route(query, user_context)` → `AgentResponse`. Ensures consistent response structure and logging across agents.
+**BaseDeepAgent** — The real shared base class (`agents/working/base_deep_agent.py`), inherited only by the six "deep retrieval" agents: HR, IT, Admin, Finance, PMO, and Org. It implements the retrieve-then-generate pipeline: query pgvector first, fall back to a local FAISS/keyword knowledge base only if pgvector returns nothing, then make a single LLM call with guardrail text injected. Not all agents in the platform inherit from it — see **Agent**.
 
 **BM25** — Best Match 25. A probabilistic keyword-based document ranking algorithm commonly used in full-text search engines. Scores documents based on term frequency and inverse document frequency (TF-IDF variant). Planned for hybrid search in Phase 1 alongside pgvector semantic search.
 
@@ -53,7 +53,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 ### C
 
-**Chunk** — A fixed-size segment of a larger document, produced during the ingestion process. SharePoint documents are split into overlapping chunks (e.g., 500 tokens with 50-token overlap) before embedding. Each chunk is stored as a row in `document_chunks` with its vector embedding.
+**Chunk** — A fixed-size segment of a larger document, produced during the ingestion process. SharePoint documents are split into overlapping chunks (e.g., 1000 characters with 200-character overlap) before embedding. Each chunk is stored as a row in `document_chunks` with its vector embedding.
 
 **Citation** — A reference to the source document(s) used by the RAG pipeline to answer a query. Includes document title, section, excerpt, SharePoint URL, and last modified date. Surfaced in the UI below assistant messages.
 
@@ -73,7 +73,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 **Document Agent** — The domain agent responsible for generating formal documents: NOC certificates, experience letters, bonafide certificates, and WFH policy acknowledgements. Combines employee context from Zoho People with Ollama-generated content, output as PDF.
 
-**Document Chunk** — See Chunk. The unit of storage in the `document_chunks` table. Each row contains: chunk_id, document_id, chunk_text, embedding (vector[384]), chunk_index, source_metadata.
+**Document Chunk** — See Chunk. The unit of storage in the `document_chunks` table. Each row contains: chunk_id, document_id, chunk_text, embedding (vector[768]), chunk_index, source_metadata.
 
 **Docker Compose** — The container orchestration tool used for local and staging deployments. Defines three services: api, postgres, redis. Single command startup: `docker compose up`.
 
@@ -81,7 +81,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 ### E
 
-**Embedding** — A dense numerical vector representation of text. Produced by the HuggingFace `all-MiniLM-L6-v2` model. A 384-dimensional float array where semantically similar texts produce vectors with high cosine similarity.
+**Embedding** — A dense numerical vector representation of text. Produced by the HuggingFace `nomic-embed-text-v1.5` model. A 768-dimensional float array where semantically similar texts produce vectors with high cosine similarity.
 
 **Employee Agent** — The domain agent serving employee self-service queries: personal profile, document requests, onboarding status, and general employee-specific questions.
 
@@ -95,7 +95,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 ### F
 
-**FAISS** — Facebook AI Similarity Search. An open-source C++/Python library for efficient similarity search over dense vectors. Used as an in-process fallback when pgvector is unavailable. The FAISS index is built at API Gateway startup from embeddings fetched from PostgreSQL.
+**FAISS** — Facebook AI Similarity Search. An open-source C++/Python library for efficient similarity search over dense vectors. In this platform it is used only as a **local, per-domain** fallback knowledge base (`agents/working/knowledge_base.py`), built from local document folders for each deep-retrieval agent — it is a smaller, separate corpus from the pgvector database, not a mirror of it, and is consulted only when a pgvector query returns zero results.
 
 **Fast-Path Routing** — An optimization in the MasterAgent that matches query keywords against a domain keyword dictionary before invoking the LLM for agent selection. Reduces latency and LLM token cost for simple, obvious queries (e.g., "good morning" → Quick Agent, "leave balance" → HR Agent).
 
@@ -161,17 +161,17 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 **LangChain** — An open-source Python framework for building LLM applications. Used in the AA-Hackathon platform for: Ollama integration (LangChain-Ollama), prompt template management, document loaders, text splitters, and retriever abstractions.
 
-**LangGraph** — A LangChain extension for building stateful, graph-based LLM workflows. Planned for Phase 1 as the replacement for the flat MasterAgent router. Enables multi-step workflows, conditional edges, and agent-to-agent handoffs.
+**LangGraph** — A LangChain extension for building stateful, graph-based LLM workflows. It is listed in `requirements.txt` but **has zero imports anywhere in the codebase today** — it is an aspirational dependency for a planned future migration, not something currently used by the MasterAgent router.
 
 **Leave Balance** — The number of days remaining in each leave type (casual, sick, earned, etc.) for an employee. Sourced from Zoho People. Accessible via the HR Agent or Attendance Agent.
 
-**LLM (Large Language Model)** — A neural network trained on large text corpora, capable of understanding and generating natural language. The AA-Hackathon platform uses Ollama gpt-oss as its LLM.
+**LLM (Large Language Model)** — A neural network trained on large text corpora, capable of understanding and generating natural language. The platform's LLM provider is **configurable**, selected in priority order — Anthropic Claude, then Groq, then Ollama (`gpt-oss`, the default/fallback) — by environment flags. It is not exclusively Ollama.
 
 ---
 
 ### M
 
-**MasterAgent** — The orchestrating agent (also called Supervisor Agent) in `supervisor_agent.py`. Receives every query, performs keyword fast-path routing, invokes LLM-based classification for ambiguous queries, and dispatches to the appropriate domain agent.
+**MasterAgent** — The orchestrating agent (also called Supervisor Agent) in `supervisor_agent.py`. Receives every query, evaluates a sequence of regex fast-paths (forms, email, attendance, employee lookup, documents, greetings), then falls back to keyword scoring against a domain-keyword dictionary, and dispatches to the appropriate agent. A method for LLM-based classification (`_route_llm()`) exists in the file but is **never called** — it is dead code, not an active routing tier.
 
 **Memory System** — The platform's context management layer (in `app/memory/`). Maintains in-session conversation context (md_store.py) and optionally persists context across sessions (db_tool.py). Provides personalized context enrichment (enrichment.py).
 
@@ -199,9 +199,9 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 ### O
 
-**Ollama** — An open-source framework for running LLM models locally. The platform runs the `gpt-oss` model via Ollama at `ml01.alignedautomation.com:11434`. Provides an OpenAI-compatible REST API.
+**Ollama** — An open-source framework for running LLM models locally. The platform can run the `gpt-oss` model via Ollama at `ml01.alignedautomation.com:11434` — this is the **default/fallback** LLM provider, used when Claude and Groq are not enabled via configuration (see **LLM**).
 
-**Onboarding Portal** — A guided step-by-step onboarding experience for new Aligned Automation employees. Powered by the `onboarding-guidance/` frontend module and `GET/PUT /api/onboarding/steps`.
+**Onboarding Portal** — An 8-step guided onboarding experience (welcome, profile, it-access, policy, induction, team, documents, all-set) for new Aligned Automation employees. Powered by the `onboarding-guidance/` frontend module and the backend endpoints `GET /api/onboarding/employee` and `GET /api/onboarding/peers`.
 
 **OpenTelemetry** — An open-source observability framework for distributed traces, metrics, and logs. Planned for Phase 1 to add structured tracing to the FastAPI application, covering JWT validation, agent routing, RAG retrieval, and Ollama calls.
 
@@ -215,7 +215,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 **PF (Provident Fund)** — The Employees' Provident Fund (EPF) in India. Both employee and employer contribute 12% of basic salary. The Finance Agent can explain PF rules, withdrawal conditions, and tax treatment.
 
-**pgvector** — A PostgreSQL extension that adds a native vector data type (`vector(n)`) and similarity search operators (`<=>`, `<->`, `<#>`). Used to store 384-dimensional embeddings in the `document_chunks` table and execute cosine similarity queries.
+**pgvector** — A PostgreSQL extension that adds a native vector data type (`vector(n)`) and similarity search operators (`<=>`, `<->`, `<#>`). Used to store 768-dimensional embeddings in the `document_chunks` table and execute cosine similarity queries.
 
 **PII (Personally Identifiable Information)** — Data that can identify an individual: name, email, phone number, Aadhaar number, PAN, bank account details. The platform detects PII in conversation messages and logs events to `pii_events`. Phase 1 target: auto-redact PII from LLM responses.
 
@@ -225,7 +225,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 **Prompt Injection** — An adversarial technique where a user includes instructions in their chat message designed to override the system prompt or make the LLM behave unexpectedly. The Guardrails layer detects and blocks common prompt injection patterns.
 
-**psycopg2** — The Python PostgreSQL adapter used by the platform. Uses a ThreadedConnectionPool with minconn=1, maxconn=8 for connection reuse. All queries use parameterized statements to prevent SQL injection.
+**psycopg2** — The Python PostgreSQL adapter used by the platform for all database access — there is no ORM (no SQLAlchemy, no Alembic). All queries use parameterized statements to prevent SQL injection.
 
 **PWA (Progressive Web App)** — A web application that can be installed on mobile devices and used offline. Phase 2 target: make the React frontend installable as a PWA with push notification support.
 
@@ -245,15 +245,15 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 **Re-Ranking** — A Phase 1 planned step in the retrieval pipeline where a cross-encoder model re-scores the top-20 hybrid search candidates to produce a more precise top-5 ranking before context assembly.
 
-**Redis** — An in-memory data store used in the platform for: session caching, rate limit token buckets (Phase 1), and SSE connection state.
+**Redis** — An in-memory data store. It is defined as a service in `docker-compose.yml` but is **not currently used by any application code** — there is no Redis client library in the backend's dependencies and no code connects to it. Any use for session caching or rate limiting is aspirational/future, not current state.
 
-**Retrieval** — The first stage of the RAG pipeline. The user's query is embedded using all-MiniLM-L6-v2, and the resulting vector is compared against stored chunk embeddings in pgvector (or FAISS as fallback) to find the most semantically similar chunks.
+**Retrieval** — The first stage of the RAG pipeline. The user's query is embedded using nomic-embed-text-v1.5, and the resulting vector is compared against stored chunk embeddings in pgvector (or FAISS as fallback) to find the most semantically similar chunks.
 
 ---
 
 ### S
 
-**Sentence Transformers** — The HuggingFace library providing pre-trained transformer models for generating sentence-level embeddings. The platform uses the `all-MiniLM-L6-v2` model for 384-dimensional embeddings.
+**Sentence Transformers** — The HuggingFace library providing pre-trained transformer models for generating sentence-level embeddings. The platform uses the `nomic-embed-text-v1.5` model for 768-dimensional embeddings.
 
 **SharePoint** — Microsoft's enterprise document management and collaboration platform. Aligned Automation stores HR policies, IT guides, and admin documents in SharePoint. The platform ingests these documents via the SharePoint Ingestion Job and makes them searchable via RAG.
 
@@ -287,7 +287,7 @@ This glossary defines all technical, business, AI/ML, domain, and integration te
 
 ### V
 
-**Vector** — A fixed-length array of floating-point numbers representing the semantic meaning of a piece of text. The platform uses 384-dimensional vectors produced by all-MiniLM-L6-v2. Stored in the `vector(384)` column in the `document_chunks` table.
+**Vector** — A fixed-length array of floating-point numbers representing the semantic meaning of a piece of text. The platform uses 768-dimensional vectors produced by nomic-embed-text-v1.5. Stored in the `vector(768)` column in the `document_chunks` table.
 
 ---
 

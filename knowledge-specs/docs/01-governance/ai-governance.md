@@ -32,10 +32,10 @@ This document defines the AI Governance framework for the AA-Hackathon Enterpris
 
 This framework applies to all AI components of the platform, including:
 
-- The self-hosted Ollama LLM (model: gpt-oss) at ml01.alignedautomation.com
+- The platform's LLM (provider selected by priority — Anthropic Claude, then Groq, then self-hosted Ollama at ml01.alignedautomation.com as the default/fallback — via env flags in `agents/working/config.py`)
 - All domain agents operating under the MasterAgent supervisor
 - The pgvector-backed RAG retrieval system
-- Embedding pipelines using sentence-transformers/all-MiniLM-L6-v2
+- Embedding pipelines using sentence-transformers/nomic-embed-text-v1.5
 - Any integrations that invoke, relay, or transform AI-generated content
 
 ### 1.2 Mandate
@@ -107,17 +107,19 @@ The following matrix defines who can authorize changes to AI system components:
 
 ### 3.1 Model Identity and Registration
 
-The production LLM is registered as follows:
+The LLM provider is selected at startup by priority — Anthropic Claude (`claude-sonnet-4-6` default) first, then Groq (`llama3-70b-8192` default), then self-hosted Ollama as the default/fallback — via the `USE_Claude_API_Key` / `USE_Groq_API_Key` / `Use_Ollama_LLM` environment flags in `agents/working/config.py`. The Ollama configuration, when active, is registered as follows:
 
 | Attribute | Value |
 |---|---|
-| Model ID | gpt-oss |
-| Hosting | Self-hosted via Ollama at ml01.alignedautomation.com:11434 |
+| Model ID | gpt-oss (Ollama fallback); claude-sonnet-4-6 (Claude) or llama3-70b-8192 (Groq) when those providers are configured |
+| Hosting | Self-hosted via Ollama at ml01.alignedautomation.com:11434 when Ollama is the active provider; Claude and Groq are external hosted APIs when configured |
 | Temperature | 0.1 (low creativity, high determinism) |
 | Max tokens (num_predict) | 800 |
 | Context window (num_ctx) | 2048 tokens |
-| Embedding model | sentence-transformers/all-MiniLM-L6-v2 (384-dim) |
+| Embedding model | sentence-transformers/nomic-embed-text-v1.5 (768-dim) |
 | Embedding fallback | nomic-embed-text via Ollama |
+
+Any statement elsewhere in this document that treats the self-hosted Ollama model as the platform's exclusive or guaranteed LLM should be read in this light: Ollama is the default/fallback provider, not a hard architectural constraint.
 
 Every registered model must have a corresponding entry in the internal model registry (maintained outside the application codebase) that records: model source, version, intended use, known limitations, and approval date.
 
@@ -274,8 +276,8 @@ Documents are ingested into the knowledge base via the SharePoint ingestion job 
 All data — including vectors, messages, and employee records — resides on infrastructure within the organization's controlled environment:
 
 - PostgreSQL at hackathon.alignedautomation.com (port 5432, database: squadrons)
-- Ollama inference at ml01.alignedautomation.com (no data leaves this host)
-- No data is sent to external LLM APIs (OpenAI, Anthropic, etc.) in the current architecture
+- Ollama inference at ml01.alignedautomation.com (no data leaves this host when Ollama is the active provider)
+- This data-residency guarantee holds only when Ollama is the configured LLM provider. The platform also supports Anthropic Claude and Groq as higher-priority providers (selected via env flags in `agents/working/config.py`); when either is active, query and context data is sent to that external API. This is a configuration choice, not a hard architectural constraint.
 
 Tavily web search, if enabled, sends only the query string to Tavily's API. Queries containing PII must not be forwarded to Tavily; this is enforced by the PII redaction layer before Tavily is invoked.
 
@@ -349,7 +351,7 @@ Employees and managers can:
 
 ### 8.3 Supervisor Fallback
 
-The MasterAgent (supervisor_agent.py) operates with an LLM routing timeout fallback. If the LLM-based intent classifier times out, the system falls back to keyword scoring (DOMAIN_KEYWORDS). This fallback is intentional and disclosed in this document as a designed behavior. The fallback does not degrade safety controls; guardrails apply regardless of routing path.
+The MasterAgent (supervisor_agent.py) routes in two live tiers: regex fast-paths, then keyword scoring (DOMAIN_KEYWORDS) as the catch-all. A `_route_llm()` method for LLM-based intent classification exists in the same file but is never called in the current build — it is dead code, not an active timeout-triggered fallback path. This does not degrade safety controls; guardrails apply regardless of routing path.
 
 ### 8.4 Escalation as a Human-in-the-Loop Pathway
 
@@ -468,7 +470,7 @@ The COO Dashboard (coo-analytics/COODashboard.jsx) and Analytics Dashboard (anal
 | Audit trail | Internal compliance | audit_logs table with 7-year retention |
 | Right to explanation | HR fairness policy | Source citations in every grounded response; feedback mechanism |
 | Incident notification | Internal HR and IT policy | P1 incidents notified to AI Governance Owner within 1 hour |
-| Vendor risk | IT procurement policy | Ollama self-hosted; SharePoint via Azure AD app credentials; Zoho read-only |
+| Vendor risk | IT procurement policy | Ollama self-hosted (default/fallback provider); Claude/Groq external APIs when configured as the active provider; SharePoint via Azure AD app credentials; Zoho read-only |
 
 ### 11.2 Authentication and Authorization Compliance
 
@@ -481,7 +483,8 @@ The COO Dashboard (coo-analytics/COODashboard.jsx) and Analytics Dashboard (anal
 
 | Dependency | Purpose | Risk Control |
 |---|---|---|
-| Ollama (gpt-oss) | LLM inference | Self-hosted; no data egress; model change control process |
+| Ollama (gpt-oss) | LLM inference (default/fallback provider) | Self-hosted; no data egress; model change control process |
+| Anthropic Claude / Groq | LLM inference (higher-priority providers when configured via env flags) | External hosted API; query and context data leaves the network when active; subject to model change control process |
 | HuggingFace Transformers | Embedding | Model downloaded and pinned at deployment; no runtime phone-home |
 | FAISS | Local vector fallback | Fully local; in-process; no network calls |
 | Tavily | Optional web search | Query-only data sent; PII redaction applied before query forwarded; disabled if no API key |
@@ -498,8 +501,8 @@ The following diagram represents the full AI governance lifecycle from knowledge
 flowchart TD
     subgraph INGEST["Knowledge Ingestion"]
         SP[SharePoint Documents] --> HASH[Hash-based Change Detection]
-        HASH --> CHUNK[TextChunker\n500 tokens / 50 overlap]
-        CHUNK --> EMBED[HuggingFace Embedder\nall-MiniLM-L6-v2 384-dim]
+        HASH --> CHUNK[TextChunker\n1000 characters / 50 overlap]
+        CHUNK --> EMBED[HuggingFace Embedder\nnomic-embed-text-v1.5 768-dim]
         EMBED --> PG[(pgvector\ndocument_chunks)]
         DS[Data Steward Approval] -.->|Authorizes source libraries| SP
     end
@@ -509,10 +512,10 @@ flowchart TD
         GUARD -->|Blocked| REJECT[Static Rejection or LLM Redirect]
         GUARD -->|Passed| MASTER[MasterAgent\nsupervisor_agent.py]
         MASTER -->|Fast-path regex| QUICK[QuickAgent / EscalationAgent]
-        MASTER -->|LLM routing or keyword fallback| DOMAIN[Domain Agent\nHR / IT / Admin / PMO / Finance / Org]
+        MASTER -->|Keyword-scoring fallback\nno live LLM routing tier| DOMAIN[Domain Agent\nHR / IT / Admin / PMO / Finance / Org]
         DOMAIN --> RAG[RAG Retrieval\nSimilarity >= 0.10\nTop 3 chunks]
         RAG --> PG
-        DOMAIN --> GEN[Ollama gpt-oss\nTemp 0.1 / 800 tokens]
+        DOMAIN --> GEN[Configured LLM\nClaude / Groq / Ollama gpt-oss\nTemp 0.1 / 800 tokens]
         GEN --> RESPONSE[AI Response + Source Citations]
         RESPONSE --> USER
     end

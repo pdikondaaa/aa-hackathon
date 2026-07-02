@@ -9,9 +9,9 @@ This document defines the full specification for all IT-domain skills handled by
 
 ```mermaid
 flowchart TD
-    USER([User Message]) --> MASTER[MasterAgent\n3-Tier Router]
+    USER([User Message]) --> MASTER[MasterAgent\n2-Tier Router]
     MASTER -->|regex fast-path| REGEX{Pattern Match}
-    MASTER -->|LLM classification| LLM_CLASS[LLM Classifier]
+    MASTER -.->|LLM classification - defined, never called| LLM_CLASS[LLM Classifier - dead code]
     MASTER -->|keyword fallback| KW[Keyword Fallback]
 
     REGEX -->|access / provisioning| IT_ACCESS[it-access-request]
@@ -643,7 +643,7 @@ Answers questions about IT policies, acceptable use policies, security policies,
 - Relevant contact for policy clarification
 
 ### Agent
-**IT Agent** → **Document Agent** (RAG retrieval from policy documents using HuggingFace 384-dim embeddings + FAISS/pgvector)
+**IT Agent** → **Document Agent** (RAG retrieval from policy documents using 768-dim embeddings; pgvector is queried first, with the local FAISS knowledge base consulted only as a fallback when pgvector returns zero results)
 
 ### SLA
 Response within conversation (real-time RAG lookup, target < 3 seconds).
@@ -865,11 +865,11 @@ Agent: Welcome! Let me check your onboarding status.
 |----------|-------|
 | Agent Class | ITAgent |
 | Email Default | it.support@alignedautomation.com |
-| Routing Method | 3-tier (regex → LLM → keyword) |
+| Routing Method | 2-tier live (regex fast-paths → keyword scoring); an `_route_llm()` LLM classifier is defined in `supervisor_agent.py` but is never called |
 | Escalation Integration | escalations table (type='IT') |
 | Knowledge Base | IT policies, procedures, FAQs |
-| Embedding Model | HuggingFace 384-dim |
+| Embedding Model | HuggingFace 768-dim |
 | Vector Store | pgvector (primary) / FAISS (fallback) |
-| LLM | Ollama (gpt-oss) |
+| LLM | Configurable: Anthropic Claude → Groq → Ollama (`gpt-oss`), selected by priority via environment flags; Ollama is the default/fallback, not the exclusive provider |
 | Ticket System | Internal IT ticketing API |
 | SLA Monitoring | Automated via analytics pipeline |

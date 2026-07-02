@@ -79,7 +79,7 @@ graph TD
 **Main Success Flow:**
 1. Employee opens AURA chat and types "How many annual leaves do I have?"
 2. MasterAgent keyword scorer detects `leave` keyword and routes to `hr` domain
-3. HRAgent embeds query using `all-MiniLM-L6-v2` and queries pgvector for `top_k=10` chunks
+3. HRAgent embeds query using `nomic-embed-text-v1.5` and queries pgvector for `top_k=10` chunks
 4. pgvector returns leave policy chunks with similarity scores
 5. HRAgent constructs LLM prompt with policy context and HR personality
 6. Ollama LLM generates response citing the leave policy document
@@ -404,7 +404,7 @@ graph TD
 **Main Success Flow:**
 1. Employee asks "What is the WFH policy?"
 2. MasterAgent keyword scorer detects `wfh policy` and routes to `hr`
-3. HRAgent embeds query: `all-MiniLM-L6-v2`, 384-dim
+3. HRAgent embeds query: `nomic-embed-text-v1.5`, 768-dim
 4. pgvector cosine similarity search returns top 10 WFH policy chunks
 5. LLM generates response with exact policy details: WFH days allowed, approval process, equipment requirements
 6. Response includes inline citation "Per the WFH Policy, employees may work from home up to 2 days per week..."

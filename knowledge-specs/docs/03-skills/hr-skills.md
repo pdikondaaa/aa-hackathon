@@ -240,18 +240,21 @@ Fields:
 
 **Business Purpose:** Employees frequently need official HR letters and certificates. This skill conducts a guided multi-turn conversation to collect required information and generates the document.
 
-**Supported Document Types (11):**
-1. Loan Proof / Employment Verification
-2. Experience Letter
-3. Offer Letter
-4. Relieving Letter
-5. NOC (No Objection Certificate)
-6. Bonafide Certificate
-7. Promotion Letter
-8. Address Proof
-9. Internship Certificate
-10. Confirmation Letter (post-probation)
-11. ID Card Request
+**Supported Document Types (12, plus a free-text "custom" mode):**
+1. Loan Proof
+2. Employment Verification
+3. Experience Letter
+4. Offer Letter
+5. Relieving Letter
+6. Address Proof
+7. Bonafide Certificate
+8. Internship Certificate
+9. Promotion Letter
+10. NOC (No Objection Certificate)
+11. Confirmation Letter (post-probation)
+12. ID Card Request
+
+(`DocumentAgent`'s `DOCUMENT_TYPES` also accepts a free-text `custom` mode for document requests that don't match one of the 12 above.)
 
 **Intent Phrases:**
 - "I need an experience letter"
@@ -264,7 +267,7 @@ Fields:
 1. Detect document type from initial request
 2. Ask for required fields (name, employee ID, purpose, date range, etc.)
 3. Confirm fields with user
-4. Generate document via Ollama
+4. Generate document via the configured LLM provider (Claude, Groq, or Ollama, selected by environment flags — Ollama is the default/fallback, not the exclusive provider)
 5. Save to DB, return download link
 
 **API:** `POST /api/documents/generate` → `GET /api/documents/{id}/download`

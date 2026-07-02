@@ -307,7 +307,7 @@ The Governor enforces a source-grounded generation discipline through system pro
 
 ## 11. Confidence Scoring
 
-The similarity threshold of **0.10** (cosine similarity, 384-dim embeddings) is the primary quality gate:
+The similarity threshold of **0.10** (cosine similarity, 768-dim embeddings) is the primary quality gate:
 
 | Similarity Range | Interpretation | Action |
 |---|---|---|

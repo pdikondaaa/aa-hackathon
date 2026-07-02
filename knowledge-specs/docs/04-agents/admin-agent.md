@@ -1,7 +1,7 @@
 # Admin Agent Specification
 # AA-Hackathon Enterprise AI Platform — Aligned Automation
 # Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/admin_agent.py
+# Source File: apps/api-gateway/app/agents/working/admin_agent.py
 
 ---
 
@@ -25,10 +25,10 @@ surfaces the appropriate Microsoft Form directly within the chat interface via t
 | Registry Key | `admin` |
 | Class | `AdminAgent` |
 | Base Class | `BaseDeepAgent` |
-| Source File | `backend/agents/admin_agent.py` |
-| Personality File | `backend/agents/personalities.py` |
+| Source File | `apps/api-gateway/app/agents/working/admin_agent.py` |
+| Personality File | `apps/api-gateway/app/agents/working/personalities.py` |
 | Fallback Email | `admin@alignedautomation.com` |
-| MS Forms Integration | `backend/agents/ms_forms_agent.py` |
+| MS Forms Integration | `apps/api-gateway/app/agents/ms_forms_agent.py` |
 | Owner | Admin Team |
 
 ---

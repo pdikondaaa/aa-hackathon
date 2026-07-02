@@ -113,7 +113,7 @@ asyncio.gather(
 ```
 
 **pgvector retrieval:**
-- Embed query with `sentence-transformers/all-MiniLM-L6-v2` (384-dim).
+- Embed query with `sentence-transformers/nomic-embed-text-v1.5` (768-dim).
 - Execute cosine similarity search against `document_chunks` table.
 - SQL orders by `embedding <=> query_vec::vector`, returns top 10 rows including `chunk_text`, `metadata`, `document_name`, `source_path`, `tags->>'source_url'`, and computed `1 - (embedding <=> query_vec::vector) AS similarity`.
 - Filter results with similarity >= **0.10** threshold.

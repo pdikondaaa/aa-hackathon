@@ -136,7 +136,7 @@ def hybrid_search(
 **Purpose:** Re-score top-20 hybrid-search candidates using a cross-encoder model for higher precision.
 
 **Implementation:**
-- Model: `cross-encoder/ms-marco-MiniLM-L-6-v2` (HuggingFace, ~22MB, runs on CPU)
+- Model: `cross-encoder/ms-marco-nomic-embed-text-v1.5-L-6-v2` (HuggingFace, ~22MB, runs on CPU)
 - Input: (query, chunk_text) pairs for each of top-20 candidates
 - Output: relevance score per pair, re-sorted descending
 - Return top-5 for context assembly

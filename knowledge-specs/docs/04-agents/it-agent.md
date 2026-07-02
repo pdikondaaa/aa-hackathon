@@ -1,7 +1,7 @@
 # IT Agent Specification
 # AA-Hackathon Enterprise AI Platform — Aligned Automation
 # Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/it_agent.py
+# Source File: apps/api-gateway/app/agents/working/it_agent.py
 
 ---
 
@@ -24,8 +24,8 @@ everyday IT support questions and urgent security scenarios with equal proficien
 | Registry Key | `it` |
 | Class | `ITAgent` |
 | Base Class | `BaseDeepAgent` |
-| Source File | `backend/agents/it_agent.py` |
-| Personality File | `backend/agents/personalities.py` |
+| Source File | `apps/api-gateway/app/agents/working/it_agent.py` |
+| Personality File | `apps/api-gateway/app/agents/working/personalities.py` |
 | Fallback Email | `it.support@alignedautomation.com` |
 | Owner | IT Support Team |
 
@@ -119,7 +119,7 @@ EscalationAgent simultaneously.
 flowchart TD
     Q[IT Query] --> SEC{Security\nIncident\nDetected?}
     SEC -->|Yes| IMM[Immediate Response\nSecurity Procedure\nNo retrieval wait]
-    SEC -->|No| EMB[Embed Query\nall-MiniLM-L6-v2\n384 dimensions]
+    SEC -->|No| EMB[Embed Query\nnomic-embed-text-v1.5\n768 dimensions]
     IMM --> ESCI[Trigger EscalationAgent\nPriority: Critical]
     EMB --> PAR[Parallel Retrieval]
     PAR --> PGV[pgvector\nWHERE domain = 'it'\ncosine similarity]

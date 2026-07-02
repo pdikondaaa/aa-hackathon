@@ -125,7 +125,7 @@ These targets apply under normal operating conditions (Ollama available, pgvecto
 
 ### NFR-PERF-006 — Embedding Inference Latency
 **Priority:** P1  
-**Requirement:** The `all-MiniLM-L6-v2` embedding model (384-dim) must be loaded once per process via `@lru_cache` and subsequent embedding calls must complete in <200ms for a single query string.
+**Requirement:** The `nomic-embed-text-v1.5` embedding model (768-dim) must be loaded once per process via `@lru_cache` and subsequent embedding calls must complete in <200ms for a single query string.
 
 **Acceptance Criteria:**
 - Model loaded on first retrieval call, cached for all subsequent calls

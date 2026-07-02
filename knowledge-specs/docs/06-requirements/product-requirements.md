@@ -104,7 +104,7 @@ AURA operates on three strategic pillars:
 20. Personal Notes — user-private scratchpad
 21. Quick Links — configurable organizational shortcuts
 22. User Feedback — per-message thumbs up/down (-1/0/1)
-23. SharePoint RAG — pgvector knowledge base with all-MiniLM-L6-v2 embeddings
+23. SharePoint RAG — pgvector knowledge base with nomic-embed-text-v1.5 embeddings
 24. Conversation Management — create, rename, delete, search conversations
 25. PII Tracking — redaction event logging, PII admin dashboard
 26. Memory System — user preferences, conversation history, collective intelligence
@@ -216,7 +216,7 @@ AURA operates on three strategic pillars:
 | Zoho People | Employee master data (PostgreSQL view) | `people.vb_employees` via `ZOHO_DB_HOST` |
 | Ollama at ml01 | LLM inference for all agents | `http://ml01.alignedautomation.com:11434` |
 | PostgreSQL + pgvector | Vector store for RAG + operational DB | `SQL_HOST` env var |
-| HuggingFace all-MiniLM-L6-v2 | Embedding model for chunking | Local model, 384-dim |
+| HuggingFace nomic-embed-text-v1.5 | Embedding model for chunking | Local model, 768-dim |
 
 ---
 
@@ -339,7 +339,7 @@ graph TB
 
 | Decision | Options | Owner | Target |
 |----------|---------|-------|--------|
-| Embedding model migration | all-MiniLM-L6-v2 vs nomic-embed-text-v1.5 (already in retriever env var) | Platform Engineering | Q3 2026 |
+| Embedding model migration | nomic-embed-text-v1.5 vs nomic-embed-text-v1.5 (already in retriever env var) | Platform Engineering | Q3 2026 |
 | LLM upgrade path | gpt-oss (current Ollama model) vs cloud LLM fallback | CTO | Q3 2026 |
 | PII redaction strategy | Current: tracking only; Future: active redaction before storage | Legal + Engineering | Q4 2026 |
 | Conversation retention policy | 90 days soft-delete, no current hard-delete schedule | Legal + Ops | Q3 2026 |

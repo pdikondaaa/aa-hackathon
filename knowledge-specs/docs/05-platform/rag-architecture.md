@@ -50,13 +50,13 @@ Each document type is processed by the `TextExtractor` module:
 `TextChunker` splits the extracted text into overlapping chunks:
 
 **Parameters:**
-- Chunk size: **500 tokens** (measured by `tiktoken` cl100k_base tokenizer for consistency)
-- Overlap: **50 tokens** (10% of chunk size)
+- Chunk size: **1000 characters** (measured by `tiktoken` cl100k_base tokenizer for consistency)
+- Overlap: **200 characters** (10% of chunk size)
 - Split strategy: sentence boundary-aware — never splits mid-sentence
 
 **Chunking algorithm:**
 ```python
-def chunk_text(text: str, chunk_size=500, overlap=50) -> list[str]:
+def chunk_text(text: str, chunk_size=1000, overlap=50) -> list[str]:
     sentences = sent_tokenize(text)         # NLTK sentence tokenizer
     chunks = []
     current_chunk = []
@@ -87,15 +87,15 @@ def chunk_text(text: str, chunk_size=500, overlap=50) -> list[str]:
 ```
 
 **Rationale for 500/50 parameters:**
-- 500 tokens balances context density with embedding quality (shorter chunks lose context; longer chunks dilute relevance signals).
-- 50-token overlap prevents key information from falling at a chunk boundary without retrieval.
+- 1000 characters balances context density with embedding quality (shorter chunks lose context; longer chunks dilute relevance signals).
+- 200-character overlap prevents key information from falling at a chunk boundary without retrieval.
 - Fits multiple chunks within Ollama's 2048-token context window.
 
 ### 2.4 Embedding Generation
 
-Each chunk is embedded using **HuggingFace `sentence-transformers/all-MiniLM-L6-v2`**:
+Each chunk is embedded using **HuggingFace `sentence-transformers/nomic-embed-text-v1.5`**:
 
-- Output dimension: **384**
+- Output dimension: **768**
 - Inference device: CPU (GPU available on ml01 for future optimization)
 - Batch size: 32 chunks per inference call
 - Model loaded at startup; kept in memory for ingestion service lifetime
@@ -103,7 +103,7 @@ Each chunk is embedded using **HuggingFace `sentence-transformers/all-MiniLM-L6-
 ```python
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+model = SentenceTransformer("sentence-transformers/nomic-embed-text-v1.5")
 
 def embed_chunks(chunks: list[str]) -> list[list[float]]:
     return model.encode(chunks, batch_size=32, show_progress_bar=False).tolist()
@@ -137,7 +137,7 @@ CREATE TABLE document_chunks (
     document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
     chunk_text  TEXT NOT NULL,
     metadata    JSONB,              -- {"chunk_index": 3, "page": 2, "heading": "Leave Policy"}
-    embedding   vector(384),        -- pgvector column
+    embedding   vector(768),        -- pgvector column
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -167,7 +167,7 @@ At query time, the user's question is embedded with the same model used during i
 query_embedding = model.encode(query).tolist()
 ```
 
-This produces a 384-dimensional vector that is used as the probe for all retrieval methods.
+This produces a 768-dimensional vector that is used as the probe for all retrieval methods.
 
 ### 3.2 pgvector Cosine Similarity Search
 
@@ -360,13 +360,13 @@ flowchart TD
     C -- PPTX --> D4[python-pptx\nText Extraction]
     D1 & D2 & D3 & D4 --> E[Text Normalization\nWhitespace + Encoding]
     E --> F[TextChunker\n500 tok / 50 overlap]
-    F --> G[SentenceTransformer\nall-MiniLM-L6-v2\n384-dim embeddings]
+    F --> G[SentenceTransformer\nnomic-embed-text-v1.5\n768-dim embeddings]
     G --> H[(pgvector\ndocument_chunks)]
     G --> I[(FAISS Index\nIn-Memory)]
     H --> J[IVFFlat Index\nvector_cosine_ops]
 
     subgraph Retrieval at Query Time
-        K([User Query]) --> L[Embed Query\nall-MiniLM-L6-v2]
+        K([User Query]) --> L[Embed Query\nnomic-embed-text-v1.5]
         L --> M[pgvector\ncosine search\ntop_k=10]
         L --> N[FAISS\napprox NN search]
         L --> O[Tavily\nWeb Search]
@@ -403,7 +403,7 @@ Combine sparse BM25 keyword search with dense vector search:
 
 ### 10.2 Re-Ranking
 
-After retrieval, apply a cross-encoder re-ranker (e.g., `cross-encoder/ms-marco-MiniLM-L-6-v2`) to score each (query, chunk) pair more precisely:
+After retrieval, apply a cross-encoder re-ranker (e.g., `cross-encoder/ms-marco-nomic-embed-text-v1.5-L-6-v2`) to score each (query, chunk) pair more precisely:
 - Input: query + chunk text pair.
 - Output: relevance score (0–1).
 - Re-ranker runs only on top 20 candidates from initial retrieval.

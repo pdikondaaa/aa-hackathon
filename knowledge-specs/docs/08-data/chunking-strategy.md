@@ -16,25 +16,24 @@ This document specifies the text chunking strategy for the AA-Hackathon Enterpri
 
 ## 2. Chunking Pipeline Overview
 
+The chunker (`apps/jobs/sharepoint_ingestion/chunking/chunker.py`) operates on **already-extracted plain text** produced by the extractors under `extractors/` (see [`sharepoint-ingestion.md`](sharepoint-ingestion.md)) — it does not itself parse PDF/DOCX/XLSX/PPTX file bytes. It is **file-type-aware** at the pre-split stage, then falls back to a single shared splitter:
+
 ```mermaid
 flowchart TD
-    RawText["Raw Extracted Text\n(from PDF/DOCX/XLSX/PPTX)"] --> PreProcess["Pre-processing\nStrip extra whitespace\nNormalize line endings\nRemove null bytes"]
-    PreProcess --> TypeRoute{Document Type}
+    RawText["Extracted Plain Text\n(from extractors/html_extractor.py\nor extractors/text_extractor.py)"] --> TypeRoute{Text contains\nwhich markers?}
 
-    TypeRoute -- PDF --> PDFChunk["PDF Strategy\nParagraph-aware split\nPreserve page boundaries\nInclude heading context"]
-    TypeRoute -- DOCX --> DOCXChunk["DOCX Strategy\nHeading-aware split\nPreserve section structure\nPython-docx hierarchy"]
-    TypeRoute -- XLSX --> XLSXChunk["XLSX Strategy\nRow-aware split\nInclude column headers\nin each chunk"]
-    TypeRoute -- PPTX --> PPTXChunk["PPTX Strategy\nSlide-aware split\nOne slide per chunk base\nMerge small slides"]
+    TypeRoute -- "[Slide N] markers" --> PPTXPre["PPTX pre-split\nSplit on [Slide N] markers"]
+    TypeRoute -- "[Sheet: X] markers" --> XLSXPre["XLSX pre-split\nSplit on [Sheet: X] markers"]
+    TypeRoute -- "other documents" --> HeadingPre["Heading-based pre-split\nDetects ALL-CAPS lines,\nnumbered headings,\n'Section'/'Chapter' markers"]
 
-    PDFChunk --> Splitter["RecursiveCharacterTextSplitter\nchunk_size=500\nchunk_overlap=50\nseparators=[\\n\\n, \\n, . , ' ', '']"]
-    DOCXChunk --> Splitter
-    XLSXChunk --> Splitter
-    PPTXChunk --> Splitter
+    PPTXPre --> Splitter["RecursiveCharacterTextSplitter\nchunk_size=1000, chunk_overlap=200\nseparators=[\\n\\n, \\n, '. ', ' ', '']"]
+    XLSXPre --> Splitter
+    HeadingPre --> Splitter
 
-    Splitter --> Validate["Validate Chunks\nmin_size=50 chars\nmax_size=600 chars\nno empty chunks"]
-    Validate --> MetaTag["Attach Metadata\ndocument_id, chunk_index\npage_number, slide_number\nsection_title, word_count"]
+    Splitter --> Prepend["Prepend section/slide/sheet\nheading to every resulting chunk"]
+    Prepend --> MetaTag["Attach Metadata\ndocument_id, chunk_index\nsection_heading"]
     MetaTag --> Output["Chunk Objects\n{chunk_text, metadata}"]
-    Output --> Embed["Embed Each Chunk\nall-MiniLM-L6-v2\n384-dim vector"]
+    Output --> Embed["Embed Each Chunk\nnomic-embed-text-v1.5 (HuggingFaceEmbeddings)\n768-dim vector"]
 ```
 
 ---
@@ -43,11 +42,13 @@ flowchart TD
 
 ### 3.1 RecursiveCharacterTextSplitter Configuration
 
+Configured in `apps/jobs/sharepoint_ingestion/config/settings.py`:
+
 ```python
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-CHUNK_SIZE = 500       # Maximum characters per chunk
-CHUNK_OVERLAP = 50     # Characters shared between adjacent chunks
+CHUNK_SIZE = 1000       # Maximum characters per chunk (character-based, not token-based)
+CHUNK_OVERLAP = 200     # Characters shared between adjacent chunks
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
@@ -60,215 +61,122 @@ splitter = RecursiveCharacterTextSplitter(
         " ",      # Word boundary
         "",       # Character boundary (last resort)
     ],
-    keep_separator=False,
-    add_start_index=True,
 )
 ```
+
+This splitter is applied **within each pre-split section**, not directly to the whole document — see Section 4 for the pre-split logic that runs first.
 
 ### 3.2 Parameter Rationale
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `chunk_size` | 500 characters | Fits within Ollama context window (`num_ctx=2048`) with room for system prompt, user query, and multiple retrieved chunks |
-| `chunk_overlap` | 50 characters | Approximately 10 words. Prevents answers that span chunk boundaries from losing context at the seam |
+| `chunk_size` | 1000 characters | Character-based sizing keeps chunks a manageable, self-contained size for embedding and for assembling multi-chunk context at query time, independent of which LLM provider (Claude, Groq, or Ollama) ultimately consumes the retrieved context |
+| `chunk_overlap` | 200 characters | Roughly 30–40 words of shared context between adjacent chunks. Prevents answers that span chunk boundaries from losing context at the seam |
 | Separator priority | `\n\n` first | Prefer splitting at paragraph boundaries to preserve semantic coherence |
-| Min chunk size | 50 characters | Chunks smaller than 50 chars are too short to embed meaningfully |
+| Pre-split unit | Section / slide / sheet | The text is first divided by structural markers (heading, `[Slide N]`, `[Sheet: X]`) before the character splitter ever runs, so a chunk boundary from the splitter never crosses a section/slide/sheet boundary |
 
-### 3.3 Context Window Budget
+### 3.3 Note on LLM Context Budgets
 
-With Ollama `num_ctx=2048` tokens:
-
-| Component | Token Budget | Notes |
-|-----------|-------------|-------|
-| System prompt | ~200 tokens | Instructions, persona, safety rules |
-| User query | ~100 tokens | Typical user question |
-| Retrieved chunks (top 10) | ~1500 tokens | 10 × 150 avg tokens per 500-char chunk |
-| Response buffer | ~248 tokens | Maps to `num_predict=800` (separate output context) |
-
-This budget analysis validates that `chunk_size=500` and `top_k=10` fit within the model's context window while leaving room for the system prompt and query.
+Because the platform is multi-provider (Claude, Groq, or Ollama, selected by env flags — see [`technical-standards.md`](../07-technical/technical-standards.md)), retrieved-chunk sizing is not tuned against a single fixed context window (e.g. an assumed Ollama `num_ctx`). `CHUNK_SIZE=1000` and the RAG pipeline's `top_k` retrieval count (see [`vector-standards.md`](../07-technical/vector-standards.md)) are chosen so that the assembled context is reasonable for whichever provider is active, rather than being derived from one provider's specific token budget.
 
 ---
 
-## 4. Document-Type Specific Strategies
+## 4. File-Type-Aware Pre-Split Strategies
 
-### 4.1 PDF Documents
+The real chunker (`apps/jobs/sharepoint_ingestion/chunking/chunker.py`) does **not** parse PDF/DOCX/XLSX/PPTX file bytes directly — that already happened upstream in the extractors (`extractors/html_extractor.py`, `extractors/text_extractor.py`), which hand the chunker plain text. What the chunker does is look at that plain text and decide how to pre-split it into sections *before* running `RecursiveCharacterTextSplitter`. There are three pre-split paths:
 
-PDFs are processed page by page. Text is extracted per page, then chunked within page boundaries where possible to preserve page number metadata accurately.
+### 4.1 PPTX text — split on `[Slide N]` markers
 
-**Strategy:**
-- Extract text page by page using `pdfplumber`
-- Detect headings via font size metadata where available
-- Prepend heading context to chunks that begin mid-section
-- Preserve page number in every chunk's metadata
-- Handle multi-column layouts by concatenating columns left-to-right
-
-**Special handling:**
-- Scanned PDFs (image-only) → OCR required (future: Azure Document Intelligence)
-- Tables in PDFs → extracted as structured text with `|` delimiters
-- Footnotes → appended to the page text block they appear on
-- Headers/footers → stripped if repetitive across pages (detected by identical text pattern)
+If the extracted text contains `[Slide N]`-style markers (indicating the source was a presentation), the chunker splits on those markers first, so no chunk boundary ever crosses a slide boundary. Each slide's text is then run through `RecursiveCharacterTextSplitter` independently, and the `[Slide N]` marker is prepended to every chunk produced from that slide.
 
 ```python
-def chunk_pdf(pages: list[dict]) -> list[dict]:
-    """
-    pages: [{'text': str, 'page_number': int}]
-    Returns: [{'chunk_text': str, 'metadata': dict}]
-    """
-    all_chunks = []
-    for page in pages:
-        page_chunks = splitter.split_text(page["text"])
-        for idx, chunk_text in enumerate(page_chunks):
-            all_chunks.append({
-                "chunk_text": chunk_text,
-                "metadata": {
-                    "chunk_index": len(all_chunks),
-                    "page_number": page["page_number"],
-                    "word_count": len(chunk_text.split()),
-                }
-            })
-    return all_chunks
+def presplit_pptx_text(text: str) -> list[dict]:
+    """Splits already-extracted text on '[Slide N]' markers."""
+    sections = re.split(r"(\[Slide \d+\])", text)
+    slides = []
+    current_marker = None
+    for part in sections:
+        if re.match(r"\[Slide \d+\]", part):
+            current_marker = part
+        elif part.strip() and current_marker:
+            slides.append({"heading": current_marker, "body": part.strip()})
+    return slides
 ```
 
-### 4.2 DOCX Documents
+### 4.2 XLSX text — split on `[Sheet: X]` markers
 
-Word documents have explicit heading hierarchy (Heading 1, Heading 2, etc.) via python-docx. This structure is used to prepend section context to each chunk.
-
-**Strategy:**
-- Parse document paragraph by paragraph
-- Track current section heading (most recent Heading 1 and Heading 2)
-- Prepend section title to chunks so retrieval context includes the section name
-- Keep tables together (don't split a table across chunks if < 500 chars)
-- Lists (bullet points, numbered) kept together where possible
+Similarly, extracted spreadsheet text carries `[Sheet: X]` markers per worksheet. The chunker splits on these first, then applies `RecursiveCharacterTextSplitter` within each sheet's text, prepending the `[Sheet: X]` marker to every resulting chunk.
 
 ```python
-def chunk_docx(doc_path_or_bytes) -> list[dict]:
-    from docx import Document
-    doc = Document(doc_path_or_bytes)
+def presplit_xlsx_text(text: str) -> list[dict]:
+    """Splits already-extracted text on '[Sheet: X]' markers."""
+    sections = re.split(r"(\[Sheet: [^\]]+\])", text)
+    sheets = []
+    current_marker = None
+    for part in sections:
+        if re.match(r"\[Sheet: [^\]]+\]", part):
+            current_marker = part
+        elif part.strip() and current_marker:
+            sheets.append({"heading": current_marker, "body": part.strip()})
+    return sheets
+```
 
+### 4.3 Everything else — split on detected section headings
+
+For all other document types (including PDFs, DOCX, and plain text), the chunker scans the extracted text for heading-like lines using generic, format-agnostic heuristics — **not** a rich-format API like python-docx paragraph styles, since chunking runs on plain text, not the original file:
+
+- ALL-CAPS lines (e.g. `LEAVE POLICY`)
+- Numbered headings (e.g. `1. Introduction`, `2.3 Eligibility`)
+- Lines containing `Section` or `Chapter` markers
+
+Text between two detected headings becomes one section. Each section is then run through `RecursiveCharacterTextSplitter`, with the detected heading prepended to every chunk produced from that section.
+
+```python
+HEADING_PATTERNS = [
+    re.compile(r"^[A-Z][A-Z\s]{4,}$"),          # ALL-CAPS line
+    re.compile(r"^\d+(\.\d+)*\.?\s+\S"),         # numbered heading, e.g. "1." or "2.3"
+    re.compile(r"^(Section|Chapter)\s+\S", re.IGNORECASE),
+]
+
+def presplit_by_heading(text: str) -> list[dict]:
+    lines = text.splitlines()
     sections = []
     current_heading = ""
-    current_text = []
+    current_body: list[str] = []
 
-    for para in doc.paragraphs:
-        if "Heading" in para.style.name and para.text.strip():
-            if current_text:
-                sections.append({"heading": current_heading, "text": "\n".join(current_text)})
-                current_text = []
-            current_heading = para.text.strip()
-        elif para.text.strip():
-            current_text.append(para.text.strip())
+    for line in lines:
+        if any(p.match(line.strip()) for p in HEADING_PATTERNS):
+            if current_body:
+                sections.append({"heading": current_heading, "body": "\n".join(current_body)})
+                current_body = []
+            current_heading = line.strip()
+        else:
+            current_body.append(line)
 
-    if current_text:
-        sections.append({"heading": current_heading, "text": "\n".join(current_text)})
+    if current_body:
+        sections.append({"heading": current_heading, "body": "\n".join(current_body)})
 
+    return sections
+```
+
+### 4.4 Shared splitting step
+
+Regardless of which pre-split path produced the sections, the same final step applies to all of them:
+
+```python
+def chunk_sections(sections: list[dict], base_metadata: dict) -> list[dict]:
     all_chunks = []
     for section in sections:
-        # Prepend heading so every chunk carries section context
-        full_text = f"{section['heading']}\n\n{section['text']}" if section['heading'] else section['text']
-        sub_chunks = splitter.split_text(full_text)
-        for chunk_text in sub_chunks:
+        full_text = f"{section['heading']}\n\n{section['body']}" if section["heading"] else section["body"]
+        for chunk_text in splitter.split_text(full_text):
             all_chunks.append({
                 "chunk_text": chunk_text,
                 "metadata": {
+                    **base_metadata,
                     "chunk_index": len(all_chunks),
-                    "section_title": section["heading"],
-                    "word_count": len(chunk_text.split()),
+                    "section_heading": section["heading"],
                 }
             })
-    return all_chunks
-```
-
-### 4.3 XLSX Spreadsheets
-
-Spreadsheets are tabular. Each row is treated as a unit of information. Column headers are included in every row-chunk so the chunk is self-contained and meaningful without surrounding context.
-
-**Strategy:**
-- Process sheet by sheet, include sheet name in metadata
-- Treat each row as a text string: `Column1: Value1 | Column2: Value2 | ...`
-- Skip rows where all cells are empty
-- For large sheets, group rows into chunks of up to 10 rows (within 500-char limit)
-- Include header row reference in every chunk
-
-```python
-def chunk_xlsx(file_bytes: bytes) -> list[dict]:
-    from openpyxl import load_workbook
-    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-    all_chunks = []
-
-    for sheet in wb.worksheets:
-        rows = list(sheet.iter_rows(values_only=True))
-        if not rows:
-            continue
-
-        headers = [str(h or "").strip() for h in rows[0]]
-        row_texts = []
-
-        for row in rows[1:]:
-            row_parts = [
-                f"{headers[i]}: {str(val).strip()}"
-                for i, val in enumerate(row)
-                if val is not None and str(val).strip()
-            ]
-            if row_parts:
-                row_texts.append(" | ".join(row_parts))
-
-        # Group rows into chunks
-        batch_text = "\n".join(row_texts)
-        sub_chunks = splitter.split_text(batch_text)
-        for chunk_text in sub_chunks:
-            all_chunks.append({
-                "chunk_text": chunk_text,
-                "metadata": {
-                    "chunk_index": len(all_chunks),
-                    "sheet_name": sheet.title,
-                    "word_count": len(chunk_text.split()),
-                }
-            })
-    return all_chunks
-```
-
-### 4.4 PPTX Presentations
-
-PowerPoint slides are treated as natural chunk boundaries. Each slide is a self-contained unit of information.
-
-**Strategy:**
-- One slide per chunk (base unit)
-- Merge consecutive very short slides (< 50 chars) with the following slide
-- Include slide number in metadata
-- Extract text from all shapes (text frames, tables, SmartArt text)
-- Split slides that exceed 500 characters using the standard splitter
-
-```python
-def chunk_pptx(file_bytes: bytes) -> list[dict]:
-    from pptx import Presentation
-    prs = Presentation(io.BytesIO(file_bytes))
-    all_chunks = []
-    carry_text = ""
-
-    for slide_num, slide in enumerate(prs.slides, start=1):
-        slide_texts = []
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                slide_texts.append(shape.text_frame.text.strip())
-        slide_text = carry_text + "\n".join(t for t in slide_texts if t)
-        carry_text = ""
-
-        if len(slide_text) < 50:
-            carry_text = slide_text + " "  # merge with next slide
-            continue
-
-        if len(slide_text) <= CHUNK_SIZE:
-            all_chunks.append({
-                "chunk_text": slide_text,
-                "metadata": {"chunk_index": len(all_chunks), "slide_number": slide_num, "word_count": len(slide_text.split())}
-            })
-        else:
-            sub_chunks = splitter.split_text(slide_text)
-            for chunk_text in sub_chunks:
-                all_chunks.append({
-                    "chunk_text": chunk_text,
-                    "metadata": {"chunk_index": len(all_chunks), "slide_number": slide_num, "word_count": len(chunk_text.split())}
-                })
     return all_chunks
 ```
 
@@ -276,58 +184,53 @@ def chunk_pptx(file_bytes: bytes) -> list[dict]:
 
 ## 5. Required Chunk Metadata
 
-Every chunk object stored in `document_chunks.metadata` (JSONB) must include:
+Every chunk object stored in `document_chunks.metadata` (JSONB) should carry, at minimum:
 
 | Field | Type | Source | Required |
 |-------|------|--------|----------|
-| `chunk_index` | int | Position in document | Always |
-| `word_count` | int | `len(chunk_text.split())` | Always |
-| `page_number` | int | PDF page number | PDF only |
-| `slide_number` | int | PPTX slide index | PPTX only |
-| `sheet_name` | str | XLSX worksheet name | XLSX only |
-| `section_title` | str | DOCX heading | DOCX only |
+| `chunk_index` | int | Position within the document's chunk sequence | Always |
+| `section_heading` | str | The heading / `[Slide N]` / `[Sheet: X]` marker prepended to this chunk, if any | When a heading/marker was detected |
 | `source_file` | str | Original filename | When available |
+
+Earlier drafts of this document asserted a richer, format-specific metadata set (`page_number`, `slide_number`, `sheet_name`, `section_title`, `word_count` as separate always-present fields). Only treat those as accurate if you have independently confirmed them against `apps/jobs/sharepoint_ingestion/chunking/chunker.py` and `create_schema.py` — the verified metadata contract is the smaller set above.
 
 ---
 
 ## 6. Special Content Handling
 
+**Caveat:** the sub-rules below (table/list/code-block handling) describe desirable behavior for a `RecursiveCharacterTextSplitter`-based pipeline and are illustrative guidance, not line-by-line confirmed against `chunker.py`. Treat the numeric thresholds as relative to `CHUNK_SIZE` (1000 characters), not as independently verified constants.
+
 ### 6.1 Tables
 
-Tables must not be split across chunks in a way that separates headers from data rows. Rules:
+Tables should not be split across chunks in a way that separates headers from data rows where avoidable:
 
-- If the full table is ≤ 500 chars, store as a single chunk
-- If > 500 chars, split at row boundaries, including the header row at the top of each chunk
-- Use `|` delimiters between cells for clear structure
+- If the full table fits within `CHUNK_SIZE` (1000 characters), it can remain a single chunk
+- If larger, prefer splitting at row boundaries, including the header row at the top of each resulting chunk
+- `|` delimiters between cells aid readability in the extracted text
 
 ### 6.2 Numbered Lists and Bullet Points
 
-List items should stay together when possible. If a list exceeds 500 chars, split at list item boundaries (at `\n` before a bullet or number), not mid-item.
+List items should stay together when possible. If a list exceeds `CHUNK_SIZE`, prefer splitting at list item boundaries (at `\n` before a bullet or number), not mid-item — this falls out naturally from the splitter's separator priority (`\n\n`, then `\n`, before falling back to word/character boundaries).
 
 ### 6.3 Code Blocks
 
-Code blocks (found in technical DOCX documents) must never be split mid-statement. If a code block exceeds 500 chars, split only at blank lines within the code. Prefix with a comment indicating it is a code snippet:
-
-```
-[Code snippet from: section_title]
-<code content here>
-```
+Code blocks, where present in source documents, should ideally not be split mid-statement. If a code block exceeds `CHUNK_SIZE`, prefer splitting only at blank lines within the code.
 
 ### 6.4 Minimum Chunk Size
 
-Chunks shorter than 50 characters are discarded. They are typically orphaned headings, page numbers, or formatting artifacts that add no semantic value. Log a warning when a chunk is discarded.
+Very short fragments (a handful of characters — typically orphaned headings, page numbers, or formatting artifacts) add no semantic value and are candidates for discarding before embedding. The exact minimum-length cutoff used by `chunker.py` was not independently confirmed in the last audit; do not assert a specific number without checking the source.
 
 ---
 
 ## 7. Quality Metrics and Monitoring
 
-| Metric | Target | How Measured |
+The metrics below are suggested monitoring targets for the ingestion pipeline, not confirmed values pulled from a live dashboard. Use them as a starting point for instrumentation rather than as already-measured facts:
+
+| Metric | Suggested Target | How to Measure |
 |--------|--------|-------------|
-| Average chunk length | 300–450 chars | Computed per ingestion run, logged in summary |
-| Empty chunk rate | 0% | Validated before insert |
-| Sub-50-char discard rate | < 5% | Logged per ingestion run |
-| Overlap effectiveness | > 80% answer completeness | Evaluated on benchmark question set |
-| Retrieval hit rate | > 90% queries return ≥ 3 chunks | Logged per query at runtime |
+| Average chunk length | Well under `CHUNK_SIZE` (1000 chars) on average, given section pre-splitting | Compute per ingestion run |
+| Empty chunk rate | 0% | Validate before insert |
+| Retrieval hit rate | Most queries return ≥ 3 chunks | Log per query at runtime, see [`vector-standards.md`](../07-technical/vector-standards.md) for the retrieval retry logic |
 
 ---
 

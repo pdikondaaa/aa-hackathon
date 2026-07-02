@@ -1,7 +1,7 @@
 # Document Agent Specification
 # AA-Hackathon Enterprise AI Platform — Aligned Automation
 # Document Version: 1.0 | Last Updated: 2026-06-07
-# Source File: backend/agents/document_agent.py
+# Source File: apps/api-gateway/app/agents/document_agent.py
 # Frontend: frontend/src/pages/DocumentsPage.jsx
 
 ---
@@ -27,7 +27,7 @@ generated or the session is abandoned.
 | Registry Key | `document` |
 | Class | `DocumentAgent` |
 | Base Class | `Standalone` (no BaseDeepAgent) |
-| Source File | `backend/agents/document_agent.py` |
+| Source File | `apps/api-gateway/app/agents/document_agent.py` |
 | Session Store | `active_sessions` dict (in-memory, per-user) |
 | Frontend | `frontend/src/pages/DocumentsPage.jsx` |
 | Generation API | `POST /api/documents/generate` |

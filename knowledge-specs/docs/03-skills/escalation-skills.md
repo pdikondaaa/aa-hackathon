@@ -540,7 +540,11 @@ Automatically determines the correct escalation type, priority, and routing targ
 ```python
 def route_escalation(user_message: str, context: dict) -> EscalationRoute:
     """
-    3-tier routing for escalation classification.
+    Two-tier routing for escalation classification (regex fast-path, then
+    keyword fallback). An LLM-classification tier is shown below for design
+    reference, mirroring the MasterAgent's own _route_llm() method — but as
+    with the MasterAgent, that method is not currently invoked in the live
+    codebase; classification falls through to keyword matching instead.
     Returns: {type, priority, team_email, manager_notify, director_notify}
     """
     
@@ -561,11 +565,11 @@ def route_escalation(user_message: str, context: dict) -> EscalationRoute:
                                team_email='admin@alignedautomation.com',
                                manager_notify=True, director_notify=True)
     
-    # Tier 2: LLM classification for nuanced cases
-    llm_classification = classify_with_llm(user_message, context)
-    return map_llm_result_to_route(llm_classification)
-    
-    # Tier 3: Keyword fallback
+    # Tier 2 (not currently invoked — dead-code path retained for design reference):
+    # llm_classification = classify_with_llm(user_message, context)
+    # return map_llm_result_to_route(llm_classification)
+
+    # Tier 2 (live): Keyword fallback
     # Department keywords → HR, IT keywords → IT, etc.
 ```
 
