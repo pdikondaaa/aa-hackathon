@@ -3,6 +3,7 @@ import { listConversations, deleteConversation } from '../services/api';
 
 const ALLOCATION_BOARD_ROLES = new Set(['team_lead', 'functional_lead', 'business_lead', 'executive', 'admin']);
 const COO_ANALYTICS_ROLES    = new Set(['business_lead', 'executive', 'admin']);
+const HISTORY_PAGE_SIZE = 20;
 
 const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole, user }) => {
   const { navigation, labels, app } = config;
@@ -45,9 +46,11 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
     toggleParent(item.id);
     if (!isCurrentlyExpanded && item.children?.length) onNavChange(item.children[0].id);
   };
-
   const [conversations, setConversations] = useState([]);
   const [histLoading, setHistLoading] = useState(false);
+  const [histPage, setHistPage] = useState(1);
+  const [histTotal, setHistTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
@@ -55,8 +58,12 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
     (async () => {
       setHistLoading(true);
       try {
-        const res = await listConversations(1, 50);
-        if (!cancelled) setConversations(res.data || []);
+        const res = await listConversations(1, HISTORY_PAGE_SIZE);
+        if (!cancelled) {
+          setConversations(res.data || []);
+          setHistPage(1);
+          setHistTotal(res.total || 0);
+        }
       } catch (e) {
         console.error('Failed to load conversations:', e);
       } finally {
@@ -65,6 +72,22 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
     })();
     return () => { cancelled = true; };
   }, [refreshKey]);
+
+  const handleLoadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = histPage + 1;
+      const res = await listConversations(nextPage, HISTORY_PAGE_SIZE);
+      setConversations((prev) => [...prev, ...(res.data || [])]);
+      setHistPage(nextPage);
+      setHistTotal(res.total || 0);
+    } catch (e) {
+      console.error('Failed to load more conversations:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const groupByDate = (convs) => {
     const todayStart = new Date();
@@ -215,6 +238,19 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
           {conversations.length === 0 && (
             <div className="sidebar-section">
               <p className="sidebar-section-label" style={{ opacity: 0.4 }}>No conversations yet</p>
+            </div>
+          )}
+          {conversations.length > 0 && conversations.length < histTotal && (
+            <div className="sidebar-section">
+              <button
+                className="sidebar-load-more-btn"
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+              >
+                {loadingMore
+                  ? <i className="fas fa-spinner fa-spin" />
+                  : <span>Load more ({histTotal - conversations.length} remaining)</span>}
+              </button>
             </div>
           )}
         </>

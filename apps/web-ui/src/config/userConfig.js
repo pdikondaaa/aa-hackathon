@@ -55,8 +55,13 @@ export const authorizedUsers = {
   'maithili.joshi@alignedautomation.com': ROLES.ADMIN,
   'prashant.dikonda@alignedautomation.com': ROLES.ADMIN,
   'yogeshbrijlal.chandan@alignedautomation.com': ROLES.ADMIN,
+  'vishal.jagdhane@alignedautomation.com': ROLES.ADMIN,
   'namita.bandal@alignedautomation.com': ROLES.ADMIN,
+  'ashwani.tiwary@alignedautomation.com': ROLES.ADMIN,
+  'nitin.asati@alignedautomation.com':ROLES.ADMIN,
+  'seema.yadav@alignedautomation.com':ROLES.ADMIN,
   'hr@alignedautomation.com': ROLES.ADMIN,
+
   // HR Department
 };
 

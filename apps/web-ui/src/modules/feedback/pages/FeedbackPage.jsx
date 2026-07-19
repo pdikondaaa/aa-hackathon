@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getFeedback, submitFeedback } from '../services/feedbackService';
 
 const TYPES = [
@@ -47,20 +47,34 @@ function StarRating({ value, onChange }) {
 export default function FeedbackPage({ user }) {
   const [form, setForm]         = useState(EMPTY);
   const [submitted, setSubmitted] = useState(false);
-  const [history, setHistory]   = useState(() =>
-    getFeedback().filter(f => f.userEmail === user?.email)
-  );
+  const [submitting, setSubmitting] = useState(false);
+  const [history, setHistory]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getFeedback()
+      .then(rows => { if (!cancelled) setHistory(rows); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const field = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const isValid = form.title.trim() && form.description.trim();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!isValid) return;
-    const entry = submitFeedback({ ...form, userName: user?.name, userEmail: user?.email });
-    setHistory(prev => [entry, ...prev]);
-    setSubmitted(true);
-    setTimeout(() => { setSubmitted(false); setForm(EMPTY); }, 2500);
+    if (!isValid || submitting) return;
+    setSubmitting(true);
+    try {
+      const entry = await submitFeedback({ ...form, userName: user?.name, userEmail: user?.email });
+      setHistory(prev => [entry, ...prev]);
+      setSubmitted(true);
+      setTimeout(() => { setSubmitted(false); setForm(EMPTY); }, 2500);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -73,7 +87,7 @@ export default function FeedbackPage({ user }) {
           Share Feedback
         </h1>
         <p style={{ color: 'var(--text-secondary)', margin: '5px 0 0', fontSize: 14 }}>
-          Help us improve Nexus — share bugs, ideas, or suggestions.
+          Help us improve  Aura — share bugs, ideas, or suggestions.
         </p>
       </div>
 
@@ -153,11 +167,11 @@ export default function FeedbackPage({ user }) {
 
             <button
               type="submit"
-              disabled={!isValid || submitted}
+              disabled={!isValid || submitted || submitting}
               className="fb-submit-btn"
             >
               <i className="fas fa-paper-plane" />
-              Submit Feedback
+              {submitting ? 'Submitting…' : 'Submit Feedback'}
             </button>
           </div>
         </form>
@@ -170,7 +184,11 @@ export default function FeedbackPage({ user }) {
             <span className="fb-count">{history.length}</span>
           </div>
 
-          {history.length === 0 ? (
+          {loading ? (
+            <div className="fb-empty">
+              <p>Loading…</p>
+            </div>
+          ) : history.length === 0 ? (
             <div className="fb-empty">
               <i className="fas fa-inbox" style={{ fontSize: 28, marginBottom: 8, opacity: 0.3 }} />
               <p>No submissions yet.</p>

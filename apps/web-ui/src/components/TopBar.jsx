@@ -12,6 +12,7 @@ const TopBar = ({
   isDark,         onThemeToggle,
   onLogout,
   onGoHome,
+  onNavigate,
 }) => {
   const displayUser = user || config.user;
   const logo = isDark ? alignedDarkLogo : alignedLightLogo;
@@ -118,6 +119,16 @@ const TopBar = ({
 
       {/* ── Right actions ─────────────────────────────────── */}
       <div className="topbar-actions">
+
+        {/* ── Feedback ─────────────────────────────────────── */}
+        <button
+          className="topbar-icon-btn"
+          onClick={() => onNavigate?.('feedback')}
+          title="Feedback"
+          aria-label="Feedback"
+        >
+          <i className="fas fa-comments" />
+        </button>
 
         {/* ── Quick Links ──────────────────────────────────── */}
         <div

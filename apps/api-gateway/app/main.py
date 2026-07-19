@@ -32,6 +32,8 @@ from app.api.controllers.feedback_controller import msg_router as feedback_msg_r
 from app.api.controllers.feedback_controller import conv_router as feedback_conv_router
 from app.api.controllers.feedback_controller import fb_router as feedback_fb_router
 from app.api.controllers.feedback_controller import admin_router as feedback_admin_router
+from app.api.controllers.product_feedback_controller import pub_router as product_feedback_pub_router
+from app.api.controllers.product_feedback_controller import admin_router as product_feedback_admin_router
 from app.api.controllers.escalations_controller import esc_router as escalations_router
 from app.api.controllers.escalations_controller import admin_router as escalations_admin_router
 from app.api.controllers.pii_controller import router as pii_router
@@ -42,11 +44,13 @@ from app.api.controllers.attendance_controller import router as attendance_route
 from app.api.controllers.profile_controller import router as profile_router
 from app.api.controllers.documents_controller import router as documents_router
 from app.api.controllers.coo_analytics_controller import router as coo_analytics_router
+from app.api.controllers.aura_analytics_controller import router as aura_analytics_router
 from app.api.controllers.forms_controller import router as forms_router
 from app.api.controllers.communications_controller import pub_router as communications_pub_router
 from app.api.controllers.communications_controller import admin_router as communications_admin_router
 from app.api.controllers.parking_controller import router as parking_router
 from app.api.controllers.skills_controller import router as skills_router
+from app.api.controllers.employee_directory_controller import router as employee_directory_router
 from app.api.controllers.graph_calendar_controller import router as graph_calendar_router
 from app.api.controllers.form_builder_controller import pub_router as ncl_pub_router
 from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
@@ -61,6 +65,8 @@ tags_metadata = [
     {"name": "Conversations", "description": "Conversation CRUD — list, create, rename, soft-delete."},
     {"name": "Messages", "description": "Send, list, fetch, regenerate, stop, and cite messages."},
     {"name": "Feedback", "description": "Submit, update, and admin-list thumbs up/down feedback on messages."},
+    {"name": "Product Feedback", "description": "Submit and view app-wide feedback (bugs, suggestions, improvements) from the Share Feedback form."},
+    {"name": "Product Feedback (Admin)", "description": "Admin review of app-wide feedback submissions — filter, respond, and manage status."},
     {"name": "Escalations", "description": "Create, track, and manage HR/IT/Admin escalations with dynamic forms."},
     {"name": "PII", "description": "Admin PII rule management, redaction event logs, review, and analytics."},
     {"name": "Email Agent", "description": "AI-powered email refinement and composition."},
@@ -104,6 +110,8 @@ app.include_router(feedback_msg_router)
 app.include_router(feedback_conv_router)
 app.include_router(feedback_fb_router)
 app.include_router(feedback_admin_router)
+app.include_router(product_feedback_pub_router)
+app.include_router(product_feedback_admin_router)
 app.include_router(escalations_router)
 app.include_router(escalations_admin_router)
 app.include_router(pii_router)
@@ -116,10 +124,12 @@ app.include_router(attendance_router)
 app.include_router(profile_router)
 app.include_router(documents_router)
 app.include_router(coo_analytics_router)
+app.include_router(aura_analytics_router)
 app.include_router(forms_router)
 app.include_router(communications_pub_router)
 app.include_router(communications_admin_router)
 app.include_router(parking_router)
 app.include_router(skills_router)
+app.include_router(employee_directory_router)
 app.include_router(ncl_pub_router)
 app.include_router(ncl_admin_router)

@@ -10,7 +10,6 @@ const initialState = {
   peakUsageHours:   [],
   topQueries:       [],
   successVsFailed:  [],
-  recentActivities: [],
 };
 
 export function useAnalyticsData(dateRange = 'week') {
@@ -22,39 +21,8 @@ export function useAnalyticsData(dateRange = 'week') {
     setLoading(true);
     setError(null);
     try {
-      const [
-        overviewStats,
-        mostUsedTabs,
-        dailyUsage,
-        queryCategories,
-        activeUsersTrend,
-        peakUsageHours,
-        topQueries,
-        successVsFailed,
-        recentActivities,
-      ] = await Promise.all([
-        analyticsApi.getOverviewStats(dateRange),
-        analyticsApi.getMostUsedTabs(dateRange),
-        analyticsApi.getDailyUsage(dateRange),
-        analyticsApi.getQueryCategories(dateRange),
-        analyticsApi.getActiveUsersTrend(dateRange),
-        analyticsApi.getPeakUsageHours(dateRange),
-        analyticsApi.getTopQueries(dateRange),
-        analyticsApi.getSuccessVsFailed(dateRange),
-        analyticsApi.getRecentActivities(),
-      ]);
-
-      setData({
-        overviewStats,
-        mostUsedTabs,
-        dailyUsage,
-        queryCategories,
-        activeUsersTrend,
-        peakUsageHours,
-        topQueries,
-        successVsFailed,
-        recentActivities,
-      });
+      const dashboard = await analyticsApi.getDashboard(dateRange);
+      setData({ ...initialState, ...dashboard });
     } catch (err) {
       setError(err.message || 'Failed to load analytics data.');
     } finally {

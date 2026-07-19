@@ -1,34 +1,55 @@
-const STORAGE_KEY = 'aa_feedback_submissions';
+import {
+  submitProductFeedback,
+  listMyProductFeedback,
+  listProductFeedbackAdmin,
+  updateProductFeedback,
+  deleteProductFeedback,
+} from '../../../services/api';
 
-export const getFeedback = () => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch { return []; }
+const toEntry = (row) => ({
+  id: row.id,
+  type: row.type,
+  module: row.module,
+  title: row.title,
+  description: row.description,
+  rating: row.rating,
+  status: row.status,
+  adminNotes: row.admin_notes,
+  submittedAt: row.created_at,
+  reviewedAt: row.reviewed_at,
+  userName: row.user_name,
+  userEmail: row.user_email,
+});
+
+export const getFeedback = async () => {
+  const rows = await listMyProductFeedback();
+  return rows.map(toEntry);
 };
 
-const save = (items) => localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-
-export const submitFeedback = (entry) => {
-  const newEntry = {
-    id: `fb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    ...entry,
-    status: 'open',
-    submittedAt: new Date().toISOString(),
-    reviewedAt: null,
-    adminNotes: '',
-  };
-  save([newEntry, ...getFeedback()]);
-  return newEntry;
+export const getFeedbackForAdmin = async (params) => {
+  const { data } = await listProductFeedbackAdmin(params);
+  return data.map(toEntry);
 };
 
-export const updateFeedback = (id, patch) => {
-  const updated = getFeedback().map(item =>
-    item.id === id ? { ...item, ...patch, reviewedAt: new Date().toISOString() } : item
-  );
-  save(updated);
+export const submitFeedback = async (entry) => {
+  const row = await submitProductFeedback({
+    type: entry.type,
+    module: entry.module,
+    title: entry.title,
+    description: entry.description,
+    rating: entry.rating,
+  });
+  return toEntry(row);
 };
 
-export const deleteFeedback = (id) => {
-  save(getFeedback().filter(item => item.id !== id));
+export const updateFeedback = async (id, patch) => {
+  const row = await updateProductFeedback(id, {
+    status: patch.status,
+    admin_notes: patch.adminNotes,
+  });
+  return toEntry(row);
+};
+
+export const deleteFeedback = async (id) => {
+  await deleteProductFeedback(id);
 };

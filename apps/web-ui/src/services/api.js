@@ -94,6 +94,17 @@ class HTTPClient {
   delete(endpoint, options = {}) {
     return this.request(endpoint, { ...options, method: 'DELETE' });
   }
+
+  // Binary responses (e.g. profile photos) — bypasses response.json()
+  async getBlob(endpoint, options = {}) {
+    let config = { method: 'GET', headers: {}, ...options };
+    for (const interceptor of this.requestInterceptors) {
+      config = await interceptor(config, endpoint);
+    }
+    const response = await fetch(`${this.baseURL}${endpoint}`, config);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.blob();
+  }
 }
 
 const httpClient = new HTTPClient(API_URL);
@@ -241,6 +252,34 @@ export async function getConversationFeedback(conversationId) {
   return httpClient.get(`/api/conversations/${conversationId}/feedback`);
 }
 
+// ── Product Feedback API (Share Feedback / Feedback Review) ────────────────
+
+export async function submitProductFeedback(payload) {
+  return httpClient.post('/api/product-feedback', payload);
+}
+
+export async function listMyProductFeedback() {
+  return httpClient.get('/api/product-feedback');
+}
+
+export async function listProductFeedbackAdmin(params = {}) {
+  const query = new URLSearchParams();
+  if (params.page) query.set('page', params.page);
+  if (params.limit) query.set('limit', params.limit);
+  if (params.type) query.set('type', params.type);
+  if (params.status) query.set('status', params.status);
+  const qs = query.toString();
+  return httpClient.get(`/api/admin/product-feedback${qs ? `?${qs}` : ''}`);
+}
+
+export async function updateProductFeedback(id, patch) {
+  return httpClient.patch(`/api/admin/product-feedback/${id}`, patch);
+}
+
+export async function deleteProductFeedback(id) {
+  return httpClient.delete(`/api/admin/product-feedback/${id}`);
+}
+
 // ── Allocation Board API ───────────────────────────────────────────────────
 
 export async function getAllocationBoard(params = {}) {
@@ -261,6 +300,10 @@ export async function getEmployeeDetail(employeeId) {
 
 export async function getAllocationRole() {
   return httpClient.get('/api/allocation/my-role');
+}
+
+export async function getMyTeamAllocation() {
+  return httpClient.get('/api/allocation/my-team');
 }
 
 export async function askAllocationAura(question) {
@@ -318,6 +361,16 @@ export async function listDocuments(page = 1, limit = 50, search, category) {
 
 export async function getSkillsAnalytics() {
   return httpClient.get('/api/skills/analytics');
+}
+
+// ── Employee Directory API ─────────────────────────────────────────────────
+
+export async function getEmployeeDirectory() {
+  return httpClient.get('/api/employees/directory');
+}
+
+export async function getEmployeePhotoBlob(email) {
+  return httpClient.getBlob(`/api/employees/photo/${encodeURIComponent(email)}`);
 }
 
 // ── Microsoft Forms API ──────────────────────────────────────────────────

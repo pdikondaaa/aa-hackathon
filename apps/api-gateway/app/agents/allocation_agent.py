@@ -14,6 +14,8 @@ from app.api.services.allocation_service import (
     get_user_profile,
     get_available_months,
     build_ask_context,
+    has_direct_reports,
+    get_my_team_allocation,
 )
 from app.utils.logging_config import get_logger
 
@@ -60,11 +62,22 @@ class AllocationAgent:
         """
         profile = get_user_profile(email)
         return {
-            "email":       email,
-            "designation": profile["designation"],
-            "role":        profile["role"],
+            "email":              email,
+            "designation":        profile["designation"],
+            "role":               profile["role"],
+            "has_direct_reports": has_direct_reports(email),
         }
 
+    def get_my_team(self, email: str) -> dict:
+        """
+        Return the requesting user's direct reports' allocation rows, unmasked.
+        Direct reports are resolved by an exact email match on
+        people.vb_employees.ReportingManagerEmail — a real reporting-line
+        check, independent of designation/role bucket. Empty team_rows if
+        the user has no direct reports.
+        """
+        logger.info(f"AllocationAgent.get_my_team for {email}")
+        return {"team_rows": get_my_team_allocation(email)}
 
     def ask_aura(self, user_email: str, question: str) -> str:
         """

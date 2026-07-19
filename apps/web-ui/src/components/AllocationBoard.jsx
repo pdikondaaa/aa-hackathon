@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 
-import { getAllocationBoard, getAllocationFilterOptions, getEmployeeDetail, askAllocationAura } from '../services/api';
+import { getAllocationBoard, getAllocationFilterOptions, getEmployeeDetail, askAllocationAura, getMyTeamAllocation } from '../services/api';
 import { COOAnalyticsDashboard } from '../modules/coo-analytics/pages/COODashboard';
 
 const CHART_COLORS = ['#1D76BC', '#27AAE1', '#4ED44E', '#2A3D90', '#f59e0b', '#ef4444', '#a78bfa', '#10b981'];
@@ -882,6 +882,63 @@ function TeamView({ data, onEmployeeClick }) {
   );
 }
 
+// ── My Team view (real reporting-line direct reports) ─────────────────────────
+
+function MyTeamView({ rows, onEmployeeClick }) {
+  return (
+    <div className="ab-team-view">
+      <div className="ab-section-label">My Team — Direct Reports ({rows.length})</div>
+      {rows.length === 0 ? (
+        <p className="ab-empty">No direct reports found for your profile.</p>
+      ) : (
+        <>
+          <div className="ab-emp-grid">
+            {rows.map((emp, i) => (
+              <div key={i} className="ab-emp-card" onClick={() => onEmployeeClick(emp.employee_id)}>
+                <div className="ab-emp-avatar">{(emp.name || '?')[0].toUpperCase()}</div>
+                <div className="ab-emp-info">
+                  <div className="ab-emp-name">{emp.name}</div>
+                  <div className="ab-emp-desig">{fmt(emp.designation)}</div>
+                  <div className="ab-emp-project">{emp.project_name || 'No Allocation'}</div>
+                  <div className="ab-reportee-tags">
+                    {emp.billing && <span className="ab-tag">{emp.billing}</span>}
+                    {emp.efforts_pct != null && <span className="ab-tag ab-tag--effort">Effort: {emp.efforts_pct}%</span>}
+                    {emp.billability_pct != null && <span className="ab-tag ab-tag--bill">Bill: {emp.billability_pct}%</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="ab-table-wrap ab-table-scroll">
+            <table className="ab-table">
+              <thead>
+                <tr>
+                  <th>Name</th><th>Designation</th><th>Project</th><th>Status</th>
+                  <th>Billing</th><th>Effort %</th><th>Billability %</th><th>Completion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="ab-tr-click" onClick={() => onEmployeeClick(r.employee_id)}>
+                    <td>{fmt(r.name)}</td>
+                    <td>{fmt(r.designation)}</td>
+                    <td>{fmt(r.project_name)}</td>
+                    <td>{fmt(r.project_status)}</td>
+                    <td>{fmt(r.billing)}</td>
+                    <td>{fmt(r.efforts_pct)}</td>
+                    <td>{fmt(r.billability_pct)}</td>
+                    <td>{fmt(r.completion_status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Employee (self) view ──────────────────────────────────────────────────────
 
 function SelfView({ data }) {
@@ -1069,7 +1126,7 @@ const ROLE_LABEL = {
 
 const ROLE_SUBTITLE = {
   executive:     'Executive View · Operational Intelligence Cockpit',
-  business_lead: 'Business Lead View',
+  business_lead: '',
   team_lead:     'Team Lead View',
   employee:      'Employee View',
 };
@@ -1084,6 +1141,8 @@ export default function AllocationBoard() {
   const [monthYear,       setMonthYear]       = useState(getCurrentMonthKey());
   const [availableMonths, setAvailableMonths] = useState([]);
   const [activeTab,       setActiveTab]       = useState('overview');
+  const [myTeamRows,      setMyTeamRows]      = useState([]);
+  const [myTeamLoaded,    setMyTeamLoaded]    = useState(false);
 
   const fetchBoard = useCallback(async (month) => {
     setLoading(true);
@@ -1117,6 +1176,15 @@ export default function AllocationBoard() {
     setMonthYear(m);
     fetchBoard(m);
   }, [fetchBoard]);
+
+  useEffect(() => {
+    if (activeTab === 'myteam' && !myTeamLoaded) {
+      getMyTeamAllocation()
+        .then(r => setMyTeamRows(r.team_rows || []))
+        .catch(() => setMyTeamRows([]))
+        .finally(() => setMyTeamLoaded(true));
+    }
+  }, [activeTab, myTeamLoaded]);
 
   const handleEmployeeClick = useCallback(async (employeeId) => {
     if (!employeeId) return;
@@ -1159,6 +1227,7 @@ export default function AllocationBoard() {
   const isLeadRole  = role === 'functional_lead' || role === 'business_lead';
   // executive has no personalised lead view — only show Lead View tab for other roles
   const hasLeadTab  = role !== 'executive';
+  const hasMyTeamTab = !!boardData.has_direct_reports;
 
   // Month timeline sits below header (65px) + tab bar (44px)
   const timelineTopOffset = 109;
@@ -1213,6 +1282,7 @@ export default function AllocationBoard() {
         {[
           { key: 'overview', label: 'Overview',  icon: 'fa-chart-pie' },
           ...(hasLeadTab ? [{ key: 'lead', label: 'Lead View', icon: 'fa-users' }] : []),
+          ...(hasMyTeamTab ? [{ key: 'myteam', label: 'My Team', icon: 'fa-user-friends' }] : []),
         ].map(tab => (
           <button
             key={tab.key}
@@ -1272,6 +1342,12 @@ export default function AllocationBoard() {
           {role === 'employee' && (
             <SelfView data={boardData} />
           )}
+        </div>
+      )}
+
+      {activeTab === 'myteam' && (
+        <div style={{ padding: '20px 24px' }}>
+          <MyTeamView rows={myTeamRows} onEmployeeClick={handleEmployeeClick} />
         </div>
       )}
     </div>

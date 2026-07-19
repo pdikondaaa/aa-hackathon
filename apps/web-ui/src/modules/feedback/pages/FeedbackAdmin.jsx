@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { getFeedback, updateFeedback, deleteFeedback } from '../services/feedbackService';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { getFeedbackForAdmin, updateFeedback, deleteFeedback } from '../services/feedbackService';
 
 const TYPES = [
   { id: 'improvement', label: 'Improvement',  icon: 'fa-arrow-up-right-dots', color: '#1D76BC' },
@@ -30,7 +30,8 @@ function StatCard({ icon, label, value, color }) {
 }
 
 export default function FeedbackAdmin({ user }) {
-  const [items, setItems]           = useState(getFeedback);
+  const [items, setItems]           = useState([]);
+  const [loading, setLoading]       = useState(true);
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [expanded, setExpanded]     = useState(null);
@@ -41,20 +42,26 @@ export default function FeedbackAdmin({ user }) {
 
   const flash = (msg) => { setSaveMsg(msg); setTimeout(() => setSaveMsg(''), 2500); };
 
-  const reload = () => setItems(getFeedback());
+  const reload = useCallback(() => {
+    return getFeedbackForAdmin({ limit: 200 }).then(setItems);
+  }, []);
 
-  const handleUpdate = (id) => {
-    updateFeedback(id, {
+  useEffect(() => {
+    reload().finally(() => setLoading(false));
+  }, [reload]);
+
+  const handleUpdate = async (id) => {
+    await updateFeedback(id, {
       status: statusDraft[id] || items.find(i => i.id === id)?.status,
       adminNotes: notesDraft[id] ?? items.find(i => i.id === id)?.adminNotes,
     });
-    reload();
+    await reload();
     flash('Feedback updated.');
   };
 
-  const handleDelete = (id) => {
-    deleteFeedback(id);
-    reload();
+  const handleDelete = async (id) => {
+    await deleteFeedback(id);
+    await reload();
     setDeleteConfirm(null);
     setExpanded(null);
     flash('Feedback deleted.');
@@ -127,7 +134,11 @@ export default function FeedbackAdmin({ user }) {
 
       {/* Table */}
       <div className="fb-card" style={{ padding: 0 }}>
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="fb-empty" style={{ padding: '48px 24px' }}>
+            <p>Loading…</p>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="fb-empty" style={{ padding: '48px 24px' }}>
             <i className="fas fa-inbox" style={{ fontSize: 32, marginBottom: 10, opacity: 0.25 }} />
             <p>No feedback matches the current filters.</p>

@@ -68,6 +68,23 @@ async def get_employee_detail(
     return data
 
 
+@router.get("/my-team")
+async def get_my_team(current_user: dict = Depends(get_current_user)):
+    """
+    Returns allocation details for the authenticated user's DIRECT REPORTS
+    ONLY, determined by an exact match on people.vb_employees.ReportingManagerEmail
+    (a real reporting-line check — independent of designation/role bucket).
+
+    Response: { team_rows: [...] } — empty list if the user has no direct reports.
+    Sensitive fields (Effort %, Billability %, Completion Status) are NOT masked,
+    since the viewer is the reports' actual manager.
+    """
+    try:
+        return allocation_agent.get_my_team(current_user["email"])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 class AskRequest(BaseModel):
     question: str
 
@@ -98,8 +115,9 @@ async def get_my_role(current_user: dict = Depends(get_current_user)):
     """
     Returns the authenticated user's designation and derived allocation role.
 
-    Response: { email, designation, role }
+    Response: { email, designation, role, has_direct_reports }
       - designation: from employee_details (null if user not in that table)
       - role: from allocation_role_map matched by designation (defaults to 'employee')
+      - has_direct_reports: true if the user is a real manager (reporting-line check)
     """
     return allocation_agent.get_role(current_user["email"])

@@ -34,6 +34,7 @@ import AnnouncementBanner from './components/AnnouncementBanner';
 import AnnouncementOverlay from './components/AnnouncementOverlay';
 import CommunicationsWidget from './components/CommunicationsWidget';
 import AttendancePage from './components/AttendancePage';
+import EmployeeDirectoryPage from './components/EmployeeDirectoryPage';
 import { FormBuilderAdmin, FormDesignerPage } from './modules/form-builder';
 import FormChatPanel from './modules/form-builder/components/FormChatPanel';
 import SlashCommandAdmin from './modules/form-builder/pages/SlashCommandAdmin';
@@ -284,6 +285,7 @@ export default function App() {
         onThemeToggle={() => setIsDark((d) => !d)}
         onLogout={handleLogout}
         onGoHome={handleGoHome}
+        onNavigate={setActiveNav}
       />
 
       {/* Global announcement banner — banner-mode, shown below TopBar */}
@@ -334,6 +336,8 @@ export default function App() {
           <CommunicationsPage user={user} />
         ) : activeNav === 'attendance' ? (
           <AttendancePage user={user} />
+        ) : activeNav === 'employeeDirectory' ? (
+          <EmployeeDirectoryPage user={user} />
         ) : activeNav === 'adminAnalytics' && user?.isAdmin ? (
           <AnalyticsDashboard user={user} />
         ) : activeNav === 'adminSettings' && user?.isAdmin ? (

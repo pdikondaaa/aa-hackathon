@@ -356,6 +356,21 @@ button, a, [role="button"] {
 .sidebar-history-item.active .sidebar-history-delete-btn { opacity: 1; }
 .sidebar-history-delete-btn:hover { color: #ef4444; background: rgba(239, 68, 68, 0.12); }
 
+.sidebar-load-more-btn {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.sidebar-load-more-btn:hover:not(:disabled) { background: var(--bg-card); color: var(--text); }
+.sidebar-load-more-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
 /* Chat history loading spinner */
 .chat-history-loading {
   display: flex;
@@ -6113,6 +6128,36 @@ button, a, [role="button"] {
 }
 
 .an-refresh-btn:hover { background: var(--bg-card); color: var(--text); }
+
+/* ── View tabs (Overview / Users) ──────────────────────────────────────── */
+.an-view-tabs-wrap {
+  padding: 12px 28px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.an-view-tabs { display: flex; gap: 4px; }
+
+.an-view-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  cursor: pointer;
+  transition: color 0.14s, border-color 0.14s;
+}
+
+.an-view-tab:hover { color: var(--text); }
+
+.an-view-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
 
 /* ── Content wrapper ─────────────────────────────────────────────────── */
 .an-content {
