@@ -1,10 +1,8 @@
 """
 COO Analytics service — Billable Projects scope only.
 All queries are scoped to billing = 'Billable' AND status_active_inactive = 'Active'.
-Only accessible to analytics roles (executive, business_lead, functional_lead).
 """
 from app.api.config.db_config import get_db_connection
-from app.api.services.allocation_service import get_user_profile, ANALYTICS_ROLES
 from app.utils.logging_config import get_logger
 
 logger = get_logger("coo_analytics_service")
@@ -40,10 +38,6 @@ def _f(val) -> float:
 
 
 def get_coo_dashboard(email: str, filters: dict | None = None) -> dict:
-    profile = get_user_profile(email)
-    if profile["role"] not in ANALYTICS_ROLES:
-        raise PermissionError("COO Analytics requires executive or business lead access.")
-
     filters = filters or {}
     extra_where, extra_params = _build_filter_where(filters)
     # Base scope: active + billable projects only
@@ -367,10 +361,6 @@ _ALLOWED_GROUP_KEYS = {'project_name', 'client_master', 'function', 'subfunction
 
 
 def get_raw_records(email: str, filters: dict, group_key: str = None, group_value: str = None, allocation_filter: str = None) -> list:
-    profile = get_user_profile(email)
-    if profile["role"] not in ANALYTICS_ROLES:
-        raise PermissionError("COO Analytics requires executive or business lead access.")
-
     filters = filters or {}
     extra_where, extra_params = _build_filter_where(filters)
     base = "ad.status_active_inactive = 'Active' AND ad.billing = 'Billable'"
@@ -413,12 +403,8 @@ def get_raw_records(email: str, filters: dict, group_key: str = None, group_valu
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_filter_options(email: str) -> dict:
+def get_filter_options() -> dict:
     """Returns filter dropdown options scoped to active billable records."""
-    profile = get_user_profile(email)
-    if profile["role"] not in ANALYTICS_ROLES:
-        raise PermissionError("Access denied.")
-
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             def _distinct(col):

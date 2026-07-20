@@ -172,9 +172,20 @@ export default function EmployeeDirectoryPage() {
     });
   }, [data, search, department, designation]);
 
+  const hasActiveFilters = Boolean(search || department || designation);
+
+  const resetFilters = () => {
+    setSearch('');
+    setDepartment('');
+    setDesignation('');
+  };
+
   const selectStyle = {
-    padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)',
+    padding: '9px 30px 9px 14px', borderRadius: 8, border: '1px solid var(--border)',
     background: 'var(--bg-card)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', outline: 'none',
+    appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
+    backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\' viewBox=\'0 0 10 6\'><path d=\'M1 1l4 4 4-4\' stroke=\'%2364748b\' stroke-width=\'1.5\' fill=\'none\' fill-rule=\'evenodd\'/></svg>")',
+    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 5px center',
   };
 
   return (
@@ -208,6 +219,19 @@ export default function EmployeeDirectoryPage() {
             <option value="">All Designations</option>
             {(data?.filter_options?.designations || []).map(d => <option key={d} value={d}>{d}</option>)}
           </select>
+          {hasActiveFilters && (
+            <button
+              onClick={resetFilters}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 8,
+                border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)',
+                fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              <i className="fas fa-rotate-left" style={{ fontSize: 12 }} />
+              Reset
+            </button>
+          )}
         </div>
       </div>
 

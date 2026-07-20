@@ -6,6 +6,9 @@ import { isDocumentMessage, downloadDocument, printDocument } from '../utils/doc
 
 const EmailDraftCard = ({ draft }) => {
   const [to, setTo]           = useState(draft.to);
+  const [cc, setCc]           = useState(draft.cc || '');
+  const [bcc, setBcc]         = useState(draft.bcc || '');
+  const [showCcBcc, setShowCcBcc] = useState(Boolean(draft.cc || draft.bcc));
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody]       = useState(draft.body);
   const [status, setStatus]   = useState('idle'); // idle | sending | sent | error
@@ -16,7 +19,10 @@ const EmailDraftCard = ({ draft }) => {
     setStatus('sending');
     setErrorMsg('');
     try {
-      await sendEmailViaGraph(to.trim(), subject.trim(), body.trim());
+      await sendEmailViaGraph(to.trim(), subject.trim(), body.trim(), {
+        cc: cc.trim(),
+        bcc: bcc.trim(),
+      });
       setStatus('sent');
     } catch (err) {
       setErrorMsg(err?.message || 'Failed to send email. Please try again.');
@@ -35,7 +41,19 @@ const EmailDraftCard = ({ draft }) => {
 
       <div className="email-draft-fields">
         <div className="email-draft-field">
-          <label className="email-draft-label">To</label>
+          <div className="email-draft-label-row">
+            <label className="email-draft-label">To</label>
+            {!showCcBcc && (
+              <button
+                type="button"
+                className="email-draft-ccbcc-toggle"
+                onClick={() => setShowCcBcc(true)}
+                disabled={status === 'sent'}
+              >
+                Cc/Bcc
+              </button>
+            )}
+          </div>
           <input
             className="email-draft-input"
             type="email"
@@ -45,6 +63,32 @@ const EmailDraftCard = ({ draft }) => {
             disabled={status === 'sent'}
           />
         </div>
+        {showCcBcc && (
+          <>
+            <div className="email-draft-field">
+              <label className="email-draft-label">Cc</label>
+              <input
+                className="email-draft-input"
+                type="email"
+                value={cc}
+                onChange={e => setCc(e.target.value)}
+                placeholder="cc@example.com"
+                disabled={status === 'sent'}
+              />
+            </div>
+            <div className="email-draft-field">
+              <label className="email-draft-label">Bcc</label>
+              <input
+                className="email-draft-input"
+                type="email"
+                value={bcc}
+                onChange={e => setBcc(e.target.value)}
+                placeholder="bcc@example.com"
+                disabled={status === 'sent'}
+              />
+            </div>
+          </>
+        )}
         <div className="email-draft-field">
           <label className="email-draft-label">Subject</label>
           <input

@@ -1,12 +1,7 @@
 import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser';
 import { msalConfig, loginRequest, graphRequest, graphConfig, plannerRequest, calendarRequest, mailRequest } from '../config/authConfig';
-import {
-  isUserAuthorized,
-  getUserRole,
-  getUserPermissions,
-  getAvailableAgents,
-  canAccessAdminPanel,
-} from '../config/userConfig';
+import { isUserAuthorized, getPermissionsForRole } from '../config/userConfig';
+import { getMyRole } from '../services/api';
 
 export const msalInstance = new PublicClientApplication(msalConfig);
 
@@ -281,7 +276,16 @@ async function acquireMailToken() {
   }
 }
 
-export async function sendEmailViaGraph(to, subject, body) {
+function parseRecipients(value) {
+  if (!value) return [];
+  return value
+    .split(/[,;]/)
+    .map(addr => addr.trim())
+    .filter(Boolean)
+    .map(address => ({ emailAddress: { address } }));
+}
+
+export async function sendEmailViaGraph(to, subject, body, { cc = '', bcc = '' } = {}) {
   const token = await acquireMailToken();
   if (!token) throw new Error('Mail.Send consent is required. Please accept the permission popup and try again.');
 
@@ -289,6 +293,9 @@ export async function sendEmailViaGraph(to, subject, body) {
   const claims   = account?.idTokenClaims || {};
   const fromAddr = claims.preferred_username || claims.email || account?.username || '';
   const fromName = claims.name || account?.name || '';
+
+  const ccRecipients  = parseRecipients(cc);
+  const bccRecipients = parseRecipients(bcc);
 
   const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
     method: 'POST',
@@ -301,6 +308,8 @@ export async function sendEmailViaGraph(to, subject, body) {
         subject,
         body: { contentType: 'Text', content: body },
         toRecipients: [{ emailAddress: { address: to } }],
+        ...(ccRecipients.length  ? { ccRecipients }  : {}),
+        ...(bccRecipients.length ? { bccRecipients } : {}),
         from: { emailAddress: { name: fromName, address: fromAddr } },
       },
       saveToSentItems: 'true',
@@ -329,17 +338,19 @@ export function checkUserAuthorization(userEmail) {
 }
 
 /**
- * Get user's role and permissions
+ * Get user's role and permissions from the backend (app_users table).
  * @param {string} userEmail - User's email/UPN
- * @returns {object} User info with role and permissions
+ * @returns {Promise<object>} User info with role and permissions
  */
-export function getUserInfo(userEmail) {
+export async function getUserInfo(userEmail) {
+  const { role } = await getMyRole();
+  const permissions = getPermissionsForRole(role);
   return {
     email: userEmail,
-    role: getUserRole(userEmail),
-    permissions: getUserPermissions(userEmail),
-    availableAgents: getAvailableAgents(userEmail),
-    isAdmin: canAccessAdminPanel(userEmail),
+    role,
+    permissions,
+    availableAgents: permissions.agents,
+    isAdmin: permissions.canAccessAdminPanel,
   };
 }
 

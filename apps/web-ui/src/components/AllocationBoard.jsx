@@ -556,20 +556,14 @@ function ExecutiveView({ data, onEmployeeClick }) {
 
 // ── Functional Lead / Business Lead view ──────────────────────────────────────
 
-function LeadView({ data, onEmployeeClick, role }) {
+function LeadView({ data, onEmployeeClick }) {
   const { allocation_rows, user_name } = data;
   const [teamModal, setTeamModal]       = useState(null);
   const [projectModal, setProjectModal] = useState(null);
 
-  const myTeam = useMemo(() =>
-    (allocation_rows || []).filter(r => nameMatch(r.functional_manager, user_name)),
-    [allocation_rows, user_name]
-  );
+  const myTeam = useMemo(() => allocation_rows || [], [allocation_rows]);
 
-  const reportees = useMemo(() =>
-    (allocation_rows || []).filter(r => nameMatch(r.reporting_manager, user_name)),
-    [allocation_rows, user_name]
-  );
+  const reportees = useMemo(() => allocation_rows || [], [allocation_rows]);
 
   const availablePool = useMemo(() =>
     myTeam.filter(r => r.efforts_pct == null || r.efforts_pct < 100),
@@ -582,7 +576,6 @@ function LeadView({ data, onEmployeeClick, role }) {
   );
 
   const myProjects = useMemo(() => {
-    if (role !== 'business_lead') return [];
     const projectMap = {};
     for (const r of (allocation_rows || [])) {
       if (nameMatch(r.project_lead, user_name) || nameMatch(r.delivery_manager, user_name)) {
@@ -592,7 +585,7 @@ function LeadView({ data, onEmployeeClick, role }) {
       }
     }
     return Object.values(projectMap).sort((a, b) => b.resources.length - a.resources.length);
-  }, [allocation_rows, user_name, role]);
+  }, [allocation_rows, user_name]);
 
   const COL_LABELS = {
     name: 'Name', designation: 'Designation', function: 'Function',
@@ -758,24 +751,22 @@ function LeadView({ data, onEmployeeClick, role }) {
         )}
       </div>
 
-      {/* Business Lead: My Projects */}
-      {role === 'business_lead' && (
-        <div className="ab-lead-section">
-          <div className="ab-section-label">My Projects ({myProjects.length})</div>
-          {myProjects.length === 0 ? (
-            <p className="ab-empty">No projects found where you are Project Lead or Delivery Manager.</p>
-          ) : (
-            <div className="ab-project-cards">
-              {myProjects.map((proj, i) => (
-                <div key={i} className="ab-project-card" onClick={() => setProjectModal(proj)}>
-                  <div className="ab-project-name">{proj.project_name}</div>
-                  <div className="ab-project-count">{proj.resources.length} resource{proj.resources.length !== 1 ? 's' : ''}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* My Projects */}
+      <div className="ab-lead-section">
+        <div className="ab-section-label">My Projects ({myProjects.length})</div>
+        {myProjects.length === 0 ? (
+          <p className="ab-empty">No projects found where you are Project Lead or Delivery Manager.</p>
+        ) : (
+          <div className="ab-project-cards">
+            {myProjects.map((proj, i) => (
+              <div key={i} className="ab-project-card" onClick={() => setProjectModal(proj)}>
+                <div className="ab-project-name">{proj.project_name}</div>
+                <div className="ab-project-count">{proj.resources.length} resource{proj.resources.length !== 1 ? 's' : ''}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Team / reportees drill modal */}
       {teamModal && (
@@ -1334,7 +1325,7 @@ export default function AllocationBoard() {
             </div>
           )}
           {isLeadRole && (
-            <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={role} />
+            <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} />
           )}
           {role === 'team_lead' && (
             <TeamView data={boardData} onEmployeeClick={handleEmployeeClick} />

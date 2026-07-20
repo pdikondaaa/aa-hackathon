@@ -496,4 +496,22 @@ export async function adminDeleteEvent(id) {
   return httpClient.delete(`/api/admin/communications/events/${id}`);
 }
 
+// ── User roles / admin access ───────────────────────────────────────────────
+
+export async function getMyRole() {
+  return httpClient.get('/api/users/me/role');
+}
+
+export async function adminListUsers() {
+  return httpClient.get('/api/admin/users');
+}
+
+export async function adminSetUserRole(email, role) {
+  return httpClient.put(`/api/admin/users/${encodeURIComponent(email)}`, { role });
+}
+
+export async function adminRemoveUser(email) {
+  return httpClient.delete(`/api/admin/users/${encodeURIComponent(email)}`);
+}
+
 export default httpClient;

@@ -21,7 +21,6 @@ async def coo_dashboard(
 ):
     """
     Returns comprehensive COO analytics data.
-    Restricted to executive, business_lead, and functional_lead roles.
     All filters are optional — omit to get full company view.
     """
     filters = {k: v for k, v in {
@@ -31,8 +30,6 @@ async def coo_dashboard(
     }.items() if v}
     try:
         return get_coo_dashboard(current_user["email"], filters)
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -59,8 +56,6 @@ async def coo_raw_records(
     }.items() if v}
     try:
         return get_raw_records(current_user["email"], filters, group_key, group_value, allocation_filter)
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -69,8 +64,6 @@ async def coo_raw_records(
 async def coo_filter_options(current_user: dict = Depends(get_current_user)):
     """Returns available dropdown options for COO Dashboard global filters."""
     try:
-        return get_filter_options(current_user["email"])
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        return get_filter_options()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

@@ -1,16 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { listConversations, deleteConversation } from '../services/api';
 
-const ALLOCATION_BOARD_ROLES = new Set(['team_lead', 'functional_lead', 'business_lead', 'executive', 'admin']);
-const COO_ANALYTICS_ROLES    = new Set(['business_lead', 'executive', 'admin']);
 const HISTORY_PAGE_SIZE = 20;
 
 const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole, user }) => {
   const { navigation, labels, app } = config;
 
   const visibleNav = navigation.filter(item => {
-    if (item.id === 'allocationBoard') return ALLOCATION_BOARD_ROLES.has(allocationRole);
-    if (item.id === 'cooAnalytics')   return COO_ANALYTICS_ROLES.has(allocationRole);
     if (item.id === 'admin')          return user?.isAdmin;
     return true;
   });

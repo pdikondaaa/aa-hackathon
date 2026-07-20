@@ -58,6 +58,8 @@ from app.api.controllers.form_builder_controller import pub_router as ncl_pub_ro
 from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
 from app.api.controllers.form_builder_controller import pub_router as ncl_pub_router
 from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
+from app.api.controllers.admin_users_controller import router as app_users_router
+from app.api.controllers.admin_users_controller import admin_router as admin_users_router
 
 
 tags_metadata = [
@@ -133,3 +135,5 @@ app.include_router(skills_router)
 app.include_router(employee_directory_router)
 app.include_router(ncl_pub_router)
 app.include_router(ncl_admin_router)
+app.include_router(app_users_router)
+app.include_router(admin_users_router)

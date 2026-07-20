@@ -2335,6 +2335,33 @@ button, a, [role="button"] {
   color: var(--text-muted);
 }
 
+.email-draft-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.email-draft-ccbcc-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.email-draft-ccbcc-toggle:hover {
+  text-decoration: underline;
+}
+
+.email-draft-ccbcc-toggle:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
 .email-draft-input {
   background: var(--bg-card);
   border: 1px solid var(--border);

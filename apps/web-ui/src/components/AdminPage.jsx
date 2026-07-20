@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { getAllUsers, ROLES, updateUserRole } from '../config/userConfig';
+import React, { useState, useEffect } from 'react';
+import { ROLES, getPermissionsForRole } from '../config/userConfig';
 import { apiConfig } from '../config/apiConfig';
 import { chatConfig as appConfig } from '../config/chatConfig';
+import { adminListUsers, adminSetUserRole, adminRemoveUser } from '../services/api';
 
 const ROLE_COLORS = {
   admin: '#f05252',
@@ -20,20 +21,62 @@ const ROLE_LABELS = {
 };
 
 export default function AdminPage({ user }) {
-  const [users, setUsers]           = useState(getAllUsers());
+  const [users, setUsers]               = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [loadError, setLoadError]       = useState('');
   const [editingEmail, setEditingEmail] = useState(null);
   const [pendingRole, setPendingRole]   = useState('');
   const [saveMsg, setSaveMsg]           = useState('');
+  const [newEmail, setNewEmail]         = useState('');
+  const [newRole, setNewRole]           = useState(ROLES.USER);
+  const [addError, setAddError]         = useState('');
+
+  const loadUsers = () => {
+    setLoading(true);
+    setLoadError('');
+    return adminListUsers()
+      .then(res => setUsers(res.users || []))
+      .catch(err => setLoadError(err.message || 'Failed to load users'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadUsers(); }, []);
+
+  const flash = (msg) => {
+    setSaveMsg(msg);
+    setTimeout(() => setSaveMsg(''), 3000);
+  };
 
   const saveRole = (email) => {
-    if (pendingRole && pendingRole !== users.find(u => u.email === email)?.role) {
-      updateUserRole(email, pendingRole);
-      setUsers(getAllUsers());
-      setSaveMsg(`Role updated for ${email}`);
-      setTimeout(() => setSaveMsg(''), 3000);
+    const current = users.find(u => u.email === email)?.role;
+    if (pendingRole && pendingRole !== current) {
+      adminSetUserRole(email, pendingRole)
+        .then(() => { flash(`Role updated for ${email}`); return loadUsers(); })
+        .catch(err => flash(err.message || `Failed to update ${email}`));
     }
     setEditingEmail(null);
     setPendingRole('');
+  };
+
+  const removeUser = (email) => {
+    adminRemoveUser(email)
+      .then(() => { flash(`Removed ${email}`); return loadUsers(); })
+      .catch(err => flash(err.message || `Failed to remove ${email}`));
+  };
+
+  const addUser = (e) => {
+    e.preventDefault();
+    const email = newEmail.trim().toLowerCase();
+    if (!email) return;
+    setAddError('');
+    adminSetUserRole(email, newRole)
+      .then(() => {
+        flash(`${email} added as ${ROLE_LABELS[newRole]}`);
+        setNewEmail('');
+        setNewRole(ROLES.USER);
+        return loadUsers();
+      })
+      .catch(err => setAddError(err.message || `Failed to add ${email}`));
   };
 
   return (
@@ -60,6 +103,38 @@ export default function AdminPage({ user }) {
             <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{users.length} users</span>
           </div>
 
+          <form onSubmit={addUser} style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'flex-start' }}>
+            <input
+              type="email"
+              required
+              placeholder="email@alignedautomation.com"
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              style={{ flex: 1, maxWidth: 320, background: 'var(--bg-elevated)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', fontSize: 13 }}
+            />
+            <select
+              value={newRole}
+              onChange={e => setNewRole(e.target.value)}
+              style={{ background: 'var(--bg-elevated)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 10px', fontSize: 13 }}
+            >
+              {Object.values(ROLES).map(r => (
+                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+              ))}
+            </select>
+            <button type="submit" style={{ background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+              <i className="fas fa-plus" style={{ marginRight: 6 }} />Add User
+            </button>
+          </form>
+          {addError && (
+            <div style={{ color: 'var(--error, #f05252)', fontSize: 12, marginBottom: 16 }}>{addError}</div>
+          )}
+
+          {loadError && (
+            <div style={{ background: 'rgba(240,82,82,0.1)', border: '1px solid #f05252', borderRadius: 8, padding: '10px 16px', marginBottom: 20, color: '#f05252', fontSize: 13 }}>
+              {loadError}
+            </div>
+          )}
+
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', marginBottom: 32 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -70,7 +145,10 @@ export default function AdminPage({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {users.map(({ email, role, permissions }) => {
+                {loading ? (
+                  <tr><td colSpan={5} style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)' }}>Loading…</td></tr>
+                ) : users.map(({ email, role }) => {
+                  const permissions = getPermissionsForRole(role);
                   const isCurrentUser = email === user?.email;
                   const isEditing = editingEmail === email;
                   return (
@@ -116,14 +194,24 @@ export default function AdminPage({ user }) {
                             </button>
                           </div>
                         ) : (
-                          <button
-                            onClick={() => { setEditingEmail(email); setPendingRole(role); }}
-                            disabled={isCurrentUser}
-                            title={isCurrentUser ? 'Cannot edit your own role' : 'Edit role'}
-                            style={{ background: 'none', color: isCurrentUser ? 'var(--text-muted)' : 'var(--primary)', border: `1px solid ${isCurrentUser ? 'var(--border)' : 'var(--primary)'}`, borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: isCurrentUser ? 'default' : 'pointer', opacity: isCurrentUser ? 0.5 : 1 }}
-                          >
-                            <i className="fas fa-pen" style={{ marginRight: 5 }} />Edit
-                          </button>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              onClick={() => { setEditingEmail(email); setPendingRole(role); }}
+                              disabled={isCurrentUser}
+                              title={isCurrentUser ? 'Cannot edit your own role' : 'Edit role'}
+                              style={{ background: 'none', color: isCurrentUser ? 'var(--text-muted)' : 'var(--primary)', border: `1px solid ${isCurrentUser ? 'var(--border)' : 'var(--primary)'}`, borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: isCurrentUser ? 'default' : 'pointer', opacity: isCurrentUser ? 0.5 : 1 }}
+                            >
+                              <i className="fas fa-pen" style={{ marginRight: 5 }} />Edit
+                            </button>
+                            <button
+                              onClick={() => removeUser(email)}
+                              disabled={isCurrentUser}
+                              title={isCurrentUser ? 'Cannot remove yourself' : 'Remove'}
+                              style={{ background: 'none', color: isCurrentUser ? 'var(--text-muted)' : '#f05252', border: `1px solid ${isCurrentUser ? 'var(--border)' : '#f05252'}`, borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: isCurrentUser ? 'default' : 'pointer', opacity: isCurrentUser ? 0.5 : 1 }}
+                            >
+                              <i className="fas fa-trash" style={{ marginRight: 5 }} />Remove
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -193,4 +281,3 @@ function SettingsCard({ title, children }) {
     </div>
   );
 }
-

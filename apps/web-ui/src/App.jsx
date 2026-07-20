@@ -57,7 +57,7 @@ async function restoreSession(setUser, setAuthError, setAuthLoading) {
       return;
     }
 
-    const userInfo = getUserInfo(userEmail);
+    const userInfo = await getUserInfo(userEmail);
     setUser({
       ...buildUser(profile),
       role:            userInfo.role,
@@ -154,7 +154,7 @@ export default function App() {
           }
           
           // Store user info with their role and permissions
-          const userInfo = getUserInfo(userEmail);
+          const userInfo = await getUserInfo(userEmail);
           const userWithInfo = {
             ...buildUser(profile),
             role: userInfo.role,
