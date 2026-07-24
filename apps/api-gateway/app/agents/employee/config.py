@@ -85,8 +85,6 @@ SUMMARY_FIELDS = [
     (COL_DESIGNATION,       "Title"),
     (COL_DEPARTMENT,        "Department"),
     (COL_EMAIL,             "Email"),
-    (COL_WORK_PHONE,        "Work Phone"),
-    (COL_MOBILE,            "Mobile"),
     (COL_LOCATION_NAME,     "Location"),
     (COL_REPORTING_MANAGER, "Reports To"),
     (COL_EMPLOYEE_STATUS,   "Status"),
@@ -96,13 +94,22 @@ SUMMARY_FIELDS = [
 # Fields hidden in the full single-employee detail card (PII / sensitive)
 # ---------------------------------------------------------------------------
 HIDDEN_DETAIL_COLUMNS = {
+    # Government / tax IDs — never expose
     COL_AADHAR,
     COL_PAN,
     COL_UAN,
     COL_PASSPORT_NUMBER,
     COL_PASSPORT_EXPIRY,
-    COL_PHOTO,
+    # Personal contact & identity — hidden for third-party lookups; shown only for self
+    COL_MOBILE,
+    COL_WORK_PHONE,
     COL_PERSONAL_EMAIL,
+    COL_DOB,
+    COL_MARITAL_STATUS,
+    COL_PRESENT_ADDRESS,
+    COL_PERMANENT_ADDRESS,
+    # Misc internal / media
+    COL_PHOTO,
     "DependentEmergencyDetails",
     "InsuranceDetails",
     "Functional_Manager.ID",
@@ -111,5 +118,5 @@ HIDDEN_DETAIL_COLUMNS = {
     "AddedTime",
     "ModifiedBy",
     "ModifiedTime",
-    "employee_id",          # internal duplicate of EmployeeId
+    "employee_id",
 }

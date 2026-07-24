@@ -153,6 +153,34 @@ CREATE INDEX IF NOT EXISTS idx_feedback_rating  ON feedback(rating, created_at D
 
 
 -- =========================================================
+-- TABLE: product_feedback
+-- =========================================================
+CREATE TABLE IF NOT EXISTS product_feedback (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID NOT NULL REFERENCES users(id),
+    type         VARCHAR(30)  NOT NULL,
+                 -- improvement | bug | suggestion | compliment
+    module       VARCHAR(100),
+    title        VARCHAR(120) NOT NULL,
+    description  TEXT NOT NULL,
+    rating       SMALLINT NOT NULL DEFAULT 0,
+    status       VARCHAR(20) NOT NULL DEFAULT 'open',
+                 -- open | reviewed | resolved | closed
+    admin_notes  TEXT,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at  TIMESTAMP,
+
+    CONSTRAINT chk_product_feedback_type   CHECK (type IN ('improvement', 'bug', 'suggestion', 'compliment')),
+    CONSTRAINT chk_product_feedback_status CHECK (status IN ('open', 'reviewed', 'resolved', 'closed')),
+    CONSTRAINT chk_product_feedback_rating CHECK (rating BETWEEN 0 AND 5)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_feedback_created ON product_feedback(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_feedback_user    ON product_feedback(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_feedback_status  ON product_feedback(status, created_at DESC);
+
+
+-- =========================================================
 -- TABLE: documents
 -- =========================================================
 CREATE TABLE IF NOT EXISTS documents (
@@ -547,6 +575,379 @@ CREATE TABLE IF NOT EXISTS allocation_role_map (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alloc_role_desig ON allocation_role_map(designation);
+
+
+-- =========================================================
+-- NCL: NO-CODE / LOW-CODE PLATFORM
+-- Form Builder · Workflow Engine · Rule Engine · Chat Integration
+-- All tables prefixed with ncl_ to avoid naming collisions.
+-- =========================================================
+
+
+-- =========================================================
+-- TABLE: ncl_form_definitions
+-- Master record for every form created by administrators.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_definitions (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                VARCHAR(255) NOT NULL,
+    slug                VARCHAR(255) NOT NULL UNIQUE,
+    description         TEXT,
+    category            VARCHAR(100),
+    -- lifecycle: draft | published | archived
+    status              VARCHAR(50)  NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft', 'published', 'archived')),
+    version             INT          NOT NULL DEFAULT 1,
+    -- discovery metadata used by slash-command search
+    tags                TEXT[],
+    keywords            TEXT[],
+    alias               VARCHAR(255),
+    icon                VARCHAR(100),
+    -- form-level UX settings: submit_label, width, theme, success_message, etc.
+    settings            JSONB        NOT NULL DEFAULT '{{}}',
+    -- empty array = visible to all roles
+    allowed_roles       TEXT[],
+    created_by_user_id  VARCHAR(255) NOT NULL,
+    created_by_email    VARCHAR(255) NOT NULL,
+    updated_by_user_id  VARCHAR(255),
+    updated_by_email    VARCHAR(255),
+    published_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_forms_status   ON ncl_form_definitions (status);
+CREATE INDEX IF NOT EXISTS idx_ncl_forms_slug     ON ncl_form_definitions (slug);
+CREATE INDEX IF NOT EXISTS idx_ncl_forms_category ON ncl_form_definitions (category);
+CREATE INDEX IF NOT EXISTS idx_ncl_forms_creator  ON ncl_form_definitions (created_by_email);
+
+
+-- =========================================================
+-- TABLE: ncl_form_sections
+-- Logical layout sections within a form.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_sections (
+    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id     UUID         NOT NULL REFERENCES ncl_form_definitions (id) ON DELETE CASCADE,
+    title       VARCHAR(255),
+    description TEXT,
+    order_index INT          NOT NULL DEFAULT 0,
+    collapsed   BOOLEAN      NOT NULL DEFAULT FALSE,
+    -- e.g. [{{"field": "dept", "operator": "eq", "value": "HR"}}]
+    conditions  JSONB        NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_sections_form ON ncl_form_sections (form_id);
+
+
+-- =========================================================
+-- TABLE: ncl_form_fields
+-- Individual field definitions within a form.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_fields (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id           UUID         NOT NULL REFERENCES ncl_form_definitions (id) ON DELETE CASCADE,
+    section_id        UUID         REFERENCES ncl_form_sections (id) ON DELETE SET NULL,
+    -- field_type: text | textarea | number | email | phone | url | date | datetime
+    --   time | dropdown | radio | checkbox | toggle | file | signature
+    --   richtext | rating | slider | heading | paragraph | divider | hidden
+    field_type        VARCHAR(100) NOT NULL,
+    label             VARCHAR(500) NOT NULL,
+    name              VARCHAR(255) NOT NULL,
+    placeholder       TEXT,
+    help_text         TEXT,
+    default_value     TEXT,
+    required          BOOLEAN      NOT NULL DEFAULT FALSE,
+    read_only         BOOLEAN      NOT NULL DEFAULT FALSE,
+    hidden            BOOLEAN      NOT NULL DEFAULT FALSE,
+    order_index       INT          NOT NULL DEFAULT 0,
+    -- full | half | third | quarter
+    width             VARCHAR(50)  NOT NULL DEFAULT 'full',
+    -- [{{"label": "Option A", "value": "a"}}]
+    options           JSONB        NOT NULL DEFAULT '[]',
+    -- min, max, minLength, maxLength, pattern, customMessage
+    validation_rules  JSONB        NOT NULL DEFAULT '{{}}',
+    -- [{{"when": {{"field": "x", "op": "eq", "value": "y"}}, "then": {{"action": "show"}}}}]
+    conditional_logic JSONB        NOT NULL DEFAULT '[]',
+    -- JS-style expression for calculated fields
+    formula           TEXT,
+    style             JSONB        NOT NULL DEFAULT '{{}}',
+    metadata          JSONB        NOT NULL DEFAULT '{{}}',
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_fields_form    ON ncl_form_fields (form_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_fields_section ON ncl_form_fields (section_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_fields_order   ON ncl_form_fields (form_id, order_index);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ncl_fields_name_per_form ON ncl_form_fields (form_id, name);
+
+
+-- =========================================================
+-- TABLE: ncl_form_versions
+-- Immutable snapshots taken every time a form is published.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_versions (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id             UUID         NOT NULL REFERENCES ncl_form_definitions (id) ON DELETE CASCADE,
+    version             INT          NOT NULL,
+    snapshot            JSONB        NOT NULL,
+    change_notes        TEXT,
+    created_by_user_id  VARCHAR(255) NOT NULL,
+    created_by_email    VARCHAR(255) NOT NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (form_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_versions_form ON ncl_form_versions (form_id);
+
+
+-- =========================================================
+-- TABLE: ncl_form_roles
+-- Per-form role-based access control matrix.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_roles (
+    id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id               UUID         NOT NULL REFERENCES ncl_form_definitions (id) ON DELETE CASCADE,
+    role_name             VARCHAR(100) NOT NULL,
+    can_submit            BOOLEAN      NOT NULL DEFAULT TRUE,
+    can_view_own          BOOLEAN      NOT NULL DEFAULT TRUE,
+    can_view_all          BOOLEAN      NOT NULL DEFAULT FALSE,
+    can_edit_submissions  BOOLEAN      NOT NULL DEFAULT FALSE,
+    can_approve           BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (form_id, role_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_roles_form ON ncl_form_roles (form_id);
+
+
+-- =========================================================
+-- TABLE: ncl_form_submissions
+-- Every submitted instance of a form.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_submissions (
+    id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id               UUID         NOT NULL REFERENCES ncl_form_definitions (id),
+    form_version          INT          NOT NULL DEFAULT 1,
+    submitted_by_user_id  VARCHAR(255) NOT NULL,
+    submitted_by_email    VARCHAR(255) NOT NULL,
+    submitted_by_name     VARCHAR(255),
+    -- submitted | in_review | approved | rejected | withdrawn
+    status                VARCHAR(50)  NOT NULL DEFAULT 'submitted'
+                          CHECK (status IN ('submitted', 'in_review', 'approved', 'rejected', 'withdrawn')),
+    -- key-value map: {{field_name: value}}
+    data                  JSONB        NOT NULL DEFAULT '{{}}',
+    -- source (chat | form_page), conversation_id, pre_filled, etc.
+    metadata              JSONB        NOT NULL DEFAULT '{{}}',
+    reviewed_by_user_id   VARCHAR(255),
+    reviewed_by_email     VARCHAR(255),
+    reviewed_at           TIMESTAMPTZ,
+    review_notes          TEXT,
+    ip_address            VARCHAR(50),
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_subs_form       ON ncl_form_submissions (form_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_subs_submitter  ON ncl_form_submissions (submitted_by_email);
+CREATE INDEX IF NOT EXISTS idx_ncl_subs_status     ON ncl_form_submissions (status);
+CREATE INDEX IF NOT EXISTS idx_ncl_subs_created    ON ncl_form_submissions (created_at DESC);
+
+
+-- =========================================================
+-- TABLE: ncl_workflow_definitions
+-- Blueprint for an automation workflow attached to a form.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_workflow_definitions (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id             UUID         REFERENCES ncl_form_definitions (id) ON DELETE SET NULL,
+    name                VARCHAR(255) NOT NULL,
+    description         TEXT,
+    -- on_submit | on_status_change | manual
+    trigger_event       VARCHAR(100) NOT NULL DEFAULT 'on_submit',
+    trigger_conditions  JSONB        NOT NULL DEFAULT '{{}}',
+    -- [{{"id": "s1", "type": "approval", "name": "Manager Approval", "config": {{...}}}}]
+    -- step types: approval | email | webhook | api_call | condition | notification | delay
+    steps               JSONB        NOT NULL DEFAULT '[]',
+    status              VARCHAR(50)  NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'inactive')),
+    created_by_user_id  VARCHAR(255) NOT NULL,
+    created_by_email    VARCHAR(255) NOT NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_wf_defs_form   ON ncl_workflow_definitions (form_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_wf_defs_status ON ncl_workflow_definitions (status);
+
+
+-- =========================================================
+-- TABLE: ncl_workflow_instances
+-- A running or completed execution of a workflow definition.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_workflow_instances (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    workflow_def_id    UUID         NOT NULL REFERENCES ncl_workflow_definitions (id),
+    submission_id      UUID         REFERENCES ncl_form_submissions (id),
+    -- running | waiting_approval | completed | failed | cancelled
+    status             VARCHAR(50)  NOT NULL DEFAULT 'running',
+    current_step_index INT          NOT NULL DEFAULT 0,
+    context            JSONB        NOT NULL DEFAULT '{{}}',
+    error_message      TEXT,
+    started_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_wf_inst_def        ON ncl_workflow_instances (workflow_def_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_wf_inst_submission ON ncl_workflow_instances (submission_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_wf_inst_status     ON ncl_workflow_instances (status);
+
+
+-- =========================================================
+-- TABLE: ncl_workflow_step_logs
+-- Per-step execution record for a workflow instance.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_workflow_step_logs (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id          UUID         NOT NULL REFERENCES ncl_workflow_instances (id) ON DELETE CASCADE,
+    step_index           INT          NOT NULL,
+    step_type            VARCHAR(100) NOT NULL,
+    step_name            VARCHAR(255),
+    -- pending | running | completed | failed | skipped | waiting
+    status               VARCHAR(50)  NOT NULL DEFAULT 'pending',
+    input_data           JSONB        NOT NULL DEFAULT '{{}}',
+    output_data          JSONB        NOT NULL DEFAULT '{{}}',
+    error_message        TEXT,
+    executed_by_user_id  VARCHAR(255),
+    executed_by_email    VARCHAR(255),
+    started_at           TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at         TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_step_logs_instance ON ncl_workflow_step_logs (instance_id);
+
+
+-- =========================================================
+-- TABLE: ncl_rule_definitions
+-- Business rules for forms (visibility, validation,
+-- calculation, notification).
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_rule_definitions (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    form_id         UUID         NOT NULL REFERENCES ncl_form_definitions (id) ON DELETE CASCADE,
+    name            VARCHAR(255) NOT NULL,
+    description     TEXT,
+    -- visibility | validation | calculation | notification
+    rule_type       VARCHAR(100) NOT NULL,
+    trigger_fields  TEXT[],
+    -- [{{"logic": "AND", "conditions": [{{"field": "x", "op": "gt", "value": 5}}]}}]
+    conditions      JSONB        NOT NULL DEFAULT '[]',
+    -- [{{"action": "show", "target": "field_name"}}, {{"action": "set_value", "target": "total", "expr": "qty * price"}}]
+    actions         JSONB        NOT NULL DEFAULT '[]',
+    priority        INT          NOT NULL DEFAULT 0,
+    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_rules_form   ON ncl_rule_definitions (form_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_rules_type   ON ncl_rule_definitions (rule_type);
+CREATE INDEX IF NOT EXISTS idx_ncl_rules_active ON ncl_rule_definitions (is_active);
+
+
+-- =========================================================
+-- TABLE: ncl_form_templates
+-- Reusable starter templates for the form designer.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_form_templates (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                VARCHAR(255) NOT NULL,
+    category            VARCHAR(100),
+    description         TEXT,
+    thumbnail_url       TEXT,
+    -- full form definition: {{sections, fields, settings}}
+    definition          JSONB        NOT NULL,
+    is_system           BOOLEAN      NOT NULL DEFAULT FALSE,
+    usage_count         INT          NOT NULL DEFAULT 0,
+    tags                TEXT[],
+    created_by_user_id  VARCHAR(255),
+    created_by_email    VARCHAR(255),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_templates_category  ON ncl_form_templates (category);
+CREATE INDEX IF NOT EXISTS idx_ncl_templates_is_system ON ncl_form_templates (is_system);
+
+
+-- =========================================================
+-- TABLE: ncl_audit_logs
+-- Immutable audit trail for all NCL platform actions.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_audit_logs (
+    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- ncl_form_definitions | ncl_form_submissions | ncl_workflow_instances | etc.
+    entity_type   VARCHAR(100) NOT NULL,
+    entity_id     UUID         NOT NULL,
+    -- created | updated | deleted | published | archived |
+    -- submitted | approved | rejected | withdrawn | step_executed
+    action        VARCHAR(100) NOT NULL,
+    actor_user_id VARCHAR(255) NOT NULL,
+    actor_email   VARCHAR(255) NOT NULL,
+    -- {{"before": {{...}}, "after": {{...}}}}
+    changes       JSONB        NOT NULL DEFAULT '{{}}',
+    ip_address    VARCHAR(50),
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_audit_entity ON ncl_audit_logs (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_ncl_audit_actor  ON ncl_audit_logs (actor_email);
+CREATE INDEX IF NOT EXISTS idx_ncl_audit_action ON ncl_audit_logs (action);
+CREATE INDEX IF NOT EXISTS idx_ncl_audit_time   ON ncl_audit_logs (created_at DESC);
+
+
+-- =========================================================
+-- TABLE: ncl_slash_commands
+-- Admin-configurable slash (/) commands for the chat UI.
+-- type = 'form'  → opens the linked published form in a panel
+-- type = 'url'   → opens the configured URL in a new browser tab
+-- =========================================================
+CREATE TABLE IF NOT EXISTS ncl_slash_commands (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- the keyword users type after "/" (e.g. "parking", "leave", "hr-portal")
+    command             VARCHAR(100) NOT NULL UNIQUE,
+    label               VARCHAR(255) NOT NULL,
+    description         TEXT,
+    -- 'form' | 'url' | 'builtin'
+    type                VARCHAR(20)  NOT NULL DEFAULT 'form'
+                        CHECK (type IN ('form', 'url', 'builtin')),
+    -- only set when type = 'form'
+    form_id             UUID         REFERENCES ncl_form_definitions (id) ON DELETE SET NULL,
+    -- only set when type = 'url'
+    url                 TEXT,
+    icon                VARCHAR(100),
+    is_active           BOOLEAN      NOT NULL DEFAULT TRUE,
+    order_index         INT          NOT NULL DEFAULT 0,
+    created_by_user_id  VARCHAR(255),
+    created_by_email    VARCHAR(255),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncl_slash_cmd_active  ON ncl_slash_commands (is_active);
+CREATE INDEX IF NOT EXISTS idx_ncl_slash_cmd_order   ON ncl_slash_commands (order_index);
+
+-- Migration: add url column for slash commands of type='url' (safe on existing tables)
+ALTER TABLE ncl_slash_commands ADD COLUMN IF NOT EXISTS url TEXT;
+
+-- Migration: add action column for slash commands of type='builtin' (safe on existing tables)
+ALTER TABLE ncl_slash_commands ADD COLUMN IF NOT EXISTS action VARCHAR(100);
+
+-- Migration: extend type check constraint to include 'builtin'
+ALTER TABLE ncl_slash_commands DROP CONSTRAINT IF EXISTS ncl_slash_commands_type_check;
+ALTER TABLE ncl_slash_commands ADD CONSTRAINT ncl_slash_commands_type_check CHECK (type IN ('form', 'url', 'builtin'));
 """.format(dim=settings.EMBEDDING_DIMENSION)
 
 

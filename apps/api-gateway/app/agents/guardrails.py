@@ -56,6 +56,12 @@ _ORG_BLOCKED = [
     # Another employee's pay — PII
     re.compile(r'\b(salary|ctc|compensation|pay|package|hike|increment)\s+(of|for)\s+[a-zA-Z]', re.IGNORECASE),
     re.compile(r'\bhow\s+much\s+does\s+\w+\s+(earn|make|get\s+paid|take\s+home)\b', re.IGNORECASE),
+    # Another employee's personal contact — PII
+    re.compile(r"\b(mobile|phone|cell)\s*(?:number|no\.?)?\s+(?:of|for)\s+[a-zA-Z]", re.IGNORECASE),
+    re.compile(r"[a-zA-Z][\w\s\-\.]{0,30}'s\s+(?:mobile|phone|cell)\b", re.IGNORECASE),
+    # Another employee's government / national IDs — PII
+    re.compile(r"\b(?:aadhar|aadhaar|passport\s+(?:number|no)|pan\s+(?:card|number|no))\s+(?:of|for)\s+[a-zA-Z]", re.IGNORECASE),
+    re.compile(r"[a-zA-Z][\w\s\-\.]{0,30}'s\s+(?:aadhar|aadhaar|passport|pan\s+(?:card|number))\b", re.IGNORECASE),
     # Legal advice
     re.compile(r'\b(legal\s+advice|sue\s+the\s+company|file\s+a\s+lawsuit|litigation|attorney|hire\s+a\s+lawyer)\b', re.IGNORECASE),
     # Personal / non-work
@@ -175,6 +181,7 @@ ORG_GUARDRAIL = """\
 **Organisational Guardrails (always apply)**
 - Stay within your assigned domain — if a query belongs to another department, name the correct department and stop; do not attempt to answer it
 - Never reveal or speculate about another employee's salary, CTC, compensation, bonus, or performance rating
+- Never reveal another employee's personal contact details (mobile number, personal email, home address) or government IDs (Aadhaar, PAN, Passport, UAN) — these are confidential regardless of who is asking
 - Never share confidential client names, contract values, revenue figures, or undisclosed business strategy
 - Do not give legal advice — direct all legal queries to the Legal/Compliance team
 - Do not speculate about company decisions, leadership intentions, or policies not yet announced

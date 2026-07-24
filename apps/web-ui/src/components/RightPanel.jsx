@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { listMyEscalations, getMyAttendance, getTodaysBirthdays } from '../services/api';
+import { listMyEscalations, getMyAttendance, getTodaysBirthdays, getTodaysAnniversaries } from '../services/api';
 import { fetchCalendarEvents } from '../utils/authService';
 
 const DOMAIN_COLORS = {
@@ -10,7 +10,7 @@ const DOMAIN_COLORS = {
 };
 
 
-const RightPanel = ({ config, onClose, onSendMessage, user }) => {
+const RightPanel = ({ config, onClose, onSendMessage, onNavigate, user }) => {
     const { stats, labels } = config;
 
   // ── Escalations state ─────────────────────────────────────────────────────
@@ -20,6 +20,26 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
   // ── Birthdays state ───────────────────────────────────────────────────────
   const [birthdays, setBirthdays] = useState([]);
   const [bdLoading, setBdLoading] = useState(true);
+
+  const WISH_KEY = `bd_wished_${new Date().toISOString().slice(0, 10)}`;
+  const [wishedSet, setWishedSet] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(WISH_KEY)) || []); }
+    catch { return new Set(); }
+  });
+
+  const handleWish = (person, teamsUrl) => {
+    const key = person.full_name;
+    if (wishedSet.has(key)) return;
+    const next = new Set(wishedSet);
+    next.add(key);
+    setWishedSet(next);
+    try { localStorage.setItem(WISH_KEY, JSON.stringify([...next])); } catch {}
+    window.open(teamsUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  // ── Anniversaries state ───────────────────────────────────────────────────
+  const [anniversaries, setAnniversaries] = useState([]);
+  const [annLoading, setAnnLoading] = useState(true);
 
   // ── Attendance state ──────────────────────────────────────────────────────
   const [attData, setAttData] = useState(null);
@@ -56,6 +76,18 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         console.error('Failed to load birthdays:', e);
       } finally {
         if (!cancelled) setBdLoading(false);
+      }
+    })();
+
+    // Load anniversaries
+    (async () => {
+      try {
+        const res = await getTodaysAnniversaries();
+        if (!cancelled) setAnniversaries(res?.anniversaries || []);
+      } catch (e) {
+        console.error('Failed to load anniversaries:', e);
+      } finally {
+        if (!cancelled) setAnnLoading(false);
       }
     })();
 
@@ -119,135 +151,7 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
         </button>
       </div>
 
-
-      {/* ── Attendance Details ────────────────────────────── */}
-      <section className="right-section">
-        <p className="right-section-label">ATTENDANCE</p>
-
-        {attLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : attError || !attData ? (
-          <p className="rp-empty-text">Could not load attendance data</p>
-        ) : (
-          <>
-            {/* Month tab switcher */}
-            <div className="att-tabs">
-              <button
-                className={`att-tab ${attTab === 'this' ? 'att-tab--active' : ''}`}
-                onClick={() => setAttTab('this')}
-              >
-                This Month
-              </button>
-              <button
-                className={`att-tab ${attTab === 'last' ? 'att-tab--active' : ''}`}
-                onClick={() => setAttTab('last')}
-              >
-                Last Month
-              </button>
-            </div>
-
-            {/* Month summary chips — days and hours are clickable */}
-            <div className="att-summary">
-              <button
-                className="att-summary-chip att-summary-chip--btn"
-                onClick={() => handleAttChipClick('days')}
-                title="Click to see attendance details in chat"
-              >
-                <span className="att-summary-val">{currentMonth.total_days}</span>
-                <span className="att-summary-lbl">days</span>
-              </button>
-              <button
-                className="att-summary-chip att-summary-chip--btn"
-                onClick={() => handleAttChipClick('hours')}
-                title="Click to see working hours in chat"
-              >
-                <span className="att-summary-val">{currentMonth.total_hours_label}</span>
-                <span className="att-summary-lbl">total hrs</span>
-              </button>
-              <div className="att-summary-chip">
-                <span className="att-summary-val">{currentMonth.month_label.split(' ')[0].slice(0, 3)}</span>
-                <span className="att-summary-lbl">{currentMonth.year}</span>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* ── Today's Birthdays ──────────────────────────────── */}
-      <section className="right-section">
-        <p className="right-section-label">
-          <i className="fas fa-birthday-cake" style={{ marginRight: 6, color: '#f472b6' }} />
-          TODAY'S BIRTHDAYS
-        </p>
-        {bdLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : birthdays.length === 0 ? (
-          <p className="rp-empty-text">No birthdays today 🎂</p>
-        ) : (
-          <ul className="birthday-list">
-            {birthdays.map((person, idx) => (
-              <li key={idx} className="birthday-card">
-                <div className="birthday-avatar">
-                  {person.first_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="birthday-info">
-                  <p className="birthday-name">{person.full_name}</p>
-                  {person.department && (
-                    <span className="birthday-dept">{person.department}</span>
-                  )}
-                </div>
-                <span className="birthday-emoji">🎉</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* ── Escalations ───────────────────────────────────── */}
-      <section className="right-section" style={{ borderBottom: 'none' }}>
-        <p className="right-section-label">{labels.escalations}</p>
-        {escLoading ? (
-          <p className="rp-loading-text">
-            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
-            Loading…
-          </p>
-        ) : escalations.length === 0 ? (
-          <p className="rp-empty-text">No escalations found</p>
-        ) : (
-          <ul className="escalation-list">
-            {escalations.map((esc) => {
-              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
-              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
-              return (
-                <li
-                  key={esc.id}
-                  className="escalation-card"
-                  style={{ borderLeftColor: domainColor }}
-                >
-                  <p className="escalation-title">{esc.subject}</p>
-                  <div className="escalation-meta">
-                    <span className="escalation-id">{shortId}</span>
-                    <span
-                      className="escalation-domain"
-                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
-                    >
-                      {esc.escalation_type.toUpperCase()}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      {/* ── Upcoming Events (live from Outlook calendar) ── */}
+  {/* ── Upcoming Events (live from Outlook calendar) ── */}
       <section className="right-section" style={{ borderBottom: 'none' }}>
         <p className="right-section-label">{labels.upcoming}</p>
         {calLoading ? (
@@ -337,13 +241,23 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
             const dayOfWeek = todayStart.getDay(); // 0=Sun … 6=Sat
             const daysToSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
 
-            // This Sunday — last day shown
+            // This Sunday — last day of this week
             const thisSundayStart = new Date(todayStart);
             thisSundayStart.setDate(todayStart.getDate() + daysToSunday);
 
-            // Monday after this Sunday — exclusive cut-off
-            const weekEnd = new Date(thisSundayStart);
-            weekEnd.setDate(thisSundayStart.getDate() + 1);
+            // Monday of next week
+            const nextMonday = new Date(thisSundayStart);
+            nextMonday.setDate(thisSundayStart.getDate() + 1);
+
+            // Show 3 days into next week (Mon/Tue/Wed), exclusive cut-off is Thu
+            const nextWeekCutoff = new Date(nextMonday);
+            nextWeekCutoff.setDate(nextMonday.getDate() + 3);
+
+            const formatNextWeekLabel = (date) => {
+              const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+              const month = date.toLocaleDateString(undefined, { month: 'short' });
+              return `${weekday}, ${month} ${date.getDate()}`;
+            };
 
             const toLocalDay = (evt) => {
               if (!evt.start) return null;
@@ -355,24 +269,21 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
               return toDateInTimeZone(eventDate, displayTimeZone);
             };
 
+            const dayAfterTomorrowStart = new Date(tomorrowStart);
+            dayAfterTomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
             const getBucket = (evt) => {
               const dDay = toLocalDay(evt);
               if (!dDay) return null;
-              if (dDay < todayStart) return null;  // past
-              if (dDay >= weekEnd) return null;    // next week — skip
+              if (dDay < todayStart) return null;                    // past
+              if (dDay >= dayAfterTomorrowStart) return null;        // beyond tomorrow
               if (dDay.getTime() === todayStart.getTime()) return 'Today';
               if (dDay.getTime() === tomorrowStart.getTime()) return 'Tomorrow';
-              return dDay.toLocaleDateString(undefined, { weekday: 'long' });
+              return null;
             };
 
-            // Build ordered buckets: Today → Tomorrow → day names through Sunday
+            // Only Today and Tomorrow buckets
             const BUCKET_ORDER = ['Today', 'Tomorrow'];
-            for (let i = 2; i <= daysToSunday; i++) {
-              const d = new Date(todayStart);
-              d.setDate(todayStart.getDate() + i);
-              const name = d.toLocaleDateString(undefined, { weekday: 'long' });
-              if (!BUCKET_ORDER.includes(name)) BUCKET_ORDER.push(name);
-            }
 
             const groups = {};
             calEvents.forEach((evt) => {
@@ -426,6 +337,232 @@ const RightPanel = ({ config, onClose, onSendMessage, user }) => {
           })()
         )}
       </section>
+
+      {/* ── Attendance Details ────────────────────────────── */}
+      <section className="right-section">
+        {/* Clickable header → opens full Attendance page */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <p className="right-section-label" style={{ margin: 0 }}>ATTENDANCE</p>
+          {onNavigate && (
+            <button
+              onClick={() => { onNavigate('attendance'); onClose(); }}
+              title="View full attendance"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 11, color: 'var(--primary)', fontWeight: 600,
+                display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0',
+              }}
+            >
+              View details <i className="fas fa-arrow-right" style={{ fontSize: 10 }} />
+            </button>
+          )}
+        </div>
+
+        {attLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : attError || !attData ? (
+          <p className="rp-empty-text">Could not load attendance data</p>
+        ) : (
+          <>
+            {/* Month tab switcher */}
+            <div className="att-tabs">
+              <button
+                className={`att-tab ${attTab === 'this' ? 'att-tab--active' : ''}`}
+                onClick={() => setAttTab('this')}
+              >
+                This Month
+              </button>
+              <button
+                className={`att-tab ${attTab === 'last' ? 'att-tab--active' : ''}`}
+                onClick={() => setAttTab('last')}
+              >
+                Last Month
+              </button>
+            </div>
+
+            {/* Summary chips — click opens full page */}
+            <div
+              className="att-summary"
+              onClick={() => onNavigate && (onNavigate('attendance'), onClose())}
+              style={{ cursor: onNavigate ? 'pointer' : 'default' }}
+              title={onNavigate ? 'Click to view full attendance' : undefined}
+            >
+              <div className="att-summary-chip att-summary-chip--btn">
+                <span className="att-summary-val">{currentMonth.total_days}</span>
+                <span className="att-summary-lbl">days</span>
+              </div>
+              <div className="att-summary-chip att-summary-chip--btn">
+                <span className="att-summary-val">{currentMonth.total_hours_label}</span>
+                <span className="att-summary-lbl">total hrs</span>
+              </div>
+              <div className="att-summary-chip">
+                <span className="att-summary-val">{currentMonth.month_label.split(' ')[0].slice(0, 3)}</span>
+                <span className="att-summary-lbl">{currentMonth.year}</span>
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ── Today's Birthdays ──────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">
+          <i className="fas fa-birthday-cake" style={{ marginRight: 6, color: '#f472b6' }} />
+          TODAY'S BIRTHDAYS
+        </p>
+        {bdLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : birthdays.length === 0 ? (
+          <p className="rp-empty-text">No birthdays today 🎂</p>
+        ) : (
+          <ul className="birthday-list">
+            {birthdays.map((person, idx) => {
+              const email    = person.full_name.trim().replace(/\s+/, '.') + '@alignedautomation.com';
+              const msg      = encodeURIComponent(`Happy Birthday ${person.first_name}! 🎂🎉 Wishing you a wonderful day!`);
+              const teamsUrl = `https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(email)}&message=${msg}`;
+              const wished   = wishedSet.has(person.full_name);
+              return (
+                <li key={idx} className="birthday-card">
+                  <div className="birthday-avatar">
+                    {person.first_name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="birthday-info">
+                    <p className="birthday-name">{person.full_name}</p>
+                    {person.department && (
+                      <span className="birthday-dept">{person.department}</span>
+                    )}
+                  </div>
+                  {wished ? (
+                    <span style={{
+                      display:    'inline-flex',
+                      alignItems: 'center',
+                      gap:        4,
+                      color:      '#4ED44E',
+                      fontSize:   10,
+                      fontWeight: 700,
+                      flexShrink: 0,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      <i className="fas fa-check-circle" style={{ fontSize: 11 }} />
+                      Wished
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handleWish(person, teamsUrl)}
+                      title={`Wish ${person.first_name} on Teams`}
+                      style={{
+                        display:     'inline-flex',
+                        alignItems:  'center',
+                        gap:         4,
+                        background:  'linear-gradient(135deg, #6264A7, #464775)',
+                        color:       '#fff',
+                        border:      'none',
+                        borderRadius: 6,
+                        padding:     '3px 8px',
+                        fontSize:    10,
+                        fontWeight:  700,
+                        cursor:      'pointer',
+                        whiteSpace:  'nowrap',
+                        flexShrink:  0,
+                      }}
+                    >
+                      <i className="fas fa-comment" style={{ fontSize: 9 }} />
+                      Wish
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* ── Work Anniversaries ──────────────────────────────── */}
+      <section className="right-section">
+        <p className="right-section-label">
+          <i className="fas fa-trophy" style={{ marginRight: 6, color: '#f59e0b' }} />
+          WORK ANNIVERSARIES
+        </p>
+        {annLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : anniversaries.length === 0 ? (
+          <p className="rp-empty-text">No work anniversaries today 🏆</p>
+        ) : (
+          <ul className="birthday-list">
+            {anniversaries.map((person, idx) => (
+              <li key={idx} className="birthday-card">
+                <div className="birthday-avatar" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                  {person.first_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="birthday-info">
+                  <p className="birthday-name">{person.full_name}</p>
+                  {person.department && (
+                    <span className="birthday-dept">{person.department}</span>
+                  )}
+                </div>
+                {person.years != null && (
+                  <span
+                    className="birthday-emoji"
+                    title={`${person.years} year${person.years !== 1 ? 's' : ''} at the company`}
+                    style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f59e0b', whiteSpace: 'nowrap' }}
+                  >
+                    {person.years}y 🏆
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ── Escalations ───────────────────────────────────── */}
+      <section className="right-section" style={{ borderBottom: 'none' }}>
+        <p className="right-section-label">{labels.escalations}</p>
+        {escLoading ? (
+          <p className="rp-loading-text">
+            <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />
+            Loading…
+          </p>
+        ) : escalations.length === 0 ? (
+          <p className="rp-empty-text">No escalations found</p>
+        ) : (
+          <ul className="escalation-list">
+            {escalations.map((esc) => {
+              const domainColor = DOMAIN_COLORS[esc.escalation_type] || '#1D76BC';
+              const shortId = `ESC-${esc.id.slice(0, 6).toUpperCase()}`;
+              return (
+                <li
+                  key={esc.id}
+                  className="escalation-card"
+                  style={{ borderLeftColor: domainColor }}
+                >
+                  <p className="escalation-title">{esc.subject}</p>
+                  <div className="escalation-meta">
+                    <span className="escalation-id">{shortId}</span>
+                    <span
+                      className="escalation-domain"
+                      style={{ backgroundColor: `${domainColor}22`, color: domainColor }}
+                    >
+                      {esc.escalation_type.toUpperCase()}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+    
 
     </aside>
   );

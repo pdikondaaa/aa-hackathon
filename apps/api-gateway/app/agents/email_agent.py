@@ -1,10 +1,9 @@
 """
-Email Agent — refines email drafts by calling the Ollama REST API directly.
-Uses requests (no LangChain dependency) to avoid singleton/init issues.
+Email Agent — refines email drafts using the configured LLM provider.
+Supports Claude, Groq, or Ollama based on environment flags (USE_Claude_API_Key, etc.).
 """
 import os
 import re
-import requests
 from typing import Optional
 
 _SYSTEM_PROMPT = (
@@ -40,6 +39,7 @@ def _get_from_chat_system_prompt() -> str:
         f"- Organisation / management matters → {email_org}\n"
         "- Unknown recipient → leave the TO field blank\n\n"
         "Rules:\n"
+        "- Start the email body with a warm greeting such as 'Hi,' or 'Hello,' or 'Dear [Name],'\n"
         "- Keep the email concise and professional (3-5 sentences for the body)\n"
         "- Use a warm but formal tone — signed off as 'Regards'\n"
         "- Do NOT invent facts not mentioned by the user\n"
@@ -52,29 +52,15 @@ def _get_from_chat_system_prompt() -> str:
     )
 
 
-def _ollama_base_url() -> str:
-    return os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434")
-
-
-def _ollama_model() -> str:
-    return os.environ.get("OLLAMA_MODEL", "gpt-oss")
-
-
-def _call_ollama(user_content: str, system_prompt: str = None) -> str:
-    url = f"{_ollama_base_url()}/api/chat"
-    payload = {
-        "model": _ollama_model(),
-        "messages": [
-            {"role": "system", "content": system_prompt or _SYSTEM_PROMPT},
-            {"role": "user",   "content": user_content},
-        ],
-        "stream": False,
-    }
-    resp = requests.post(url, json=payload, timeout=120)
-    resp.raise_for_status()
-    data = resp.json()
-    # Ollama /api/chat response: {"message": {"role": "assistant", "content": "..."}}
-    return data["message"]["content"]
+def _call_llm(user_content: str, system_prompt: str = None) -> str:
+    from app.agents.working.config import LLMConfig, create_llm
+    cfg = LLMConfig()
+    llm = create_llm(temperature=0.3, max_tokens=1024, cfg=cfg)
+    result = llm.invoke([
+        ("system", system_prompt or _SYSTEM_PROMPT),
+        ("human", user_content),
+    ])
+    return result.content if hasattr(result, "content") else str(result)
 
 
 def _parse_response(text: str, fallback_subject: str) -> dict:
@@ -97,6 +83,49 @@ def _parse_from_chat_response(text: str) -> dict:
     }
 
 
+def send_email(to: str, subject: str, body: str, sender: str = "") -> None:
+    """
+    Sends an email via SMTP (Office 365 / smtp.office365.com) using the
+    service account (SMTP_USER / SMTP_PASSWORD). Sends as SMTP_FROM_EMAIL.
+    If `sender` is provided it is added as Reply-To so replies go to them.
+    """
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    smtp_host     = os.environ.get("SMTP_HOST", "smtp.office365.com")
+    smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user     = os.environ.get("SMTP_USER", "")
+    smtp_password = os.environ.get("SMTP_PASSWORD", "")
+
+    if not smtp_user or not smtp_password:
+        raise RuntimeError("SMTP credentials not configured (SMTP_USER / SMTP_PASSWORD).")
+
+    from_name  = os.environ.get("SMTP_FROM_NAME", "AURA Bot")
+    from_email = os.environ.get("SMTP_FROM_EMAIL", smtp_user)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{from_name} <{from_email}>"
+    msg["To"]      = to
+    if sender and sender.strip():
+        msg["Reply-To"] = sender.strip()
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(from_email, [to], msg.as_string())
+    except smtplib.SMTPAuthenticationError as exc:
+        raise RuntimeError(f"SMTP authentication failed: {exc}") from exc
+    except smtplib.SMTPException as exc:
+        raise RuntimeError(f"SMTP error: {exc}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Network error connecting to SMTP server: {exc}") from exc
+
+
 def draft_email_from_chat(message: str) -> dict:
     """
     Uses the LLM to draft a professional email from a plain-language chat request.
@@ -105,19 +134,10 @@ def draft_email_from_chat(message: str) -> dict:
     """
     user_content = f"Draft a professional email based on this employee request:\n\n\"{message.strip()}\""
     try:
-        raw = _call_ollama(user_content, system_prompt=_get_from_chat_system_prompt())
+        raw = _call_llm(user_content, system_prompt=_get_from_chat_system_prompt())
         return _parse_from_chat_response(raw)
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(
-            f"Cannot reach the LLM server at {_ollama_base_url()}. "
-            "Please check the OLLAMA_BASE_URL environment variable."
-        )
-    except requests.exceptions.Timeout:
-        raise RuntimeError("LLM request timed out after 120 seconds.")
-    except requests.exceptions.HTTPError as exc:
-        raise RuntimeError(f"LLM server returned an error: {exc}") from exc
-    except (KeyError, ValueError) as exc:
-        raise RuntimeError(f"Unexpected response format from LLM: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"LLM request failed: {exc}") from exc
 
 
 def refine_email_draft(to: str, cc: Optional[str], subject: str, body: str) -> dict:
@@ -133,16 +153,7 @@ def refine_email_draft(to: str, cc: Optional[str], subject: str, body: str) -> d
     user_content = "Please refine this email draft:\n\n" + "\n".join(lines)
 
     try:
-        raw = _call_ollama(user_content)
+        raw = _call_llm(user_content)
         return _parse_response(raw, subject)
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(
-            f"Cannot reach the LLM server at {_ollama_base_url()}. "
-            "Please check the OLLAMA_BASE_URL environment variable."
-        )
-    except requests.exceptions.Timeout:
-        raise RuntimeError("LLM request timed out after 120 seconds.")
-    except requests.exceptions.HTTPError as exc:
-        raise RuntimeError(f"LLM server returned an error: {exc}") from exc
-    except (KeyError, ValueError) as exc:
-        raise RuntimeError(f"Unexpected response format from LLM: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"LLM request failed: {exc}") from exc

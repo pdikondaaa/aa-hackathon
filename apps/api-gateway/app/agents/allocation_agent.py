@@ -7,13 +7,15 @@ Role resolution is designation-based:
   email → employee_details.designation → allocation_role_map.role
 """
 import os
-import requests
 
 from app.api.services.allocation_service import (
     get_board_data,
     get_employee_detail,
     get_user_profile,
+    get_available_months,
     build_ask_context,
+    has_direct_reports,
+    get_my_team_allocation,
 )
 from app.utils.logging_config import get_logger
 
@@ -22,7 +24,7 @@ logger = get_logger("allocation_agent")
 
 class AllocationAgent:
 
-    def get_board(self, user_email: str) -> dict:
+    def get_board(self, user_email: str, date_from: str = None, date_to: str = None) -> dict:
         """
         Returns the full board payload for the requesting user.
         Role is resolved from the user's designation in employee_details.
@@ -36,7 +38,11 @@ class AllocationAgent:
             { role, designation, view, my_allocation }
         """
         logger.info(f"AllocationAgent.get_board for {user_email}")
-        return get_board_data(user_email)
+        return get_board_data(user_email, date_from=date_from, date_to=date_to)
+
+    def get_filter_options(self) -> dict:
+        """Returns available months derived from actual allocation data."""
+        return {"available_months": get_available_months()}
 
     def get_employee(self, employee_id: str, requester_email: str) -> dict:
         """
@@ -56,16 +62,27 @@ class AllocationAgent:
         """
         profile = get_user_profile(email)
         return {
-            "email":       email,
-            "designation": profile["designation"],
-            "role":        profile["role"],
+            "email":              email,
+            "designation":        profile["designation"],
+            "role":               profile["role"],
+            "has_direct_reports": has_direct_reports(email),
         }
 
+    def get_my_team(self, email: str) -> dict:
+        """
+        Return the requesting user's direct reports' allocation rows, unmasked.
+        Direct reports are resolved by an exact email match on
+        people.vb_employees.ReportingManagerEmail — a real reporting-line
+        check, independent of designation/role bucket. Empty team_rows if
+        the user has no direct reports.
+        """
+        logger.info(f"AllocationAgent.get_my_team for {email}")
+        return {"team_rows": get_my_team_allocation(email)}
 
     def ask_aura(self, user_email: str, question: str) -> str:
         """
         Answer a natural-language question about allocation data scoped to the user's role.
-        Uses Ollama (same model as email agent) with a context block built from live DB data.
+        Uses the configured LLM provider (Claude, Groq, or Ollama) via create_llm().
         """
         logger.info(f"AllocationAgent.ask_aura from {user_email}: {question[:80]}")
         context_text, role = build_ask_context(user_email)
@@ -82,26 +99,16 @@ class AllocationAgent:
             "---"
         )
 
-        ollama_url   = os.environ.get("OLLAMA_BASE_URL", "http://ml01.alignedautomation.com:11434")
-        ollama_model = os.environ.get("OLLAMA_MODEL", "gpt-oss")
-
-        payload = {
-            "model": ollama_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": question.strip()},
-            ],
-            "stream": False,
-        }
         try:
-            resp = requests.post(f"{ollama_url}/api/chat", json=payload, timeout=120)
-            resp.raise_for_status()
-            return resp.json()["message"]["content"]
-        except requests.exceptions.ConnectionError:
-            raise RuntimeError(f"Cannot reach LLM at {ollama_url}.")
-        except requests.exceptions.Timeout:
-            raise RuntimeError("LLM request timed out.")
-        except (KeyError, requests.exceptions.HTTPError) as exc:
+            from app.agents.working.config import LLMConfig, create_llm
+            cfg = LLMConfig()
+            llm = create_llm(temperature=0.1, max_tokens=512, cfg=cfg)
+            result = llm.invoke([
+                ("system", system_prompt),
+                ("human", question.strip()),
+            ])
+            return result.content if hasattr(result, "content") else str(result)
+        except Exception as exc:
             raise RuntimeError(f"LLM error: {exc}") from exc
 
 

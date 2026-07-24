@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { analyticsApi } from '../services/analyticsApi';
+
+const PAGE_SIZE = 15;
 
 const CATEGORY_COLORS = {
   HR:  '#1D76BC',
@@ -50,15 +53,69 @@ function ActivityRow({ item }) {
   );
 }
 
-export default function RecentActivities({ activities }) {
-  if (!activities?.length) {
+export default function RecentActivities({ refreshKey }) {
+  const [page,     setPage]     = useState(1);
+  const [items,    setItems]    = useState(null);
+  const [total,    setTotal]    = useState(0);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState(null);
+
+  const load = useCallback(async (targetPage) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await analyticsApi.getActivities(targetPage, PAGE_SIZE);
+      setItems(res.data || []);
+      setTotal(res.total || 0);
+      setPage(res.page || targetPage);
+    } catch (err) {
+      setError(err.message || 'Failed to load recent activity.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(1); }, [load, refreshKey]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  if (loading && items === null) {
+    return <div className="an-empty"><i className="fas fa-spinner fa-spin" /> Loading activity…</div>;
+  }
+  if (error) {
+    return <div className="an-empty">{error}</div>;
+  }
+  if (!items?.length) {
     return <div className="an-empty">No recent activity</div>;
   }
+
   return (
-    <div className="an-activity-list">
-      {activities.map((item) => (
-        <ActivityRow key={item.id} item={item} />
-      ))}
+    <div>
+      <div className="an-activity-list" style={{ opacity: loading ? 0.5 : 1 }}>
+        {items.map((item) => (
+          <ActivityRow key={item.id} item={item} />
+        ))}
+      </div>
+
+      {totalPages > 1 && (
+        <div className="an-pagination">
+          <button
+            className="an-page-btn"
+            onClick={() => load(page - 1)}
+            disabled={page === 1 || loading}
+          >
+            <i className="fas fa-chevron-left" />
+          </button>
+          <span className="an-page-info">Page {page} of {totalPages}</span>
+          <button
+            className="an-page-btn"
+            onClick={() => load(page + 1)}
+            disabled={page === totalPages || loading}
+          >
+            <i className="fas fa-chevron-right" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

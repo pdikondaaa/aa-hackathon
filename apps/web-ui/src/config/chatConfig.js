@@ -59,7 +59,7 @@ export const chatConfig = {
   app: {
     name:        'AURA',
     subtitle:    'Aligned Unified Resource Assistant',
-    version:     'v1.0',
+    version:     '',
   },
 
   // ─── External Links ────────────────────────────────────────────────────────
@@ -78,10 +78,27 @@ export const chatConfig = {
   navigation: [
     { id: 'aiAssistant', label: 'AI Assistant', icon: 'fa-robot',       active: true  },
     { id: 'documents',   label: 'Documents',    icon: 'fa-folder-open', active: false },
-    { id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
-    { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
-    { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap',      active: false },
+    { id: 'employeeDirectory', label: 'Employee Directory', icon: 'fa-address-book',  active: false },
+    //{ id: 'analytics',          label: 'Analytics',           icon: 'fa-chart-bar',     active: false },
+      { id: 'allocationBoard', label: 'Allocation Board', icon: 'fa-sitemap',         active: false },
+      { id: 'communications',  label: 'Communications',   icon: 'fa-bullhorn',        active: false },
+       { id: 'onboardingGuidance', label: 'Onboarding Guidance', icon: 'fa-compass',       active: false },
+      // { id: 'feedback',        label: 'Feedback',         icon: 'fa-star-half-stroke',    active: false },
+
+    //{ id: 'cooAnalytics',   label: 'COO Analytics',   icon: 'fa-gauge-high',   active: false },
     //{ id: 'myNotes',         label: 'My Notes',         icon: 'fa-sticky-note',  active: false },
+    {
+      id: 'admin', label: 'Admin', icon: 'fa-shield-halved', active: false,
+      children: [
+        { id: 'adminAnalytics',       label: 'Analytics',          icon: 'fa-chart-line'    },
+        { id: 'adminSettings',        label: 'Settings',           icon: 'fa-sliders'       },
+        { id: 'adminCommunications',  label: 'Communications',     icon: 'fa-bullhorn'      },
+        { id: 'adminQuickLinks',      label: 'Quick Links Setup',  icon: 'fa-th'            },
+        { id: 'adminFormBuilder',     label: 'Form Builder',       icon: 'fa-wpforms'       },
+        { id: 'adminSlashCommands',   label: 'Slash Commands',     icon: 'fa-bolt'          },
+        { id: 'adminFeedback',        label: 'Feedback',           icon: 'fa-star-half-stroke'  },
+      ],
+    },
   ],
 
   // ─── Sidebar Recent Chats ──────────────────────────────────────────────────
@@ -132,6 +149,14 @@ export const chatConfig = {
       color:       '#2A3D90',
       intro: "I'm the **Org Intelligence** assistant — here's what I can help you explore:\n\n- 🏢 **Company info** — mission, vision, values, and culture\n- 👥 **Organization structure** — departments, leadership, and reporting hierarchy\n- 📇 **Employee directory** — find colleagues, contact details, and skill sets\n- 📊 **Company updates** — announcements, new policies, and initiatives\n\nWhat would you like to know about Aligned Automation?",
     },
+    {
+      id: 'pmo',
+      title:       'PMO Assistant',
+      description: 'Track projects, milestones, risks and delivery status.',
+      icon:        'fa-diagram-project',
+      color:       '#0F766E',
+      intro: "I'm the **PMO Assistant** — your project management command centre. Here's how I can help:\n\n- 📊 **Project status** — health checks, RAG status, and portfolio summaries\n- 🎯 **Milestones & deadlines** — upcoming due dates, overdue items, and critical path alerts\n- ⚠️ **Risk & issues** — log risks, escalate blockers, and track mitigations\n- 📅 **Resource planning** — team allocation, capacity, and workload visibility\n- 📋 **Reporting** — generate project status reports and executive summaries\n\nFor a full project dashboard, open the **Project Hub** tab in the sidebar.\n\nWhat project management question can I help with?",
+    },
   ],
 
   // ─── Welcome Suggestion Chips ──────────────────────────────────────────────
@@ -140,8 +165,10 @@ export const chatConfig = {
     'Raise an IT ticket for VPN issue',
     'Explain the insurance policy',
     'Create an employment verification document',
-    'Help me draft an email',
+    'Help me draft an email for Leave Request',
     'Escalate an issue to HR',
+    'Create Microsoft Form Survey for Team feedback',
+    'Apply for a parking sticker',
   ],
 
   // ─── Right Panel — My Stats ────────────────────────────────────────────────
@@ -186,7 +213,7 @@ export const chatConfig = {
     myStats:           'MY STATS',
     recentActivity:    'RECENT ACTIVITY',
     escalations:       'ESCALATIONS',
-    upcoming:          'UPCOMING',
+    upcoming:          'UPCOMING MEETINGS',
     kickstartHeading:  'Kickstart Your Journey with These Tools',
     learnMore:         'Learn more →',
     inputPlaceholder:  'Ask anything...',

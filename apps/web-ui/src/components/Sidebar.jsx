@@ -1,17 +1,52 @@
 import React, { useState, useEffect } from 'react';
 import { listConversations, deleteConversation } from '../services/api';
 
-const ALLOCATION_BOARD_ROLES = new Set(['team_lead', 'functional_lead', 'business_lead', 'executive', 'admin']);
+const HISTORY_PAGE_SIZE = 20;
 
-const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole }) => {
+const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, onDeleteConversation, isOpen, refreshKey, selectedConversationId, allocationRole, user }) => {
   const { navigation, labels, app } = config;
 
   const visibleNav = navigation.filter(item => {
-    if (item.id === 'allocationBoard') return ALLOCATION_BOARD_ROLES.has(allocationRole);
+    if (item.id === 'admin')          return user?.isAdmin;
     return true;
   });
+
+  // Track which parent items are expanded; auto-expand when a child is active
+  const [expandedParents, setExpandedParents] = useState(() => {
+    const initial = new Set();
+    navigation.forEach(item => {
+      if (item.children?.some(c => c.id === activeNav)) initial.add(item.id);
+    });
+    return initial;
+  });
+
+  // Auto-expand parent when activeNav changes to one of its children
+  useEffect(() => {
+    navigation.forEach(item => {
+      if (item.children?.some(c => c.id === activeNav)) {
+        setExpandedParents(prev => new Set([...prev, item.id]));
+      }
+    });
+  }, [activeNav]);
+
+  const toggleParent = (id) => {
+    setExpandedParents(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleParentClick = (item) => {
+    const isCurrentlyExpanded = expandedParents.has(item.id);
+    toggleParent(item.id);
+    if (!isCurrentlyExpanded && item.children?.length) onNavChange(item.children[0].id);
+  };
   const [conversations, setConversations] = useState([]);
   const [histLoading, setHistLoading] = useState(false);
+  const [histPage, setHistPage] = useState(1);
+  const [histTotal, setHistTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
@@ -19,8 +54,12 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
     (async () => {
       setHistLoading(true);
       try {
-        const res = await listConversations(1, 50);
-        if (!cancelled) setConversations(res.data || []);
+        const res = await listConversations(1, HISTORY_PAGE_SIZE);
+        if (!cancelled) {
+          setConversations(res.data || []);
+          setHistPage(1);
+          setHistTotal(res.total || 0);
+        }
       } catch (e) {
         console.error('Failed to load conversations:', e);
       } finally {
@@ -29,6 +68,22 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
     })();
     return () => { cancelled = true; };
   }, [refreshKey]);
+
+  const handleLoadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = histPage + 1;
+      const res = await listConversations(nextPage, HISTORY_PAGE_SIZE);
+      setConversations((prev) => [...prev, ...(res.data || [])]);
+      setHistPage(nextPage);
+      setHistTotal(res.total || 0);
+    } catch (e) {
+      console.error('Failed to load more conversations:', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const groupByDate = (convs) => {
     const todayStart = new Date();
@@ -111,19 +166,56 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
       {/* ── Features ────────────────────────────────────────── */}
       <div className="sidebar-section">
         <p className="sidebar-section-label">{labels.features}</p>
-        {visibleNav.map((item) => (
-          <div
-            key={item.id}
-            className={`sidebar-nav-item${activeNav === item.id ? ' active' : ''}`}
-            onClick={() => onNavChange(item.id)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && onNavChange(item.id)}
-          >
-            <i className={`fas ${item.icon}`} aria-hidden="true" />
-            <span>{item.label}</span>
-          </div>
-        ))}
+        {visibleNav.map((item) => {
+          if (item.children) {
+            const isExpanded = expandedParents.has(item.id);
+            return (
+              <div key={item.id}>
+                <div
+                  className="sidebar-nav-item"
+                  onClick={() => handleParentClick(item)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => e.key === 'Enter' && handleParentClick(item)}
+                  style={{ justifyContent: 'space-between' }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <i className={`fas ${item.icon}`} aria-hidden="true" />
+                    <span>{item.label}</span>
+                  </span>
+                  <i className={`fas fa-chevron-${isExpanded ? 'down' : 'right'}`} style={{ fontSize: 11, opacity: 0.6 }} />
+                </div>
+                {isExpanded && item.children.map(child => (
+                  <div
+                    key={child.id}
+                    className={`sidebar-nav-item${activeNav === child.id ? ' active' : ''}`}
+                    onClick={() => onNavChange(child.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavChange(child.id)}
+                    style={{ paddingLeft: 36 }}
+                  >
+                    <i className={`fas ${child.icon}`} aria-hidden="true" />
+                    <span>{child.label}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          }
+          return (
+            <div
+              key={item.id}
+              className={`sidebar-nav-item${activeNav === item.id ? ' active' : ''}`}
+              onClick={() => onNavChange(item.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && onNavChange(item.id)}
+            >
+              <i className={`fas ${item.icon}`} aria-hidden="true" />
+              <span>{item.label}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Conversation history ─────────────────────────────── */}
@@ -142,6 +234,19 @@ const Sidebar = ({ config, activeNav, onNavChange, onNewChat, onHistoryClick, on
           {conversations.length === 0 && (
             <div className="sidebar-section">
               <p className="sidebar-section-label" style={{ opacity: 0.4 }}>No conversations yet</p>
+            </div>
+          )}
+          {conversations.length > 0 && conversations.length < histTotal && (
+            <div className="sidebar-section">
+              <button
+                className="sidebar-load-more-btn"
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+              >
+                {loadingMore
+                  ? <i className="fas fa-spinner fa-spin" />
+                  : <span>Load more ({histTotal - conversations.length} remaining)</span>}
+              </button>
             </div>
           )}
         </>

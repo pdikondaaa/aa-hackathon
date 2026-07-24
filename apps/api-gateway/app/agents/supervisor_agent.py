@@ -1,9 +1,11 @@
 import re
+import json
+import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from difflib import SequenceMatcher
-from urllib.parse import urlparse, parse_qs, unquote
-from typing import Dict, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional
+from urllib.parse import urlparse
 
 from app.agents.guardrails import check_input
 
@@ -30,6 +32,44 @@ _APPLY_LEAVE_RESPONSE = (
     '📅 Apply Leave on Zoho People</a>'
 )
 
+# ── Email draft fast-path ────────────────────────────────────────────────────
+_EMAIL_DRAFT_RE = re.compile(
+    r"""
+    \b(?:
+        draft(?:ing)?\s+(?:a\s+|an\s+)?email |
+        write\s+(?:a\s+|an\s+)?email |
+        compose\s+(?:a\s+|an\s+)?email |
+        create\s+(?:a\s+|an\s+)?email |
+        (?:help\s+(?:me\s+)?)?(?:draft|write|compose|prepare)\s+(?:a\s+|an\s+)?(?:\w+\s+)?email |
+        email\s+(?:draft|template)
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# ── Microsoft Forms fast-path ─────────────────────────────────────────────────
+_MS_FORMS_RE = re.compile(
+    r"""
+    \b(?:
+        create\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        make\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        build\s+(?:a\s+)?(?:microsoft\s+)?form(?:s)?\b |
+        (?:create|make|build|generate|draft|design|prepare)\s+(?:a\s+|an\s+)?survey\b |
+        (?:create|make|build|generate|draft|design|prepare)\s+(?:a\s+|an\s+)?questionnaire\b |
+        (?:create|make|build|generate|need|want)\s+(?:a\s+|an\s+)?
+            (?:hr|employee|onboarding|exit|feedback|training|satisfaction|performance|assessment|evaluation)\s+
+            (?:survey|form|questionnaire|poll)\b |
+        (?:feedback|exit|onboarding|training|satisfaction|performance|assessment)\s+
+            (?:survey|form|questionnaire|poll)\b |
+        microsoft\s+forms?\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_MS_FORMS_SENTINEL    = "__MS_FORMS_INTENT__"
+_EMAIL_DRAFT_SENTINEL = "__EMAIL_DRAFT_INTENT__"
+
 # ── Greeting / small-talk fast-path ──────────────────────────────────────────
 _GREETING_RE = re.compile(
     r"""^[\s!.,?]*
@@ -41,18 +81,103 @@ _GREETING_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+
+def _check_ollama(base_url: str, timeout: int = 3) -> bool:
+    """Return True if the Ollama host is reachable (skipped when Claude or Groq is active)."""
+    import os
+    if os.environ.get("USE_Claude_API_Key", "False").lower() in ("true", "1", "yes"):
+        return True
+    if os.environ.get("USE_Groq_API_Key", "False").lower() in ("true", "1", "yes"):
+        return True
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 11434
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError as exc:
+        print(
+            f"[MasterAgent] Cannot reach Ollama at {base_url} -- {exc}\n"
+            f"  -> Is the server running? Do you need VPN?\n"
+            f"  -> Set OLLAMA_BASE_URL env var to override (e.g. http://localhost:11434)"
+        )
+        return False
+
+# ── Greeting / small-talk fast-path ──────────────────────────────────────────
+# Only pure bare greetings (1-2 words) get the static menu.
+# Anything longer ("hello can you help with X", "hi what's my leave balance")
+# falls through to routing so the right agent can answer.
+_PURE_GREETINGS = frozenset({
+    'hi', 'hello', 'hey', 'hii', 'hiii', 'howdy', 'greetings',
+    'sup', 'yo', 'thanks', 'thank', 'thx', 'ty', 'thankyou',
+    'bye', 'goodbye', 'cya',
+})
+_PURE_TWO_WORD = frozenset({
+    'hi there', 'hello there', 'hey there',
+    'good morning', 'good afternoon', 'good evening', 'good night', 'good day',
+    'thank you', 'many thanks', 'see ya',
+})
+
+
+def _is_greeting(text: str) -> bool:
+    clean = re.sub(r"[!.,?'\s]+", ' ', text.lower()).strip()
+    if not clean:
+        return False
+    words = clean.split()
+    if len(words) == 1:
+        return words[0] in _PURE_GREETINGS
+    if len(words) == 2:
+        return f"{words[0]} {words[1]}" in _PURE_TWO_WORD
+    return False
+
+
+# ── Conversational openers that should go to the quick agent ─────────────────
+_CONVERSATIONAL_RE = re.compile(
+    r"""^[\s!.,?]*
+    (?:
+        how\s+are\s+you |
+        how\s+(?:r|are)\s+u |
+        how'?s\s+(?:it\s+going|everything|things|your\s+day) |
+        what(?:'s|\s+is)\s+up |
+        what\s+can\s+you\s+(?:do|help\s+(?:me\s+)?with) |
+        who\s+are\s+you |
+        what\s+are\s+you |
+        tell\s+me\s+about\s+yourself |
+        introduce\s+yourself
+    )[\s!.,?]*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# ── User identity name fast-path ──────────────────────────────────────────────
+_NAME_QUERY_RE = re.compile(
+    r"""
+    \b(?:
+        what(?:'s|\s+is)\s+my\s+(?:full\s+)?name |
+        tell\s+me\s+my\s+(?:full\s+)?name |
+        my\s+(?:full\s+)?name\s*[?]?$
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _is_conversational(text: str) -> bool:
+    return bool(_CONVERSATIONAL_RE.match(text.strip()))
+
+
 _GREETING_RESPONSE = (
-    "Hello! I'm AURA, your Aligned Automation assistant.\n\n"
-    "I can help you with:\n"
-    "- **HR** — leave, benefits, payroll, appraisals, policies\n"
-    "- **IT** — technical support, VPN, passwords, software\n"
-    "- **Admin** — travel, cab bookings, office facilities\n"
-    "- **Finance** — ZOHO expenses, TDS, tax declarations\n"
-    "- **PMO** — project status, milestones, resources\n"
-    "- **Attendance** — check-in/out records, working hours\n\n"
-    "- **Employee Directory** — find colleagues, contact details\n"
-    "- **Documents** — generate letters, certificates, and HR documents\n\n"
-    "What can I help you with today?"
+    "<p>Hello! I'm <strong>AURA</strong>, your Aligned Automation assistant.</p>"
+    "<p>I can help you with:</p>"
+    "<ul>"
+    "<li><strong>HR</strong> — leave, benefits, payroll, appraisals, policies</li>"
+    "<li><strong>IT</strong> — technical support, VPN, passwords, software</li>"
+    "<li><strong>Admin</strong> — travel, cab bookings, office facilities</li>"
+    "<li><strong>Finance</strong> — ZOHO expenses, TDS, tax declarations</li>"
+    "<li><strong>PMO</strong> — project status, milestones, resources</li>"
+    "<li><strong>Employee Directory</strong> — find colleagues, contact details</li>"
+    "<li><strong>Attendance</strong> — check-in/out records, working hours</li>"
+    "</ul>"
+    "<p>What can I help you with today?</p>"
 )
 
 # ── Escalation fuzzy matcher ─────────────────────────────────────────────────
@@ -73,6 +198,12 @@ def _is_escalation_query(query: str) -> bool:
 
 # ── Domain keyword fallback map ───────────────────────────────────────────────
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
+    'forms': [
+        'create form', 'make form', 'build form', 'survey form',
+        'microsoft form', 'microsoft forms', 'create survey', 'make survey',
+        'feedback form', 'exit survey', 'onboarding form', 'questionnaire',
+        'employee survey', 'training feedback', 'performance survey',
+    ],
     'hr': [
         'leave', 'policy', 'policies', 'benefit', 'payroll', 'performance',
         'posh', 'maternity', 'paternity', 'insurance', 'ghi', 'pf', 'epf',
@@ -86,6 +217,8 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'network', 'security', 'onedrive', 'outlook', 'wifi',
         'remote access', 'polycom', 'hardware', 'printer', 'access',
         'helpdesk', 'antivirus', 'backup', 'teams', 'install',
+        'ticket', 'it ticket', 'support ticket', 'raise ticket',
+        'log ticket', 'it support', 'it issue', 'it problem', 'it request',
     ],
     'admin': [
         'travel', 'cab', 'orix', 'cabman', 'parking', 'workplace', 'office supplies',
@@ -117,6 +250,16 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'who is', 'profile of', 'details of', 'info about',
         'find employee', 'look up', 'lookup', 'search employee',
     ],
+    'email': [
+        'draft email', 'write email', 'compose email', 'create email',
+        'draft an email', 'write an email', 'compose an email',
+        'email draft', 'email template', 'help me draft', 'help me write an email',
+    ],
+    'funny': [
+        'joke', 'funny', 'laugh', 'meme', 'pun', 'humor', 'humour',
+        'tell me a joke', 'make me laugh', 'lighten up', 'small talk',
+        'sarcastic', 'witty', 'cheer me up', 'fun fact',
+    ],
     'document': [
         'loan proof', 'experience letter', 'employment verification',
         'offer letter', 'relieving letter', 'address proof', 'bonafide',
@@ -134,6 +277,22 @@ DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         'punch in', 'punch-in', 'punch out', 'punch-out',
         'working hours', 'hours worked', 'arrival time', 'departure time',
         'in time', 'out time',
+    ],
+    'license': [
+        'ai license', 'ai licens', 'ai tool', 'ai tools',
+        'claude license', 'claude user', 'claude access', 'claude seat', 'claude list',
+        'figma license', 'figma user', 'figma access', 'figma seat', 'figma list',
+        'lovable license', 'lovable user', 'lovable access', 'lovable list',
+        'm365 license', 'm365 copilot', 'microsoft 365', 'copilot license',
+        'copilot user', 'copilot access', 'copilot seat', 'copilot list',
+        'how many licenses', 'how many ai', 'license count', 'seat count',
+        'who has claude', 'who has figma', 'who has copilot', 'who has lovable',
+        'ai subscription', 'tool subscription', 'tool access', 'software license',
+        'license for', 'licenses for', 'has a license', 'have a license',
+        'user list', 'list of users', 'list of claude', 'list of figma',
+        'list of lovable', 'list of copilot', 'show me the users', 'show all users',
+        'all claude', 'all figma', 'all lovable', 'all copilot', 'all m365',
+        'claude subscribers', 'figma subscribers', 'licensed users', 'license holders',
     ],
 }
 
@@ -170,7 +329,10 @@ _EMP_PATTERNS = [
     re.compile(r"\b(?:manager\s+of|reports?\s+to|reporting\s+to|team\s+under)\s+[a-z]", re.IGNORECASE),
     re.compile(r"\bmy\s+(?:mobile|phone|email|designation|department|manager|role|grade)\b", re.IGNORECASE),
     re.compile(r"\bmy\s+(?:level|skill|project|blood|joining|detail|info|profile|team|location|experience|contact)\b", re.IGNORECASE),
-    re.compile(r"\b(?:who\s+am\s+i|about\s+me)\b", re.IGNORECASE),
+    re.compile(r"\b(?:who\s+am\s+i|about\s+me|about\s+myself)\b", re.IGNORECASE),
+    re.compile(r"\btell\s+me\s+about\s+(?:my)?self\b", re.IGNORECASE),
+    re.compile(r"\bmy\s+(?:full\s+)?name\b", re.IGNORECASE),
+    re.compile(r"\bwhat(?:'s|\s+is)\s+my\s+(?:full\s+)?name\b", re.IGNORECASE),
     re.compile(r"\bwho\s+is\s+\w", re.IGNORECASE),
     re.compile(r"\b(?:profile|details?|information|info)\s+(?:of|about|for)\s+\w", re.IGNORECASE),
     re.compile(r"\b(?:find|search\s+for|look\s+up)\s+(?:employee\s+)?\w", re.IGNORECASE),
@@ -203,6 +365,63 @@ def _is_attendance_query(query: str) -> bool:
     return any(p.search(query) for p in _ATT_PATTERNS)
 
 
+def _is_email_draft_query(query: str) -> bool:
+    return bool(_EMAIL_DRAFT_RE.search(query))
+
+
+# ── Document field-response heuristic ────────────────────────────────────────
+# Question words / command verbs that strongly indicate a NEW request rather
+# than a reply with document field values.
+_QUESTION_START_RE = re.compile(
+    r"^(?:what|how|why|when|where|who|can|could|would|should|"
+    r"is|are|was|were|do|does|did|tell|show|find|help|give|get|"
+    r"apply|check|search|list|explain|describe|i\s+need|i\s+want)\b",
+    re.IGNORECASE,
+)
+
+# Keywords that almost never appear in document field values but are common
+# in unrelated employee queries (kept minimal to avoid false positives).
+_OFF_TOPIC_KW = frozenset([
+    "vpn", "password", "laptop", "antivirus", "mfa", "wi-fi", "wifi",
+    "travel", "cab", "parking",
+    "joke", "funny",
+])
+
+
+def _is_doc_field_response(query: str) -> bool:
+    """
+    Return True when the message is plausibly providing field values for
+    an active document session. Return False when it looks like a new,
+    unrelated request that should break the session.
+    """
+    q = query.strip()
+    # A question mark almost always means a new question
+    if "?" in q:
+        return False
+    # Starts with interrogative / command words → new request
+    if _QUESTION_START_RE.match(q):
+        return False
+    # Matches the other fast-path detectors → clearly a new intent
+    if (
+        _APPLY_LEAVE_RE.search(q)
+        or _is_email_draft_query(q)
+        or _is_forms_query(q)
+        or _is_attendance_query(q)
+        or _is_greeting(q)
+        or _is_conversational(q)
+    ):
+        return False
+    # Specific domain keywords that cannot appear as field values
+    q_lower = q.lower()
+    if any(kw in q_lower for kw in _OFF_TOPIC_KW):
+        return False
+    return True
+
+
+def _is_forms_query(query: str) -> bool:
+    return bool(_MS_FORMS_RE.search(query))
+
+
 # ── LLM routing prompt ───────────────────────────────────────────────────────
 _ROUTING_PROMPT = """\
 You are a query router for AURA, an internal company assistant for Aligned Automation.
@@ -216,13 +435,20 @@ Departments and what they own:
 - org: company mission, structure, values, culture, leadership, general company information
 - employee: employee directory — find by name, contact details, department listing, org chart, headcount, skill search, self-service ("my designation", "my manager", "who am I")
 - document: generate professional HR/corporate documents — experience letter, offer letter, relieving letter, loan proof, NOC, bonafide certificate, internship certificate, promotion letter, address proof, confirmation letter, employment verification, ID card request
+- funny: jokes, small-talk, casual chat, morale-boost, humour — only when there is NO real business intent
+- hr (default): leave, benefits, payroll, HR policies — also the fallback when no other domain clearly matches
 - attendance: attendance records/data — check-in time, check-out time, clock-in, punch-in, working hours, attendance of a specific employee or department
+- forms: create Microsoft Forms / surveys / questionnaires — HR survey, exit survey, onboarding form, feedback form, training questionnaire
+- email: draft, write, or compose a professional email — "draft an email for leave", "help me write an email to HR", "compose an email about my resignation"
+- license: AI tool licenses — Claude, Figma, Lovable, M365 Copilot — how many, who has access, seat counts, license lists
 
 User query: "{query}"
 
 Which ONE department should handle this query?
 Reply with ONLY the department name, one word, lowercase. No explanation.
-Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance
+Valid values: hr, it, admin, pmo, finance, org, employee, document, attendance, funny, forms, email, license
+
+If unsure, reply: hr
 
 Reply:"""
 
@@ -244,7 +470,7 @@ Synthesized answer:"""
 class MasterAgent:
     """Single orchestrator — routes to one domain agent and returns its response."""
 
-    _PREWARM_DOMAINS = ['hr', 'it', 'admin', 'pmo', 'finance', 'org']
+    _PREWARM_DOMAINS = ['general', 'hr', 'it', 'admin', 'pmo', 'finance', 'org']
 
     def __init__(self):
         self._slaves: Dict[str, object] = {}
@@ -261,15 +487,9 @@ class MasterAgent:
 
     def _setup_llm(self):
         try:
-            from langchain_ollama import ChatOllama
-            from app.agents.working.config import LLMConfig
+            from app.agents.working.config import LLMConfig, create_llm
             cfg = LLMConfig()
-            self._llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0,
-                num_predict=16,
-            )
+            self._llm = create_llm(temperature=0, max_tokens=16, cfg=cfg)
             print("[MasterAgent] LLM routing ready")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing unavailable ({exc}); keyword routing active")
@@ -280,7 +500,10 @@ class MasterAgent:
 
         agent = None
         try:
-            if domain == 'hr':
+            if domain == 'general':
+                from app.agents.working.quick_agent import QuickAgent
+                agent = QuickAgent()
+            elif domain == 'hr':
                 from app.agents.working.hr_agent import HRAgent
                 agent = HRAgent()
             elif domain == 'it':
@@ -307,8 +530,8 @@ class MasterAgent:
                     def __init__(self, fn) -> None:
                         self._fn = fn
 
-                    def process_query(self, q: str, user_email: str = "") -> str:
-                        return self._fn(q, user_email=user_email)
+                    def process_query(self, q: str, user_email: str = "", user_name: str = "") -> str:
+                        return self._fn(q, user_email=user_email, user_name=user_name)
 
                 agent = _EmpWrapper(_emp_fn)
             elif domain == 'attendance':
@@ -324,6 +547,19 @@ class MasterAgent:
                         return self._fn(q, user_email=user_email)
 
                 agent = _AttWrapper(_att_fn)
+            elif domain == 'license':
+                from app.agents.license_agent import license_agent as _lic_fn
+
+                class _LicWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, user_email: str = "", **__) -> str:
+                        return self._fn(q, user_email=user_email)
+
+                agent = _LicWrapper(_lic_fn)
             elif domain == 'escalation':
                 from app.agents.escalation_agent import escalation_agent as _esc_fn
 
@@ -340,7 +576,49 @@ class MasterAgent:
             elif domain == 'document':
                 from app.agents.document_agent import DocumentAgent
                 agent = DocumentAgent()
+            elif domain == 'forms':
+                # Forms intent is handled entirely on the frontend (drawer panel).
+                # The supervisor returns a sentinel so the frontend knows to open the drawer.
+                class _FormsPlaceholder:
+                    last_sources: List[str] = []
 
+                    def process_query(self, q: str = "", **__) -> str:
+                        return _MS_FORMS_SENTINEL
+
+                agent = _FormsPlaceholder()
+            elif domain == 'email':
+                from app.agents.email_agent import draft_email_from_chat as _email_fn
+
+                class _EmailWrapper:
+                    last_sources: List[str] = []
+
+                    def __init__(self, fn) -> None:
+                        self._fn = fn
+
+                    def process_query(self, q: str, **__) -> str:
+                        try:
+                            result = self._fn(q)
+                            to = result.get("to", "")
+                            subject = result.get("refined_subject", "")
+                            body = result.get("refined_body", "")
+                            parts = []
+                            if to:
+                                parts.append(f"<p><strong>To:</strong> {to}</p>")
+                            if subject:
+                                parts.append(f"<p><strong>Subject:</strong> {subject}</p>")
+                            if body:
+                                parts.append(
+                                    f"<p><strong>Body:</strong></p>"
+                                    f"<p style='white-space:pre-wrap'>{body}</p>"
+                                )
+                            return "".join(parts) if parts else "<p>Could not draft the email. Please try again.</p>"
+                        except RuntimeError as exc:
+                            return f"<p>Unable to draft email: {exc}</p>"
+
+                agent = _EmailWrapper(_email_fn)
+            elif domain == 'funny':
+                from app.agents.working.funny_agent import FunnyAgent
+                agent = FunnyAgent()
             if agent:
                 self._slaves[domain] = agent
                 print(f"[MasterAgent] Agent loaded: {domain}")
@@ -361,11 +639,11 @@ class MasterAgent:
             if not tokens:
                 return None
             domain = tokens[0]
-            if domain in DOMAIN_KEYWORDS or domain == 'document':
-                print(f"[MasterAgent] LLM routed → {domain}")
+            if domain in DOMAIN_KEYWORDS or domain in ('document', 'email'):
+                print(f"[MasterAgent] LLM routed -> {domain}")
                 return domain
         except FuturesTimeout:
-            print("[MasterAgent] LLM routing timed out — falling back to keywords")
+            print("[MasterAgent] LLM routing timed out -- falling back to keywords")
         except Exception as exc:
             print(f"[MasterAgent] LLM routing error ({exc})")
         return None
@@ -378,62 +656,116 @@ class MasterAgent:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
-            print("[MasterAgent] No keyword match — defaulting to hr")
-            return 'hr'
-        print(f"[MasterAgent] Keyword routed → {best} (score={scores[best]})")
+            print("[MasterAgent] No keyword match -- routing to general (QuickAgent)")
+            return 'general'
+        print(f"[MasterAgent] Keyword routed -> {best} (score={scores[best]})")
         return best
 
     def _route(self, query: str, user_email: str = "", user_id: str = "") -> str:
-        # Active document session takes priority — route follow-up field replies correctly
+        # Active document session — field replies go to document, off-topic breaks the session
         try:
-            from app.agents.document_agent import has_active_session
+            from app.agents.document_agent import has_active_session, cancel_session
             if has_active_session(user_email, user_id):
-                print("[MasterAgent] Active document session → document")
-                return 'document'
+                if _is_doc_field_response(query):
+                    print("[MasterAgent] Active document session -> document")
+                    return 'document'
+                # Off-topic message: cancel the session and fall through to normal routing
+                cancel_session(user_email, user_id)
+                print("[MasterAgent] Off-topic during doc session -> session cancelled, routing normally")
         except Exception as exc:
             print(f"[MasterAgent] Session check error: {exc}")
 
         # Escalation keyword — highest priority, bypass LLM
         if 'escalat' in query.lower():
-            print("[MasterAgent] Escalation keyword → escalation")
+            print("[MasterAgent] Escalation keyword -> escalation")
             return 'escalation'
+
+        # Microsoft Forms intent — fast-path before LLM
+        if _is_forms_query(query):
+            print("[MasterAgent] Forms pattern -> forms")
+            return 'forms'
+
+        # Email draft intent — checked before employee to avoid false matches like
+        # "email for Leave Request" hitting the employee email-field pattern
+        if _is_email_draft_query(query):
+            print("[MasterAgent] Email draft pattern -> email")
+            return 'email'
 
         # Attendance pattern pre-classifier — deterministic, checked before employee
         if _is_attendance_query(query):
-            print("[MasterAgent] Attendance pattern → attendance")
+            print("[MasterAgent] Attendance pattern -> attendance")
             return 'attendance'
 
         # Employee directory pre-classifier — deterministic
         if _is_employee_query(query):
-            print("[MasterAgent] Employee pattern → employee")
+            print("[MasterAgent] Employee pattern -> employee")
             return 'employee'
 
         # Document pattern pre-classifier — deterministic, no LLM needed
         if _is_document_query(query):
-            print("[MasterAgent] Document pattern → document")
+            print("[MasterAgent] Document pattern -> document")
             return 'document'
 
-        # LLM routing — preferred when available
-        domain = self._route_llm(query)
-        if domain:
-            return domain
+        # Greetings and conversational openers — quick agent, no retrieval needed
+        if _is_greeting(query) or _is_conversational(query):
+            print("[MasterAgent] Greeting/conversational -> general")
+            return 'general'
 
-        # Keyword fallback
+        # Keyword routing — fast, no LLM call needed
         return self._route_keywords(query)
 
-    def _run_agent(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
+    def _build_correction_note(self, query: str) -> str:
+        """Fetch relevant past negative-feedback corrections and format as a system note."""
+        try:
+            from app.api.services.feedback_service import FeedbackService
+            corrections = FeedbackService().get_corrections_for_query(query, limit=3)
+            if not corrections:
+                return ""
+            lines = []
+            for c in corrections:
+                q = (c.get("user_question") or "")[:200]
+                note = (c.get("correction") or "")[:200]
+                lines.append(f'- Past question: "{q}" → User feedback: "{note}"')
+            block = "\n".join(lines)
+            print(f"[MasterAgent] Injecting {len(corrections)} feedback correction(s) into context")
+            return (
+                f"\n\n[FEEDBACK CORRECTIONS — similar past questions received negative feedback. "
+                f"Adjust your response to avoid repeating these issues:]\n{block}"
+            )
+        except Exception as exc:
+            print(f"[MasterAgent] Correction injection error: {exc}")
+            return ""
+
+    def _run_agent(
+        self,
+        domain: str,
+        query: str,
+        user_email: str = "",
+        user_id: str = "",
+        user_name: str = "",
+        conversation_history: Optional[List[Dict]] = None,
+    ):
         agent = self._get_slave(domain)
         if not agent:
             return None, []
         try:
+            # Inject real-time feedback corrections for knowledge-base domains
+            augmented_query = query
+            if domain in ('hr', 'it', 'admin', 'pmo', 'finance', 'org', 'general'):
+                note = self._build_correction_note(query)
+                if note:
+                    augmented_query = query + note
+
             if domain == 'document':
                 resp = agent.process_query(query, user_email=user_email, user_id=user_id)
-            elif domain in ('employee', 'attendance'):
+            elif domain == 'employee':
+                resp = agent.process_query(query, user_email=user_email, user_name=user_name)
+            elif domain == 'attendance':
                 resp = agent.process_query(query, user_email=user_email)
             elif domain == 'escalation':
                 resp = agent.process_query(query, user_id=user_id)
             else:
-                resp = agent.process_query(query)
+                resp = agent.process_query(augmented_query, conversation_history=conversation_history or [])
             sources = getattr(agent, 'last_sources', [])
             return resp, [s for s in sources if s]
         except Exception as exc:
@@ -452,15 +784,9 @@ class MasterAgent:
         if not prompt_template:
             return None
         try:
-            from langchain_ollama import ChatOllama
-            from app.agents.working.config import LLMConfig
+            from app.agents.working.config import LLMConfig, create_llm
             cfg = LLMConfig()
-            llm = ChatOllama(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                temperature=0.3,
-                num_predict=200,
-            )
+            llm = create_llm(temperature=0.3, max_tokens=200, cfg=cfg)
             prompt = prompt_template.format(query=query)
             with ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(llm.invoke, prompt)
@@ -477,21 +803,15 @@ class MasterAgent:
         )
         if self._llm:
             try:
-                from langchain_ollama import ChatOllama
-                from app.agents.working.config import LLMConfig
+                from app.agents.working.config import LLMConfig, create_llm
                 cfg = LLMConfig()
-                synth_llm = ChatOllama(
-                    base_url=cfg.base_url,
-                    model=cfg.model,
-                    temperature=0.1,
-                    num_predict=cfg.max_tokens,
-                )
+                synth_llm = create_llm(temperature=0.1, cfg=cfg)
                 prompt = _SYNTHESIS_PROMPT.format(query=query, responses=formatted)
                 return synth_llm.invoke(prompt).content
             except Exception as exc:
                 print(f"[MasterAgent] Synthesis LLM error ({exc}); using section format")
-        parts = [f"**{domain.upper()}**\n\n{resp}" for domain, resp in responses.items()]
-        return "\n\n---\n\n".join(parts)
+        parts = [f"<h3>{domain.upper()}</h3>{resp}" for domain, resp in responses.items()]
+        return "<hr>".join(parts)
 
     def _run_slave(self, domain: str, query: str, user_email: str = "", user_id: str = ""):
         slave = self._get_slave(domain)
@@ -512,9 +832,9 @@ class MasterAgent:
             print(f"[MasterAgent] _run_slave error for domain '{domain}': {exc}")
         return domain, None, []
 
-    def process_query(self, query: str, user_email: str = "", user_id: str = "") -> str:
+    def process_query(self, query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
         try:
-            return self._process_query_inner(query, user_email=user_email, user_id=user_id)
+            return self._process_query_inner(query, user_email=user_email, user_id=user_id, user_name=user_name)
         except Exception as exc:
             print(f"[MasterAgent] Unhandled exception in process_query: {exc}")
             return (
@@ -522,16 +842,27 @@ class MasterAgent:
                 "Please try again or contact support if the issue persists."
             )
 
-    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "") -> str:
+    def _process_query_inner(self, query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
         q = query.strip()
         if not q:
-            return "Please enter a question."
-
-        if _GREETING_RE.match(q):
-            return _GREETING_RESPONSE
+            return "<p>Please enter a question.</p>"
 
         if _APPLY_LEAVE_RE.search(q):
             return _APPLY_LEAVE_RESPONSE
+
+        # Microsoft Forms intent — return sentinel so frontend opens the Forms Drawer
+        if _is_forms_query(q):
+            print("[MasterAgent] Forms intent detected -> returning sentinel")
+            return _MS_FORMS_SENTINEL
+
+        # Email draft intent — return sentinel; frontend calls /api/email-agent/from-chat directly
+        if _is_email_draft_query(q):
+            print("[MasterAgent] Email draft intent detected -> returning sentinel")
+            return _EMAIL_DRAFT_SENTINEL
+
+        # Name fast-path — answer from SSO token without a DB call
+        if _NAME_QUERY_RE.search(q) and user_name:
+            return f"<p>Your name is <strong>{user_name}</strong>.</p>"
 
         is_blocked, category, fallback = check_input(q)
         if is_blocked:
@@ -539,36 +870,159 @@ class MasterAgent:
                 return fallback
             return self._contextual_block_response(q, category) or fallback
 
+        # Track whether a document session was active before routing so we can
+        # notify the user if their off-topic message broke the session.
+        _doc_session_was_active = False
+        try:
+            from app.agents.document_agent import has_active_session
+            _doc_session_was_active = has_active_session(user_email, user_id)
+        except Exception:
+            pass
+
         domain = self._route(q, user_email=user_email, user_id=user_id)
-        resp, sources = self._run_agent(domain, q, user_email, user_id)
+        resp, sources = self._run_agent(domain, q, user_email, user_id, user_name)
+
+        if _doc_session_was_active and domain != 'document' and resp:
+            resp = (
+                "<p><em>📝 Your document session has been cancelled. "
+                "Start a new request any time.</em></p>"
+            ) + resp
 
         if not resp:
             return (
-                "I couldn't find relevant information for your query. "
-                "Please reach out to the appropriate department directly."
+                "<p>I couldn't find relevant information for your query. "
+                "Please reach out to the appropriate department directly.</p>"
             )
 
-        if sources:
-            def _source_label(url: str) -> str:
-                try:
-                    qs = parse_qs(urlparse(url).query)
-                    if "file" in qs:
-                        return unquote(qs["file"][0])
-                except Exception:
-                    pass
-                return unquote(url.split("/")[-1]) or url
-
-            source_list = "\n".join(
-                f"  • [{_source_label(s)}]({s})" for s in dict.fromkeys(sources)
-            )
-            resp += f"\n\n---\n📄 **Sources**\n{source_list}"
+        # if sources:
+        #     items = "".join(
+        #         f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+        #         for s in dict.fromkeys(sources)
+        #     )
+        #     resp += f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"
 
         return resp
 
+    async def stream_query(
+        self, query: str, user_email: str = "", user_id: str = "", user_name: str = "",
+    ) -> AsyncGenerator[str, None]:
+        """Yield SSE-formatted chunks with real async token-by-token streaming."""
+        import asyncio
+        q = query.strip()
+        if not q:
+            yield _sse({"content": "<p>Please enter a question.</p>"})
+            yield _sse_done()
+            return
 
-# ── Singleton + public entry point ───────────────────────────────────────────
+        if _APPLY_LEAVE_RE.search(q):
+            yield _sse({"content": _APPLY_LEAVE_RESPONSE})
+            yield _sse_done()
+            return
+
+        if _is_forms_query(q):
+            yield _sse({"content": _MS_FORMS_SENTINEL})
+            yield _sse_done()
+            return
+
+        if _is_email_draft_query(q):
+            yield _sse({"content": _EMAIL_DRAFT_SENTINEL})
+            yield _sse_done()
+            return
+
+        # Name fast-path — answer from SSO token without a DB call
+        if _NAME_QUERY_RE.search(q) and user_name:
+            yield _sse({"content": f"<p>Your name is <strong>{user_name}</strong>.</p>"})
+            yield _sse_done()
+            return
+
+        is_blocked, category, fallback = check_input(q)
+        if is_blocked:
+            if category in ('jailbreak', 'security', 'harmful'):
+                answer = fallback
+            else:
+                answer = self._contextual_block_response(q, category) or fallback
+            yield _sse({"content": answer})
+            yield _sse_done()
+            return
+
+        # Route then stream
+        try:
+            _doc_session_was_active = False
+            try:
+                from app.agents.document_agent import has_active_session
+                _doc_session_was_active = has_active_session(user_email, user_id)
+            except Exception:
+                pass
+
+            domain = self._route(q, user_email=user_email, user_id=user_id)
+
+            if _doc_session_was_active and domain != 'document':
+                yield _sse({"content": (
+                    "<p><em>📝 Your document session has been cancelled. "
+                    "Start a new request any time.</em></p>"
+                )})
+
+            agent = self._get_slave(domain)
+
+            if not agent:
+                yield _sse({"content": "<p>I couldn't find relevant information. Please reach out to the appropriate department.</p>"})
+                yield _sse_done()
+                return
+
+            if hasattr(agent, 'stream_query'):
+                # Async token streaming — event loop stays free between tokens
+                async for chunk in agent.stream_query(q, user_id=user_id):
+                    yield _sse({"content": chunk})
+            else:
+                # Non-streaming agents (employee, attendance, document, escalation)
+                resp, _ = await asyncio.to_thread(self._run_agent, domain, q, user_email, user_id)
+                answer = resp or "<p>I couldn't find relevant information. Please reach out to the appropriate department.</p>"
+                yield _sse({"content": answer})
+
+            sources = getattr(agent, 'last_sources', [])
+            if sources:
+                items = "".join(
+                    f'<li><a href="{s}" target="_blank">{_source_label(s)}</a></li>'
+                    for s in dict.fromkeys(sources)
+                )
+                yield _sse({"content": f"<hr><p><strong>📄 Sources</strong></p><ul>{items}</ul>"})
+
+        except Exception as exc:
+            print(f"[MasterAgent] stream_query error: {exc}")
+            yield _sse({"content": "I couldn't find relevant information. Please reach out to the appropriate department directly."})
+
+        yield _sse_done()
+
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
+
+
+def _sse_done() -> str:
+    return "data: [DONE]\n\n"
+
+
+def _source_label(url: str) -> str:
+    """Return a short human-readable label for a source URL."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path.rstrip("/")
+    name = path.split("/")[-1] if path else url
+    # Strip common extensions for readability
+    for ext in (".pdf", ".docx", ".doc", ".xlsx", ".txt", ".md"):
+        if name.lower().endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return name or url
+
+
+# ── Singleton + public entry points ──────────────────────────────────────────
 _master = MasterAgent()
 
 
-def run_assistant(query: str, user_email: str = "", user_id: str = "") -> str:
-    return _master.process_query(query, user_email=user_email, user_id=user_id)
+def run_assistant(query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> str:
+    return _master.process_query(query, user_email=user_email, user_id=user_id, user_name=user_name)
+
+
+async def stream_assistant(query: str, user_email: str = "", user_id: str = "", user_name: str = "") -> AsyncGenerator[str, None]:
+    async for chunk in _master.stream_query(query, user_email=user_email, user_id=user_id, user_name=user_name):
+        yield chunk

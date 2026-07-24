@@ -47,7 +47,7 @@ def _get_embedder() -> HuggingFaceEmbeddings:
 def _get_pool() -> _pg_pool.ThreadedConnectionPool:
     global _conn_pool
     if _conn_pool is None:
-        print(f"[retriever] Creating connection pool → {_DB_URL}")
+        print(f"[retriever] Creating connection pool -> {_DB_URL}")
         _conn_pool = _pg_pool.ThreadedConnectionPool(1, 8, _DB_URL)
     return _conn_pool
 
@@ -90,6 +90,7 @@ def retrieve_chunks(query: str, top_k: int = 10) -> list:
     conn = _get_db_conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SET ivfflat.probes = 10")
             cur.execute(
                 """
                 SELECT

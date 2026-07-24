@@ -15,11 +15,29 @@ import PersonalNotes      from './components/PersonalNotes';
 import AllocationBoard    from './components/AllocationBoard';
 import LoginPage       from './components/LoginPage';
 import EscalationDrawer from './components/EscalationDrawer';
+import FormsDrawer from './components/FormsDrawer';
+import ParkingDrawer from './components/ParkingDrawer';
 import { OnboardingGuidancePage } from './modules/onboarding-guidance';
+import { SkillRadarDashboard }   from './modules/skill-hub';
 import { getAllocationRole } from './services/api';
 import EmailAgentPage from './components/EmailAgentPage';
 import { AnalyticsDashboard } from './modules/analytics';
+import { COODashboard }         from './modules/coo-analytics';
 import DocumentsPage from './components/DocumentsPage';
+import AdminPage from './components/AdminPage';
+import CommunicationsPage from './components/CommunicationsPage';
+import CommunicationsAdmin from './components/CommunicationsAdmin';
+import QuickLinksAdmin from './components/QuickLinksAdmin';
+import { PMODashboard } from './modules/pmo-hub';
+import { FeedbackPage, FeedbackAdmin } from './modules/feedback';
+import AnnouncementBanner from './components/AnnouncementBanner';
+import AnnouncementOverlay from './components/AnnouncementOverlay';
+import CommunicationsWidget from './components/CommunicationsWidget';
+import AttendancePage from './components/AttendancePage';
+import EmployeeDirectoryPage from './components/EmployeeDirectoryPage';
+import { FormBuilderAdmin, FormDesignerPage } from './modules/form-builder';
+import FormChatPanel from './modules/form-builder/components/FormChatPanel';
+import SlashCommandAdmin from './modules/form-builder/pages/SlashCommandAdmin';
 
 const SIDEBAR_BREAKPOINT = 900;
 
@@ -39,7 +57,7 @@ async function restoreSession(setUser, setAuthError, setAuthLoading) {
       return;
     }
 
-    const userInfo = getUserInfo(userEmail);
+    const userInfo = await getUserInfo(userEmail);
     setUser({
       ...buildUser(profile),
       role:            userInfo.role,
@@ -65,11 +83,19 @@ export default function App() {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [injectedMessage, setInjectedMessage] = useState('');
+  const [formsDrawerOpen,       setFormsDrawerOpen]       = useState(false);
+  const [formsDrawerQuery,      setFormsDrawerQuery]      = useState('');
+  const [parkingDrawerOpen,     setParkingDrawerOpen]     = useState(false);
+  const [formBuilderView,       setFormBuilderView]       = useState('list'); // 'list' | 'designer'
+  const [editingFormId,         setEditingFormId]         = useState(null);
+  const [formPanelRef,          setFormPanelRef]          = useState(null);  // { slug, name, icon, ... }
 
   const [user,           setUser]           = useState(null);
   const [authLoading,    setAuthLoading]    = useState(true);
   const [authError,      setAuthError]      = useState(null);
   const [allocationRole, setAllocationRole] = useState(null);
+  // Lifted so the widget stays closed during in-session navigation but resets on page reload
+  const [widgetClosed,   setWidgetClosed]   = useState(false);
 
   // Auto-close sidebar when window shrinks below breakpoint
   useEffect(() => {
@@ -128,7 +154,7 @@ export default function App() {
           }
           
           // Store user info with their role and permissions
-          const userInfo = getUserInfo(userEmail);
+          const userInfo = await getUserInfo(userEmail);
           const userWithInfo = {
             ...buildUser(profile),
             role: userInfo.role,
@@ -225,6 +251,10 @@ export default function App() {
             setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
             setEscalationOpen(true);
           }}
+          onOpenFormsDrawer={(query) => {
+            setFormsDrawerQuery(query || '');
+            setFormsDrawerOpen(true);
+          }}
         />
       </main>
     );
@@ -255,7 +285,14 @@ export default function App() {
         onThemeToggle={() => setIsDark((d) => !d)}
         onLogout={handleLogout}
         onGoHome={handleGoHome}
+        onNavigate={setActiveNav}
       />
+
+      {/* Global announcement banner — banner-mode, shown below TopBar */}
+      <AnnouncementBanner user={user} />
+
+      {/* Welcome overlay — overlay/carousel-mode announcements */}
+      <AnnouncementOverlay user={user} />
 
       <div className="app-layout">
         <Sidebar
@@ -274,6 +311,7 @@ export default function App() {
           refreshKey={sidebarRefreshKey}
           selectedConversationId={selectedConversationId}
           allocationRole={allocationRole}
+          user={user}
         />
 
         {activeNav === 'analytics' ? (
@@ -286,23 +324,71 @@ export default function App() {
           <OnboardingGuidancePage user={user} config={chatConfig} />
         ) : activeNav === 'allocationBoard' ? (
           <AllocationBoard />
+        ) : activeNav === 'cooAnalytics' ? (
+          <COODashboard />
         ) : activeNav === 'emailAgent' ? (
           <EmailAgentPage user={user} />
-        ) : (
-          <main className="main-content">
-            <ChatWindow
-              key={chatKey}
-              config={chatConfig}
-              user={user}
-              selectedConversationId={selectedConversationId}
-              onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
-              onOpenEscalation={({ conversationId, messageId } = {}) => {
-                setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
-                setEscalationOpen(true);
-              }}
-              injectedMessage={injectedMessage}
-              onInjectedMessageSent={() => setInjectedMessage('')}
+        ) : activeNav === 'skillRadar' ? (
+          <SkillRadarDashboard user={user} />
+        ) : activeNav === 'pmoHub' ? (
+          <PMODashboard user={user} />
+        ) : activeNav === 'communications' ? (
+          <CommunicationsPage user={user} />
+        ) : activeNav === 'attendance' ? (
+          <AttendancePage user={user} />
+        ) : activeNav === 'employeeDirectory' ? (
+          <EmployeeDirectoryPage user={user} />
+        ) : activeNav === 'adminAnalytics' && user?.isAdmin ? (
+          <AnalyticsDashboard user={user} />
+        ) : activeNav === 'adminSettings' && user?.isAdmin ? (
+          <AdminPage user={user} />
+        ) : activeNav === 'adminCommunications' && user?.isAdmin ? (
+          <CommunicationsAdmin user={user} />
+        ) : activeNav === 'adminQuickLinks' && user?.isAdmin ? (
+          <QuickLinksAdmin user={user} />
+        ) : activeNav === 'adminSlashCommands' && user?.isAdmin ? (
+          <SlashCommandAdmin />
+        ) : activeNav === 'adminFeedback' && user?.isAdmin ? (
+          <FeedbackAdmin user={user} />
+        ) : activeNav === 'feedback' ? (
+          <FeedbackPage user={user} />
+        ) : activeNav === 'adminFormBuilder' && user?.isAdmin ? (
+          formBuilderView === 'designer' ? (
+            <FormDesignerPage
+              formId={editingFormId}
+              onBack={() => { setFormBuilderView('list'); setEditingFormId(null); }}
             />
+          ) : (
+            <FormBuilderAdmin
+              user={user}
+              onCreateForm={() => { setEditingFormId(null); setFormBuilderView('designer'); }}
+              onEditForm={(form) => { setEditingFormId(form.id); setFormBuilderView('designer'); }}
+            />
+          )
+        ) : (
+          <main className="main-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <CommunicationsWidget user={user} onNavigate={setActiveNav} closed={widgetClosed} onClose={() => setWidgetClosed(true)} />
+            <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <ChatWindow
+                key={chatKey}
+                config={chatConfig}
+                user={user}
+                selectedConversationId={selectedConversationId}
+                onConversationUpdated={() => setSidebarRefreshKey((k) => k + 1)}
+                onOpenEscalation={({ conversationId, messageId } = {}) => {
+                  setEscalationContext({ conversationId: conversationId ?? null, messageId: messageId ?? null });
+                  setEscalationOpen(true);
+                }}
+                onOpenFormsDrawer={(query) => {
+                  setFormsDrawerQuery(query || '');
+                  setFormsDrawerOpen(true);
+                }}
+                onOpenFormPanel={(formRef) => setFormPanelRef(formRef)}
+                onOpenParkingDrawer={() => setParkingDrawerOpen(true)}
+                injectedMessage={injectedMessage}
+                onInjectedMessageSent={() => setInjectedMessage('')}
+              />
+            </div>
           </main>
         )}
 
@@ -316,6 +402,7 @@ export default function App() {
             user={user}
             onClose={() => setRightPanelOpen(false)}
             onSendMessage={handleSendFromPanel}
+            onNavigate={(navId) => { setActiveNav(navId); setRightPanelOpen(false); }}
           />
         )}
       </div>
@@ -326,6 +413,26 @@ export default function App() {
         conversationId={escalationContext.conversationId}
         messageId={escalationContext.messageId}
       />
+      <FormsDrawer
+        isOpen={formsDrawerOpen}
+        onClose={() => setFormsDrawerOpen(false)}
+        user={user}
+        initialQuery={formsDrawerQuery}
+      />
+      <ParkingDrawer
+        isOpen={parkingDrawerOpen}
+        onClose={() => setParkingDrawerOpen(false)}
+        user={user}
+      />
+
+      {/* NCL Form Chat Panel — slides in from right when a /slash form is selected */}
+      {formPanelRef && (
+        <FormChatPanel
+          formRef={formPanelRef}
+          user={user}
+          onClose={() => setFormPanelRef(null)}
+        />
+      )}
     </div>
   );
 }

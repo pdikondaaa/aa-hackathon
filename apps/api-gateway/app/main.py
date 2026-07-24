@@ -1,3 +1,24 @@
+from dotenv import find_dotenv, load_dotenv
+import os
+
+_dotenv_path = find_dotenv(usecwd=True)
+load_dotenv(_dotenv_path)  # walks up to find .env; must run before any module that reads os.environ
+
+# ── LLM provider startup log ──────────────────────────────────────────────────
+_use_claude = os.environ.get("USE_Claude_API_Key", "False").lower() in ("true", "1", "yes")
+_use_groq   = os.environ.get("USE_Groq_API_Key",   "False").lower() in ("true", "1", "yes")
+_use_ollama = os.environ.get("Use_Ollama_LLM",     "False").lower() in ("true", "1", "yes")
+if _use_claude:
+    _active_llm = f"Claude  ({os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-6')})  key={'SET' if os.environ.get('CLAUDE_API_KEY') else 'MISSING'}"
+elif _use_groq:
+    _active_llm = f"Groq  ({os.environ.get('GROQ_MODEL', 'llama3-70b-8192')})  key={'SET' if os.environ.get('GROQ_API_KEY') else 'MISSING'}"
+else:
+    _active_llm = f"Ollama  ({os.environ.get('OLLAMA_MODEL', 'gpt-oss')} @ {os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')})"
+print(f"[AURA] .env loaded from : {_dotenv_path or '(none found)'}")
+print(f"[AURA] LLM provider     : {_active_llm}")
+print(f"[AURA] Flags            : USE_Claude_API_Key={_use_claude}  USE_Groq_API_Key={_use_groq}  Use_Ollama_LLM={_use_ollama}")
+# ─────────────────────────────────────────────────────────────────────────────
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +32,8 @@ from app.api.controllers.feedback_controller import msg_router as feedback_msg_r
 from app.api.controllers.feedback_controller import conv_router as feedback_conv_router
 from app.api.controllers.feedback_controller import fb_router as feedback_fb_router
 from app.api.controllers.feedback_controller import admin_router as feedback_admin_router
+from app.api.controllers.product_feedback_controller import pub_router as product_feedback_pub_router
+from app.api.controllers.product_feedback_controller import admin_router as product_feedback_admin_router
 from app.api.controllers.escalations_controller import esc_router as escalations_router
 from app.api.controllers.escalations_controller import admin_router as escalations_admin_router
 from app.api.controllers.pii_controller import router as pii_router
@@ -20,6 +43,23 @@ from app.api.controllers.email_controller import router as email_router
 from app.api.controllers.attendance_controller import router as attendance_router
 from app.api.controllers.profile_controller import router as profile_router
 from app.api.controllers.documents_controller import router as documents_router
+from app.api.controllers.coo_analytics_controller import router as coo_analytics_router
+from app.api.controllers.aura_analytics_controller import router as aura_analytics_router
+from app.api.controllers.forms_controller import router as forms_router
+from app.api.controllers.communications_controller import pub_router as communications_pub_router
+from app.api.controllers.communications_controller import admin_router as communications_admin_router
+from app.api.controllers.parking_controller import router as parking_router
+from app.api.controllers.skills_controller import router as skills_router
+from app.api.controllers.employee_directory_controller import router as employee_directory_router
+from app.api.controllers.graph_calendar_controller import router as graph_calendar_router
+from app.api.controllers.form_builder_controller import pub_router as ncl_pub_router
+from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
+from app.api.controllers.form_builder_controller import pub_router as ncl_pub_router
+from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
+from app.api.controllers.form_builder_controller import pub_router as ncl_pub_router
+from app.api.controllers.form_builder_controller import admin_router as ncl_admin_router
+from app.api.controllers.admin_users_controller import router as app_users_router
+from app.api.controllers.admin_users_controller import admin_router as admin_users_router
 
 
 tags_metadata = [
@@ -27,6 +67,8 @@ tags_metadata = [
     {"name": "Conversations", "description": "Conversation CRUD — list, create, rename, soft-delete."},
     {"name": "Messages", "description": "Send, list, fetch, regenerate, stop, and cite messages."},
     {"name": "Feedback", "description": "Submit, update, and admin-list thumbs up/down feedback on messages."},
+    {"name": "Product Feedback", "description": "Submit and view app-wide feedback (bugs, suggestions, improvements) from the Share Feedback form."},
+    {"name": "Product Feedback (Admin)", "description": "Admin review of app-wide feedback submissions — filter, respond, and manage status."},
     {"name": "Escalations", "description": "Create, track, and manage HR/IT/Admin escalations with dynamic forms."},
     {"name": "PII", "description": "Admin PII rule management, redaction event logs, review, and analytics."},
     {"name": "Email Agent", "description": "AI-powered email refinement and composition."},
@@ -35,6 +77,16 @@ tags_metadata = [
     {"name": "Health", "description": "Service and database health checks."},
     {"name": "Debug", "description": "Debug and diagnostic endpoints."},
     {"name": "Allocation", "description": "PMO Allocation Board — role-aware project and resource data."},
+    {"name": "Microsoft Forms", "description": "Create Microsoft Forms / surveys on behalf of the authenticated user via Graph API."},
+    {"name": "Communications", "description": "Org-wide announcements and company events with RSVP support."},
+    {"name": "Parking", "description": "Employee parking preference management — check status, view options, declare or change preference, and cost calculator via conversational AI."},
+    {"name": "Skills", "description": "Org-wide skill analytics from employee_details.primary_skills — top skills, breakdown by function, experience, and employee search."},
+    {"name": "No-Code Platform", "description": "No-code / low-code form builder — create, publish, and submit metadata-driven forms with workflow automation and business rules."},
+    {"name": "No-Code Platform (Admin)", "description": "Admin-only endpoints for managing form definitions, fields, workflows, rules, and audit logs."},
+    {"name": "No-Code Platform", "description": "No-code / low-code form builder — create, publish, and submit metadata-driven forms with workflow automation and business rules."},
+    {"name": "No-Code Platform (Admin)", "description": "Admin-only endpoints for managing form definitions, fields, workflows, rules, and audit logs."},
+    {"name": "No-Code Platform", "description": "No-code / low-code form builder — create, publish, and submit metadata-driven forms with workflow automation and business rules."},
+    {"name": "No-Code Platform (Admin)", "description": "Admin-only endpoints for managing form definitions, fields, workflows, rules, and audit logs."},
 ]
 
 app = FastAPI(
@@ -60,6 +112,8 @@ app.include_router(feedback_msg_router)
 app.include_router(feedback_conv_router)
 app.include_router(feedback_fb_router)
 app.include_router(feedback_admin_router)
+app.include_router(product_feedback_pub_router)
+app.include_router(product_feedback_admin_router)
 app.include_router(escalations_router)
 app.include_router(escalations_admin_router)
 app.include_router(pii_router)
@@ -71,3 +125,15 @@ app.include_router(email_router)
 app.include_router(attendance_router)
 app.include_router(profile_router)
 app.include_router(documents_router)
+app.include_router(coo_analytics_router)
+app.include_router(aura_analytics_router)
+app.include_router(forms_router)
+app.include_router(communications_pub_router)
+app.include_router(communications_admin_router)
+app.include_router(parking_router)
+app.include_router(skills_router)
+app.include_router(employee_directory_router)
+app.include_router(ncl_pub_router)
+app.include_router(ncl_admin_router)
+app.include_router(app_users_router)
+app.include_router(admin_users_router)

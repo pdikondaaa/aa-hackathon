@@ -1,9 +1,9 @@
 import { msalInstance } from '../utils/authService';
+import { InteractionRequiredAuthError } from '@azure/msal-browser';
 
-let API_URL = import.meta.env.VITE_API_URL || '';
+let API_URL = import.meta.env.VITE_API_URL || '/aura-api';
 if (import.meta.env.DEV) {
-  // In local Vite dev, use the proxy mapped at /api to avoid HTTPS->HTTP mixed content.
-  API_URL = '';
+  API_URL = '/aura-api';
 }
 
 class HTTPClient {
@@ -83,8 +83,27 @@ class HTTPClient {
     });
   }
 
+  patch(endpoint, data, options = {}) {
+    return this.request(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   delete(endpoint, options = {}) {
     return this.request(endpoint, { ...options, method: 'DELETE' });
+  }
+
+  // Binary responses (e.g. profile photos) — bypasses response.json()
+  async getBlob(endpoint, options = {}) {
+    let config = { method: 'GET', headers: {}, ...options };
+    for (const interceptor of this.requestInterceptors) {
+      config = await interceptor(config, endpoint);
+    }
+    const response = await fetch(`${this.baseURL}${endpoint}`, config);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.blob();
   }
 }
 
@@ -104,10 +123,19 @@ httpClient.addRequestInterceptor(async (config, endpoint) => {
     }
 
     const scopes = [`${import.meta.env.VITE_AZURE_CLIENT_ID}/.default`];
-    const response = await msalInstance.acquireTokenSilent({ scopes, account });
+    let tokenResponse;
+    try {
+      tokenResponse = await msalInstance.acquireTokenSilent({ scopes, account });
+    } catch (silentError) {
+      if (silentError instanceof InteractionRequiredAuthError) {
+        tokenResponse = await msalInstance.acquireTokenPopup({ scopes, account });
+      } else {
+        throw silentError;
+      }
+    }
 
     config.headers = config.headers || {};
-    config.headers['Authorization'] = `Bearer ${response.accessToken}`;
+    config.headers['Authorization'] = `Bearer ${tokenResponse.accessToken}`;
   } catch (error) {
     console.error('Failed to acquire token:', error);
     throw new Error('Authentication failed');
@@ -155,6 +183,25 @@ export async function refineEmail({ to, cc, subject, body }) {
 
 export async function draftEmailFromChat(message) {
   return httpClient.post('/api/email-agent/from-chat', { message });
+}
+
+export async function saveEmailDraft(conversationId, { to, subject, body }) {
+  return httpClient.post(`/api/conversations/${conversationId}/email-draft`, { to, subject, body });
+}
+
+export async function draftITTicketEmail({ employeeName, issueType, description, urgency, stepsTried }) {
+  return httpClient.post('/api/email-agent/it-ticket', {
+    employee_name:   employeeName,
+    issue_type:      issueType,
+    description,
+    urgency,
+    steps_tried:     stepsTried || '',
+    submission_date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+  });
+}
+
+export async function sendEmail({ to, subject, body }) {
+  return httpClient.post('/api/email-agent/send', { to, subject, body });
 }
 
 // ── Conversations API ──────────────────────────────────────────────────────
@@ -205,10 +252,46 @@ export async function getConversationFeedback(conversationId) {
   return httpClient.get(`/api/conversations/${conversationId}/feedback`);
 }
 
+// ── Product Feedback API (Share Feedback / Feedback Review) ────────────────
+
+export async function submitProductFeedback(payload) {
+  return httpClient.post('/api/product-feedback', payload);
+}
+
+export async function listMyProductFeedback() {
+  return httpClient.get('/api/product-feedback');
+}
+
+export async function listProductFeedbackAdmin(params = {}) {
+  const query = new URLSearchParams();
+  if (params.page) query.set('page', params.page);
+  if (params.limit) query.set('limit', params.limit);
+  if (params.type) query.set('type', params.type);
+  if (params.status) query.set('status', params.status);
+  const qs = query.toString();
+  return httpClient.get(`/api/admin/product-feedback${qs ? `?${qs}` : ''}`);
+}
+
+export async function updateProductFeedback(id, patch) {
+  return httpClient.patch(`/api/admin/product-feedback/${id}`, patch);
+}
+
+export async function deleteProductFeedback(id) {
+  return httpClient.delete(`/api/admin/product-feedback/${id}`);
+}
+
 // ── Allocation Board API ───────────────────────────────────────────────────
 
-export async function getAllocationBoard() {
-  return httpClient.get('/api/allocation/board');
+export async function getAllocationBoard(params = {}) {
+  const query = new URLSearchParams();
+  if (params.date_from) query.set('date_from', params.date_from);
+  if (params.date_to) query.set('date_to', params.date_to);
+  const qs = query.toString();
+  return httpClient.get(`/api/allocation/board${qs ? `?${qs}` : ''}`);
+}
+
+export async function getAllocationFilterOptions() {
+  return httpClient.get('/api/allocation/filters');
 }
 
 export async function getEmployeeDetail(employeeId) {
@@ -217,6 +300,10 @@ export async function getEmployeeDetail(employeeId) {
 
 export async function getAllocationRole() {
   return httpClient.get('/api/allocation/my-role');
+}
+
+export async function getMyTeamAllocation() {
+  return httpClient.get('/api/allocation/my-team');
 }
 
 export async function askAllocationAura(question) {
@@ -251,6 +338,10 @@ export async function getMyAttendance() {
   return httpClient.get('/api/attendance/me');
 }
 
+export async function getTeamAttendance() {
+  return httpClient.get('/api/attendance/team');
+}
+
 // ── Birthdays API ──────────────────────────────────────────────────────────
 
 export async function getTodaysBirthdays() {
@@ -264,6 +355,163 @@ export async function listDocuments(page = 1, limit = 50, search, category) {
   if (search) params.set('search', search);
   if (category) params.set('category', category);
   return httpClient.get(`/api/documents?${params}`);
+}
+
+// ── Skills Analytics API ───────────────────────────────────────────────────
+
+export async function getSkillsAnalytics() {
+  return httpClient.get('/api/skills/analytics');
+}
+
+// ── Employee Directory API ─────────────────────────────────────────────────
+
+export async function getEmployeeDirectory() {
+  return httpClient.get('/api/employees/directory');
+}
+
+export async function getEmployeePhotoBlob(email) {
+  return httpClient.getBlob(`/api/employees/photo/${encodeURIComponent(email)}`);
+}
+
+// ── Microsoft Forms API ──────────────────────────────────────────────────
+
+/**
+ * Acquires a Microsoft Graph access token with the Forms.ReadWrite scope.
+ * Uses MSAL's acquireTokenSilent, falling back to an interactive popup if needed.
+ * The token is then sent to the backend alongside the form payload so the
+ * backend can call the Graph API on behalf of the user.
+ */
+export async function acquireFormsToken() {
+  const FORMS_SCOPE = [
+    import.meta.env.VITE_MS_FORMS_SCOPE ||
+    'https://forms.office.com/Forms.ReadWrite',
+  ];
+  const account = msalInstance.getActiveAccount();
+  if (!account) throw new Error('No active account. Please sign in again.');
+
+  let tokenRes;
+  try {
+    tokenRes = await msalInstance.acquireTokenSilent({ scopes: FORMS_SCOPE, account });
+  } catch {
+    try {
+      tokenRes = await msalInstance.acquireTokenPopup({ scopes: FORMS_SCOPE, account, prompt: 'consent' });
+    } catch {
+      throw new Error('Unable to obtain Microsoft Forms permission. Please ask your Azure AD admin to grant the Forms.ReadWrite permission.');
+    }
+  }
+
+  return {
+    access_token: tokenRes.accessToken,
+    tenant_id:    account.tenantId,
+    user_oid:     account.localAccountId,
+  };
+}
+
+/**
+ * Creates a Microsoft Form on behalf of the logged-in user.
+ * @param {{ title: string, description: string|null, questions: Array, graph_access_token: string }} payload
+ */
+export async function createMicrosoftForm(payload) {
+  return httpClient.post('/api/ms-forms/create', payload);
+}
+
+// ── Work Anniversaries API ─────────────────────────────────────────────────
+
+export async function getTodaysAnniversaries() {
+  return httpClient.get('/api/users/anniversaries/today');
+}
+
+// ── Graph — Shared Mailbox Calendar ───────────────────────────────────────
+
+export async function getSharedCalendarEvents() {
+  try {
+    return await httpClient.get('/api/communications/shared-calendar');
+  } catch (_) {
+    return [];
+  }
+}
+
+// ── Communications — Announcements ─────────────────────────────────────────
+
+export async function getActiveAnnouncements() {
+  return httpClient.get('/api/communications/announcements/active');
+}
+
+export async function dismissAnnouncement(id) {
+  return httpClient.post(`/api/communications/announcements/${id}/dismiss`, {});
+}
+
+export async function adminListAnnouncements(page = 1, limit = 50, status) {
+  const params = new URLSearchParams({ page, limit });
+  if (status) params.set('status', status);
+  return httpClient.get(`/api/admin/communications/announcements?${params}`);
+}
+
+export async function adminCreateAnnouncement(payload) {
+  return httpClient.post('/api/admin/communications/announcements', payload);
+}
+
+export async function adminUpdateAnnouncement(id, payload) {
+  return httpClient.request(`/api/admin/communications/announcements/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminDeleteAnnouncement(id) {
+  return httpClient.delete(`/api/admin/communications/announcements/${id}`);
+}
+
+// ── Communications — Events ────────────────────────────────────────────────
+
+export async function listPublicEvents(page = 1, limit = 50, status) {
+  const params = new URLSearchParams({ page, limit });
+  if (status) params.set('status', status);
+  return httpClient.get(`/api/communications/events?${params}`);
+}
+
+export async function submitEventRsvp(eventId, payload) {
+  return httpClient.post(`/api/communications/events/${eventId}/rsvp`, payload);
+}
+
+export async function adminListEvents(page = 1, limit = 50, status, publishStatus) {
+  const params = new URLSearchParams({ page, limit });
+  if (status)        params.set('status', status);
+  if (publishStatus) params.set('publish_status', publishStatus);
+  return httpClient.get(`/api/admin/communications/events?${params}`);
+}
+
+export async function adminCreateEvent(payload) {
+  return httpClient.post('/api/admin/communications/events', payload);
+}
+
+export async function adminUpdateEvent(id, payload) {
+  return httpClient.request(`/api/admin/communications/events/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminDeleteEvent(id) {
+  return httpClient.delete(`/api/admin/communications/events/${id}`);
+}
+
+// ── User roles / admin access ───────────────────────────────────────────────
+
+export async function getMyRole() {
+  return httpClient.get('/api/users/me/role');
+}
+
+export async function adminListUsers() {
+  return httpClient.get('/api/admin/users');
+}
+
+export async function adminSetUserRole(email, role) {
+  return httpClient.put(`/api/admin/users/${encodeURIComponent(email)}`, { role });
+}
+
+export async function adminRemoveUser(email) {
+  return httpClient.delete(`/api/admin/users/${encodeURIComponent(email)}`);
 }
 
 export default httpClient;

@@ -34,6 +34,17 @@ class ChatEmailResponse(BaseModel):
     refined_body: str
 
 
+class SendEmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+
+class SendEmailResponse(BaseModel):
+    success: bool
+    message: str
+
+
 @router.post(
     "/refine",
     response_model=RefineResponse,
@@ -55,10 +66,44 @@ def refine_email(
             body=req.body,
         )
         return result
+    except RuntimeError:
+        # LLM unavailable — return the original draft unrefined so the UI still works
+        return RefineResponse(refined_subject=req.subject, refined_body=req.body)
+    except Exception as exc:
+        print(f"[email_controller] Unexpected error: {exc}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {exc}")
+
+
+@router.post(
+    "/send",
+    response_model=SendEmailResponse,
+    summary="Send an email directly via SMTP",
+)
+def send_email(
+    req: SendEmailRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    if not req.to or not req.to.strip():
+        raise HTTPException(status_code=422, detail="Recipient email cannot be empty.")
+    if not req.subject or not req.subject.strip():
+        raise HTTPException(status_code=422, detail="Subject cannot be empty.")
+    if not req.body or not req.body.strip():
+        raise HTTPException(status_code=422, detail="Email body cannot be empty.")
+
+    try:
+        from app.agents.email_agent import send_email as _send
+        _send(
+            to=req.to.strip(),
+            subject=req.subject.strip(),
+            body=req.body.strip(),
+            sender=current_user.get("email", ""),
+        )
+        return SendEmailResponse(success=True, message="Email sent successfully.")
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
-        print(f"[email_controller] Unexpected error: {exc}")
+        print(f"[email_controller] Unexpected error in send: {exc}")
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {exc}")
 

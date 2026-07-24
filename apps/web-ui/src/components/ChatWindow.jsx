@@ -1,6 +1,13 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { autocorrectLastWord } from '../utils/autocorrect';
 import MessageBubble from './MessageBubble';
-import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat } from '../services/api';
+import { createConversation, postMessage, listMessages, getConversationFeedback, draftEmailFromChat, saveEmailDraft } from '../services/api';
+import { buildParkingHtml, buildAlreadySubmittedHtml } from '../config/parkingConfig';
+import { parkingApi } from '../modules/parking-assistant/services/parkingApi';
+import {
+  searchForms, listPublishedForms,
+  searchSlashCommands, listActiveSlashCommands,
+} from '../modules/form-builder/services/formBuilderApi';
 
 const THINKING_PHRASES = [
   'Searching the knowledge base...',
@@ -16,6 +23,23 @@ const THINKING_PHRASES = [
   'Sifting through records...',
   'Piecing it all together...',
 ];
+
+const SENTINEL_LABELS = {
+  '__MS_FORMS_INTENT__':    '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!',
+  '__EMAIL_DRAFT_INTENT__': '✉️ I\'ve drafted a professional email for you below. Review and edit it, then click **Send Email** to open it in Outlook.',
+};
+
+const resolveSentinel = (content) => SENTINEL_LABELS[content] ?? content;
+
+const parseEmailDraft = (content) => {
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.__type === 'email_draft') {
+      return { to: parsed.to || '', subject: parsed.subject || '', body: parsed.body || '' };
+    }
+  } catch { /* not JSON */ }
+  return null;
+};
 
 const EMAIL_INTENT_PATTERNS = [
   /\b(send|write|compose|draft)\s+(an?\s+)?email\b/i,
@@ -33,7 +57,78 @@ const EMAIL_INTENT_PATTERNS = [
 const detectEmailIntent = (text) =>
   EMAIL_INTENT_PATTERNS.some((re) => re.test(text));
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+// ── Parking cost/charges query detection ──────────────────────────────────────
+const PARKING_COST_INTENT_PATTERNS = [
+  // "parking" followed by any cost keyword (singular + plural)
+  /\bparking\s+(cost|costs|charge|charges|fee|fees|rate|rates|price|prices|pricing|tariff|tariffs|amount)\b/i,
+
+  // "how much is/does/for [the] parking"
+  /\bhow\s+much\s+(is|does|for|are)\s+(the\s+)?(parking|park)\b/i,
+
+  // "how much does parking cost/charge" — keyword after parking
+  /\bhow\s+much\s+(parking|park)\s+(cost|costs|charge|charges|fee|fees)\b/i,
+
+  // "cost/fee/charge/rate/price of/for [the] parking"
+  /\b(cost|costs|fee|fees|charge|charges|rate|rates|price|prices)\s+(of|for)\s+(the\s+)?(parking|park)\b/i,
+
+  // parking + time-period implying cost inquiry
+  /\bparking\s+(monthly|daily|per\s+day|per\s+month|subscription|plan|pass)\b/i,
+
+  // "what are/is [the] parking cost/charges/options"
+  /\bwhat\s+(are|is|'s)\s+(the\s+)?(parking\s+(cost|costs|charge|charges|fee|fees|rate|rates|price|prices|option|options|plan|plans)|cost\s+of\s+parking)\b/i,
+
+  // "tell/show/give/list/explain [me] [the] parking charges"
+  /\b(tell|show|give|list|explain|share)\s+(me\s+)?(the\s+)?(parking\s+(cost|costs|charge|charges|fee|fees|rate|rates|price|prices|option|options|plan|plans))\b/i,
+
+  // "is parking free/paid/chargeable"
+  /\b(is|does)\s+parking\s+(free|paid|chargeable|have\s+a\s+fee|cost\s+anything)\b/i,
+
+  // "parking options/plans/info/details"
+  /\bparking\s+(option|options|plan|plans|information|info|details|breakdown|summary)\b/i,
+
+  // vehicle-type + parking cost: "2W parking fee", "bike parking charges"
+  /\b(2w|4w|two[\s-]?wheeler|four[\s-]?wheeler|bike|car|vehicle)\s+(parking\s+)?(cost|costs|charge|charges|fee|fees|rate|rates|price|prices)\b/i,
+
+  // "what do I pay / how much do I pay for parking"
+  /\b(pay|paying)\s+(for|towards)\s+parking\b/i,
+
+  // "AASPL / Fountainhead parking fee"
+  /\b(aaspl|fountainhead)\s+(parking\s+)?(cost|costs|charge|charges|fee|fees|rate|rates|price|prices)\b/i,
+];
+
+const detectParkingCostIntent = (text) =>
+  PARKING_COST_INTENT_PATTERNS.some((re) => re.test(text));
+
+// ── Parking intent detection ───────────────────────────────────────────────────
+const PARKING_INTENT_PATTERNS = [
+  /\b(parking|park)\s+(sticker|pass|rfid|card|permit|slot|space|application|request|apply|tracker)\b/i,
+  /\b(apply|request|get|need|want|obtain)\s+(a\s+)?(parking|park)\b/i,
+  /\bparking\s+(sticker|application|apply|request|form)\b/i,
+  /\b(vehicle|car|bike|two.?wheeler|four.?wheeler|2w|4w)\s+(parking|park|sticker)\b/i,
+  /\b(parking\s+tracker|tracker\s+parking)\b/i,
+  /\bdeactivate\s+(parking|sticker|rfid)\b/i,
+  /\b(surrender|return)\s+(parking|sticker|rfid|card)\b/i,
+];
+
+const detectParkingIntent = (text) =>
+  PARKING_INTENT_PATTERNS.some((re) => re.test(text));
+
+// ── Microsoft Forms intent detection ──────────────────────────────────────────
+const FORMS_INTENT_PATTERNS = [
+  /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?(microsoft\s+)?form(s)?\b/i,
+  /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?survey\b/i,
+  /\b(create|make|build|generate|draft|design|prepare)\s+(an?\s+)?questionnaire\b/i,
+  /\b(hr|employee|onboarding|exit|feedback|training|satisfaction|performance|assessment)\s+(survey|form|questionnaire|poll)\b/i,
+  /\b(need|want|require)\s+(an?\s+)?(hr|employee|feedback|exit|training|onboarding)\s+(form|survey|questionnaire)\b/i,
+  /\bmicrosoft\s+forms?\b/i,
+];
+
+const detectFormsIntent = (text) =>
+  FORMS_INTENT_PATTERNS.some((re) => re.test(text));
+
+const SpeechRecognition = window.isSecureContext
+  ? (window.SpeechRecognition || window.webkitSpeechRecognition)
+  : null;
 
 const getGreeting = (firstName) => {
   const h = new Date().getHours();
@@ -42,13 +137,14 @@ const getGreeting = (firstName) => {
   return `Good Evening, ${firstName}! 🌆`;
 };
 
-const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
+const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation, onOpenFormsDrawer, onOpenParkingDrawer, onOpenFormPanel, selectedConversationId, onConversationUpdated, injectedMessage, onInjectedMessageSent }) => {
   const { messages: initialMessages, suggestions, labels, featureCards } = config;
   const user = authUser || config.user;
   const firstName = (user?.name || '').split(' ')[0] || 'there';
 
   const [messages, setMessages]       = useState(initialMessages);
   const [input, setInput]             = useState('');
+  const [correctionFlash, setCorrectionFlash] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -61,8 +157,17 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   const [loading, setLoading]           = useState(false);
   const [historyLoading, setHistoryLoading] = useState(!!selectedConversationId);
   const [historyError, setHistoryError]   = useState(false);
+  const [voiceError, setVoiceError]       = useState(null);
   const [thinkingIndex, setThinkingIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
+
+  // ── Slash-command form picker ──────────────────────────────────────────────
+  const [slashQuery, setSlashQuery]       = useState('');   // text after "/"
+  const [slashResults, setSlashResults]   = useState([]);
+  const [slashActive, setSlashActive]     = useState(false);
+  const [slashHighlight, setSlashHighlight] = useState(0);
+  const slashDebounceRef = useRef(null);
+  const slashMenuRef     = useRef(null);
 
   useEffect(() => {
     if (!messages.length) return;
@@ -96,15 +201,19 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
         ]);
         if (cancelled) return;
         const feedbackMap = fbRes || {};
-        const msgs = (msgRes.data || []).map((m, i) => ({
-          id: i + 1,
-          backendId: m.id,
-          conversationId: selectedConversationId,
-          role: m.role,
-          content: m.content,
-          timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          initialFeedback: feedbackMap[m.id] ?? null,
-        }));
+        const msgs = (msgRes.data || []).map((m, i) => {
+          const emailDraft = m.role === 'assistant' ? parseEmailDraft(m.content) : null;
+          return {
+            id: i + 1,
+            backendId: m.id,
+            conversationId: selectedConversationId,
+            role: m.role,
+            content: emailDraft ? '' : resolveSentinel(m.content),
+            emailDraft,
+            timestamp: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            initialFeedback: feedbackMap[m.id] ?? null,
+          };
+        });
         setMessages(msgs);
         setConversationId(selectedConversationId);
       } catch (e) {
@@ -135,8 +244,150 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [loading]);
 
+  // Slash-command: search metadata-driven commands when input starts with "/"
+  useEffect(() => {
+    if (!slashActive) return;
+    if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
+    slashDebounceRef.current = setTimeout(async () => {
+      try {
+        let results = [];
+        if (slashQuery.trim()) {
+          // Search metadata-driven slash commands first; fall back to published forms
+          try {
+            const cmdRes = await searchSlashCommands(slashQuery.trim());
+            results = (cmdRes?.results || []).map(c => ({
+              id:          c.id,
+              name:        c.label,
+              slug:        c.form_slug || '',
+              icon:        c.icon || (c.type === 'url' ? 'fa-external-link-alt' : c.type === 'builtin' ? 'fa-bolt' : 'fa-file-alt'),
+              alias:       c.command,
+              category:    c.type === 'url' ? 'URL Shortcut' : c.type === 'builtin' ? 'Built-in' : (c.form_name || 'Form'),
+              description: c.description,
+              _type:       c.type,
+              _url:        c.url,
+              _action:     c.action,
+              _formId:     c.form_id,
+            }));
+          } catch {
+            // fallback: search published forms directly
+            const fRes = await searchForms(slashQuery.trim());
+            results = (fRes?.results || []).map(f => ({
+              id: f.id, name: f.name, slug: f.slug,
+              icon: f.icon, alias: f.alias, category: f.category,
+              description: f.description, _type: 'form',
+            }));
+          }
+        } else {
+          // Show all active slash commands; fall back to published forms list
+          try {
+            const cmdRes = await listActiveSlashCommands();
+            results = (cmdRes?.items || []).map(c => ({
+              id:          c.id,
+              name:        c.label,
+              slug:        c.form_slug || '',
+              icon:        c.icon || (c.type === 'url' ? 'fa-external-link-alt' : c.type === 'builtin' ? 'fa-bolt' : 'fa-file-alt'),
+              alias:       c.command,
+              category:    c.type === 'url' ? 'URL Shortcut' : c.type === 'builtin' ? 'Built-in' : (c.form_name || 'Form'),
+              description: c.description,
+              _type:       c.type,
+              _url:        c.url,
+              _action:     c.action,
+              _formId:     c.form_id,
+            }));
+            // If no configured commands exist, fall back to published forms
+            if (results.length === 0) {
+              const fRes = await listPublishedForms({ page: 1, limit: 8 });
+              results = (fRes?.items || []).map(f => ({
+                id: f.id, name: f.name, slug: f.slug,
+                icon: f.icon, alias: f.alias, category: f.category,
+                description: f.description, _type: 'form',
+              }));
+            }
+          } catch {
+            // fallback
+            const fRes = await listPublishedForms({ page: 1, limit: 8 });
+            results = (fRes?.items || []).map(f => ({
+              id: f.id, name: f.name, slug: f.slug,
+              icon: f.icon, alias: f.alias, category: f.category,
+              description: f.description, _type: 'form',
+            }));
+          }
+        }
+        setSlashResults(results.slice(0, 8));
+        setSlashHighlight(0);
+      } catch {
+        setSlashResults([]);
+      }
+    }, 200);
+    return () => { if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current); };
+  }, [slashQuery, slashActive]);
+
+  const closeSlashMenu = () => {
+    setSlashActive(false);
+    setSlashResults([]);
+    setSlashQuery('');
+    setSlashHighlight(0);
+  };
+
+  const selectSlashForm = (form) => {
+    closeSlashMenu();
+    setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    // URL-type commands open the URL in a new tab
+    if (form._type === 'url' && form._url) {
+      window.open(form._url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    // Built-in commands trigger the corresponding drawer/panel
+    if (form._type === 'builtin') {
+      if (form._action === 'parking')    { onOpenParkingDrawer?.(); return; }
+      if (form._action === 'escalation') { onOpenEscalation?.();    return; }
+      return;
+    }
+    // Form commands open the form panel; fall back to FormsDrawer search
+    if (onOpenFormPanel) {
+      onOpenFormPanel(form);
+    } else {
+      onOpenFormsDrawer?.(form.name);
+    }
+  };
+
   const handleInput = (e) => {
-    setInput(e.target.value);
+    const raw = e.target.value;
+
+    // Slash-command detection: starts with "/"
+    if (raw.startsWith('/')) {
+      const query = raw.slice(1); // everything after "/"
+      setSlashQuery(query);
+      setSlashActive(true);
+      setInput(raw);
+      // Resize
+      const el = e.target;
+      el.style.height = 'auto';
+      const minH = parseInt(getComputedStyle(el).minHeight, 10) || 50;
+      el.style.height = `${Math.min(Math.max(el.scrollHeight, minH), 160)}px`;
+      return;
+    }
+
+    // Dismiss slash menu if user cleared the "/"
+    if (slashActive) closeSlashMenu();
+
+    const { corrected, didCorrect, original } = autocorrectLastWord(raw);
+    setInput(corrected);
+    if (didCorrect) {
+      setCorrectionFlash(original);
+      setTimeout(() => setCorrectionFlash(''), 2000);
+      // Sync the DOM value so caret position stays at end after correction
+      if (corrected !== raw) {
+        requestAnimationFrame(() => {
+          const el = e.target;
+          if (el) {
+            el.value = corrected;
+            el.selectionStart = el.selectionEnd = corrected.length;
+          }
+        });
+      }
+    }
     const el = e.target;
     el.style.height = 'auto';
     const minH = parseInt(getComputedStyle(el).minHeight, 10) || 50;
@@ -182,7 +433,44 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     const abortCtrl = new AbortController();
     abortCtrlRef.current = abortCtrl;
 
-    const isEmailRequest = detectEmailIntent(trimmed);
+    const isEmailRequest      = detectEmailIntent(trimmed);
+    const isFormsRequest      = detectFormsIntent(trimmed);
+    const isParkingCostQuery  = detectParkingCostIntent(trimmed);
+    const isParkingRequest    = !isParkingCostQuery && detectParkingIntent(trimmed);
+
+    // Parking cost/charges question — check for existing request, then respond with live pricing card
+    if (isParkingCostQuery) {
+      let hasRequest = false;
+      try {
+        const res = await parkingApi.getMyRequest();
+        hasRequest = !!(res && res.id);
+      } catch { /* show default CTA on any error */ }
+      setMessages(prev => [
+        ...prev,
+        { id: nextId + 1, role: 'assistant', content: buildParkingHtml(hasRequest), timestamp: now },
+      ]);
+      setLoading(false);
+      return;
+    }
+
+    // Parking application — open drawer; if already submitted show a status card instead of the generic message
+    if (isParkingRequest) {
+      let existing = null;
+      try {
+        const res = await parkingApi.getMyRequest();
+        if (res && res.id) existing = res;
+      } catch { /* fall through to generic message */ }
+      onOpenParkingDrawer?.();
+      const content = existing
+        ? buildAlreadySubmittedHtml(existing)
+        : '🅿️ I\'ve opened the **Parking Tracker** on the right. Fill in your vehicle details to apply for a parking sticker, or view your existing request.';
+      setMessages(prev => [
+        ...prev,
+        { id: nextId + 1, role: 'assistant', content, timestamp: now },
+      ]);
+      setLoading(false);
+      return;
+    }
 
     try {
       // Create a conversation on the first message of a new chat session
@@ -194,8 +482,15 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
       }
 
       // Fire both requests in parallel when an email intent is detected
-      const chatPromise = postMessage(convId, trimmed, abortCtrl.signal);
+      const chatPromise  = postMessage(convId, trimmed, abortCtrl.signal);
       const emailPromise = isEmailRequest ? draftEmailFromChat(trimmed).catch(() => null) : Promise.resolve(null);
+
+      // Open the Forms Drawer immediately if forms intent is detected
+      // (the chat also gets the sentinel response from the backend which
+      //  we intercept below and replace with a friendly message)
+      if (isFormsRequest) {
+        onOpenFormsDrawer?.(trimmed);
+      }
 
       const [msgResponse, emailDraft] = await Promise.all([chatPromise, emailPromise]);
 
@@ -205,24 +500,31 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
           backendId: msgResponse.id,
           conversationId: convId,
           role: 'assistant',
-          content: msgResponse.content,
+          content: msgResponse.content === '__MS_FORMS_INTENT__'
+            ? '📋 I\'ve opened the **Microsoft Forms Builder** on the right. Fill in your form details, add questions, and click \'Create Form\' to publish it directly to your Microsoft account!'
+            : msgResponse.content,
           sources: [],
           timestamp: now,
         },
       ];
 
       if (emailDraft) {
+        const draft = {
+          to: emailDraft.to || '',
+          subject: emailDraft.refined_subject || '',
+          body: emailDraft.refined_body || '',
+        };
         newMsgs.push({
           id: nextId + 2,
           role: 'assistant',
           content: '',
-          emailDraft: {
-            to: emailDraft.to || '',
-            subject: emailDraft.refined_subject || '',
-            body: emailDraft.refined_body || '',
-          },
+          emailDraft: draft,
           timestamp: now,
         });
+        // Persist the draft so it re-renders when the conversation is reopened
+        saveEmailDraft(convId, draft).catch(err =>
+          console.warn('[EmailDraft] Failed to save draft:', err)
+        );
       }
 
       setMessages(prev => [...prev, ...newMsgs]);
@@ -251,6 +553,32 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
   };
 
   const handleKeyDown = (e) => {
+    // Slash-command menu keyboard navigation
+    if (slashActive && slashResults.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashHighlight(h => Math.min(h + 1, slashResults.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashHighlight(h => Math.max(h - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const form = slashResults[slashHighlight];
+        if (form) selectSlashForm(form);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSlashMenu();
+        setInput('');
+        return;
+      }
+    }
+
     if (e.key === 'Escape' && loading) {
       handleStop();
       return;
@@ -287,7 +615,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     recognitionRef.current      = recognition;
     voiceBaseRef.current        = input;
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => { setIsListening(true); setVoiceError(null); };
 
     recognition.onresult = (e) => {
       let interim = '';
@@ -306,7 +634,19 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
     };
 
     recognition.onend  = () => { setIsListening(false); textareaRef.current?.focus(); };
-    recognition.onerror = () => setIsListening(false);
+    recognition.onerror = (e) => {
+      setIsListening(false);
+      const errorMessages = {
+        'not-allowed':       'Microphone access denied. Allow microphone in browser settings, and ensure the site has a valid HTTPS certificate.',
+        'no-speech':         'No speech detected. Please try speaking again.',
+        'audio-capture':     'No microphone found. Please connect a microphone.',
+        'network':           'Network error during speech recognition. Please check your connection.',
+        'service-not-allowed': 'Speech recognition service is not available.',
+      };
+      const msg = errorMessages[e.error] || `Speech recognition error: ${e.error}`;
+      setVoiceError(msg);
+      setTimeout(() => setVoiceError(null), 5000);
+    };
 
     recognition.start();
   };
@@ -394,6 +734,7 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
                 user={user}
                 conversationId={conversationId}
                 onOpenEscalation={onOpenEscalation}
+                onOpenParkingDrawer={onOpenParkingDrawer}
               />
             ))}
 
@@ -431,6 +772,14 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             onChange={handleFileSelect}
           />
 
+          {/* Voice error message */}
+          {voiceError && (
+            <div className="voice-error-msg" role="alert">
+              <i className="fas fa-exclamation-circle" />
+              <span>{voiceError}</span>
+            </div>
+          )}
+
           {/* Attachment preview chips */}
           {attachments.length > 0 && (
             <div className="attachment-preview">
@@ -449,22 +798,129 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
             </div>
           )}
 
+          {/* Slash-command form picker */}
+          {slashActive && (
+            <div
+              ref={slashMenuRef}
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 6px)',
+                left: 0,
+                right: 0,
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                overflow: 'hidden',
+                zIndex: 200,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                maxHeight: 320,
+                overflowY: 'auto',
+              }}
+            >
+              <div style={{
+                padding: '8px 12px 6px',
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                borderBottom: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}>
+                <i className="fas fa-search" />
+                {slashQuery
+                  ? `Forms matching "${slashQuery}"`
+                  : 'Type to search forms — or press ↑↓ to browse'}
+              </div>
+              {slashResults.length === 0 ? (
+                <div style={{ padding: '14px 16px', fontSize: 13, color: 'var(--text-muted)' }}>
+                  No published forms found
+                </div>
+              ) : (
+                slashResults.map((form, i) => (
+                  <div
+                    key={form.id}
+                    onMouseDown={() => selectSlashForm(form)}
+                    onMouseEnter={() => setSlashHighlight(i)}
+                    style={{
+                      padding: '10px 14px',
+                      cursor: 'pointer',
+                      background: i === slashHighlight ? 'var(--bg-card)' : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      transition: 'background 0.1s',
+                    }}
+                  >
+                    <div style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: 'var(--primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fff',
+                      fontSize: 13,
+                      flexShrink: 0,
+                    }}>
+                      <i className={`fas ${form.icon || 'fa-file-alt'}`} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {form.name}
+                      </div>
+                      {form.description && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {form.description}
+                        </div>
+                      )}
+                    </div>
+                    {form.alias && (
+                      <div style={{
+                        marginLeft: 'auto',
+                        fontSize: 11,
+                        color: 'var(--primary)',
+                        fontFamily: 'monospace',
+                        background: 'rgba(29,118,188,0.1)',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        flexShrink: 0,
+                      }}>
+                        /{form.alias}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             className="chat-textarea"
-            placeholder={labels.inputPlaceholder}
+            placeholder={slashActive ? `Search forms… (Esc to cancel)` : labels.inputPlaceholder}
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             rows={1}
             aria-label="Message input"
+            spellCheck={!slashActive}
+            autoCorrect={slashActive ? 'off' : 'on'}
+            autoCapitalize="sentences"
           />
+          {correctionFlash && (
+            <div className="autocorrect-flash">
+              <i className="fas fa-spell-check" />
+              &ldquo;{correctionFlash}&rdquo; autocorrected
+            </div>
+          )}
           <div className="chat-input-footer">
             <div className="chat-input-left">
               <button
                 className="chat-input-icon-btn"
                 title="Attach file"
                 aria-label="Attach file"
+                disabled="true" // Placeholder for future file attachment enablement
                 onClick={() => fileInputRef.current?.click()}
               >
                 <i className="fas fa-paperclip" />
@@ -472,11 +928,16 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
               {/* <button className="chat-input-icon-btn" title="Search" aria-label="Search">
                 <i className="fas fa-search" />
               </button> */}
-              {SpeechRecognition && (
+              {(SpeechRecognition || !window.isSecureContext) && (
                 <button
-                  className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}`}
-                  onClick={toggleVoice}
-                  title={isListening ? 'Stop recording' : 'Voice input'}
+                  className={`chat-input-icon-btn mic-btn${isListening ? ' mic-btn--listening' : ''}${!SpeechRecognition ? ' mic-btn--disabled' : ''}`}
+                  onClick={SpeechRecognition ? toggleVoice : undefined}
+                  disabled={!SpeechRecognition}
+                  title={
+                    !window.isSecureContext
+                      ? 'Voice input requires a valid HTTPS certificate'
+                      : isListening ? 'Stop recording' : 'Voice input'
+                  }
                   aria-label={isListening ? 'Stop voice recording' : 'Start voice input'}
                   aria-pressed={isListening}
                 >
@@ -485,7 +946,21 @@ const ChatWindow = ({ config, user: authUser, compact = false, onOpenEscalation,
               )}
             </div>
             <div className="chat-input-right">
-              <span className="chat-input-hint">Shift+Enter for new line</span>
+              <span className="chat-input-hint">
+                Shift+Enter for new line&ensp;·&ensp;
+                <button
+                  className="chat-input-hint-slash"
+                  onClick={() => {
+                    setInput('/');
+                    setSlashQuery('');
+                    setSlashActive(true);
+                    textareaRef.current?.focus();
+                  }}
+                  title="Quick shortcuts"
+                >
+                  <kbd>/</kbd> for shortcuts
+                </button>
+              </span>
               {loading ? (
                 <button
                   className="send-btn stop-btn"

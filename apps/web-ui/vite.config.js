@@ -1,16 +1,23 @@
 import path from 'path'
 import { defineConfig } from 'vite'
-import basicSsl from '@vitejs/plugin-basic-ssl'
+import react from '@vitejs/plugin-react'
 
+ 
 export default defineConfig({
   envDir: path.resolve(__dirname, '..', '..'),
-  plugins: [basicSsl()],
+  base: '/project-aura/',
+  plugins: [react()],
   server: {
     host: '0.0.0.0',
     port: 5173,
-    https: true,
     allowedHosts: true,
     proxy: {
+      '/aura-api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/aura-api/, ''),
+      },
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,

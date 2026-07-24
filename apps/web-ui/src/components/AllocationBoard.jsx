@@ -2,7 +2,9 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
-import { getAllocationBoard, getEmployeeDetail, askAllocationAura } from '../services/api';
+
+import { getAllocationBoard, getAllocationFilterOptions, getEmployeeDetail, askAllocationAura, getMyTeamAllocation } from '../services/api';
+import { COOAnalyticsDashboard } from '../modules/coo-analytics/pages/COODashboard';
 
 const CHART_COLORS = ['#1D76BC', '#27AAE1', '#4ED44E', '#2A3D90', '#f59e0b', '#ef4444', '#a78bfa', '#10b981'];
 const BILLING_EXCLUDE_EXEC = ['Pipeline', 'Sales'];
@@ -30,6 +32,90 @@ function nameMatch(field, userName) {
   const f = field.trim().toLowerCase();
   const u = userName.trim().toLowerCase();
   return f.includes(u) || u.includes(f);
+}
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function getCurrentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(key) {
+  const [year, month] = key.split('-').map(Number);
+  return new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function monthKeyToDateRange(monthYear) {
+  if (!monthYear) return {};
+  const [year, month] = monthYear.split('-').map(Number);
+  const from = new Date(year, month - 1, 1);
+  const to   = new Date(year, month, 0);
+  const f = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { date_from: f(from), date_to: f(to) };
+}
+
+// ── Month timeline picker (for lead roles) ────────────────────────────────────
+
+const LEAD_MONTH_WINDOW = 6;
+
+function LeadMonthTimeline({ months, selectedMonth, onChange, topOffset = 65 }) {
+  const sorted = [...months].reverse();
+  const hasMore = sorted.length > LEAD_MONTH_WINDOW;
+  const recentSlice = sorted.slice(sorted.length - LEAD_MONTH_WINDOW);
+  const selectedIsOld = hasMore && !recentSlice.includes(selectedMonth);
+  const [expanded, setExpanded] = useState(false);
+  const showAll = expanded || selectedIsOld;
+  const visible = showAll ? sorted : recentSlice;
+  const hiddenCount = sorted.length - LEAD_MONTH_WINDOW;
+
+  const pill = (active) => ({
+    padding: '5px 14px', borderRadius: 20, fontSize: 11,
+    fontWeight: active ? 700 : 400, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+    border: active ? `1.5px solid #1D76BC` : '1px solid var(--border)',
+    background: active ? '#1D76BC' : 'transparent',
+    color: active ? '#fff' : 'var(--text-secondary)', transition: 'all .15s',
+  });
+
+  return (
+    <div style={{
+      position: 'sticky', top: topOffset, zIndex: 18,
+      background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
+      padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '1px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        PERIOD
+      </span>
+      {hasMore && !showAll && (
+        <button
+          onClick={() => setExpanded(true)}
+          style={{ padding: '5px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer', flexShrink: 0, background: 'var(--bg-elevated)', border: '1px solid rgba(245,158,11,0.55)', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <i className="fas fa-clock-rotate-left" style={{ fontSize: 10 }} />
+          {hiddenCount} earlier
+        </button>
+      )}
+      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none', padding: '8px 0', flex: 1 }}>
+        {visible.map(m => (
+          <button key={m} onClick={() => onChange(m)} style={pill(m === selectedMonth)}>
+            {formatMonthLabel(m)}
+          </button>
+        ))}
+      </div>
+      {hasMore && showAll && (
+        <button
+          onClick={() => setExpanded(false)}
+          style={{ padding: '5px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer', flexShrink: 0, background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <i className="fas fa-compress-alt" style={{ fontSize: 10 }} />
+          Recent only
+        </button>
+      )}
+      <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        {showAll ? `${sorted.length} months` : `last ${Math.min(LEAD_MONTH_WINDOW, sorted.length)}`}
+      </span>
+    </div>
+  );
 }
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
@@ -216,14 +302,17 @@ function TruncatedYTick({ x, y, payload, maxChars = 26 }) {
   );
 }
 
-function ExecKpi({ value, label, accent, onClick }) {
+function ExecKpi({ value, label, accent, onClick, icon }) {
   return (
     <div
       className={`ab-kpi${accent ? ` ab-kpi--${accent}` : ''}${onClick ? ' ab-kpi--clickable' : ''}`}
       onClick={onClick}
     >
-      <div className="ab-kpi-value">{value}</div>
-      <div className="ab-kpi-label">{label}</div>
+      {icon && <div className="ab-kpi-icon"><i className={`fas ${icon}`} /></div>}
+      <div className="ab-kpi-body">
+        <div className="ab-kpi-value">{value}</div>
+        <div className="ab-kpi-label">{label}</div>
+      </div>
     </div>
   );
 }
@@ -286,13 +375,13 @@ function ExecutiveView({ data, onEmployeeClick }) {
 
       {/* ── KPI cards ─────────────────────────────────────────── */}
       <div className="ab-kpi-row">
-        <ExecKpi value={kpis.headcount} label="Total Employees"    accent="blue"
+        <ExecKpi value={kpis.headcount} label="Total Employees"    accent="blue"   icon="fa-users"
           onClick={() => drill('All Employees', () => true)} />
-        <ExecKpi value={kpis.projects}  label="Active Projects"    accent="purple"
+        <ExecKpi value={kpis.projects}  label="Active Projects"    accent="purple" icon="fa-briefcase"
           onClick={drillProjects} />
-        <ExecKpi value={kpis.billable}  label="Billable Resources" accent="green"
+        <ExecKpi value={kpis.billable}  label="Billable Resources" accent="green"  icon="fa-chart-line"
           onClick={() => drill('Billable Resources', r => (r.billing || '').toLowerCase() === 'billable')} />
-        <ExecKpi value={kpis.bench}     label="On Bench"           accent="amber"
+        <ExecKpi value={kpis.bench}     label="On Bench"           accent="amber"  icon="fa-hourglass-half"
           onClick={() => drill('On Bench', r => (r.project_name || '').toLowerCase() === 'no allocation')} />
       </div>
 
@@ -467,20 +556,14 @@ function ExecutiveView({ data, onEmployeeClick }) {
 
 // ── Functional Lead / Business Lead view ──────────────────────────────────────
 
-function LeadView({ data, onEmployeeClick, role }) {
+function LeadView({ data, onEmployeeClick }) {
   const { allocation_rows, user_name } = data;
   const [teamModal, setTeamModal]       = useState(null);
   const [projectModal, setProjectModal] = useState(null);
 
-  const myTeam = useMemo(() =>
-    (allocation_rows || []).filter(r => nameMatch(r.functional_manager, user_name)),
-    [allocation_rows, user_name]
-  );
+  const myTeam = useMemo(() => allocation_rows || [], [allocation_rows]);
 
-  const reportees = useMemo(() =>
-    (allocation_rows || []).filter(r => nameMatch(r.reporting_manager, user_name)),
-    [allocation_rows, user_name]
-  );
+  const reportees = useMemo(() => allocation_rows || [], [allocation_rows]);
 
   const availablePool = useMemo(() =>
     myTeam.filter(r => r.efforts_pct == null || r.efforts_pct < 100),
@@ -493,7 +576,6 @@ function LeadView({ data, onEmployeeClick, role }) {
   );
 
   const myProjects = useMemo(() => {
-    if (role !== 'business_lead') return [];
     const projectMap = {};
     for (const r of (allocation_rows || [])) {
       if (nameMatch(r.project_lead, user_name) || nameMatch(r.delivery_manager, user_name)) {
@@ -503,7 +585,7 @@ function LeadView({ data, onEmployeeClick, role }) {
       }
     }
     return Object.values(projectMap).sort((a, b) => b.resources.length - a.resources.length);
-  }, [allocation_rows, user_name, role]);
+  }, [allocation_rows, user_name]);
 
   const COL_LABELS = {
     name: 'Name', designation: 'Designation', function: 'Function',
@@ -517,7 +599,7 @@ function LeadView({ data, onEmployeeClick, role }) {
       {/* Summary cards */}
       <div className="ab-lead-cards">
         <div
-          className="ab-lead-card ab-lead-card--clickable"
+          className="ab-lead-card ab-lead-card--team ab-lead-card--clickable"
           onClick={() => setTeamModal({
             title: 'My Team (Functional)',
             rows: myTeam,
@@ -525,12 +607,15 @@ function LeadView({ data, onEmployeeClick, role }) {
             colLabels: COL_LABELS,
           })}
         >
-          <div className="ab-lead-card-value">{myTeam.length}</div>
-          <div className="ab-lead-card-label">Team Members</div>
+          <div className="ab-lead-card-icon"><i className="fas fa-users" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{myTeam.length}</div>
+            <div className="ab-lead-card-label">Team Members</div>
+          </div>
         </div>
 
         <div
-          className="ab-lead-card ab-lead-card--clickable"
+          className="ab-lead-card ab-lead-card--direct ab-lead-card--clickable"
           onClick={() => setTeamModal({
             title: 'Direct Reportees',
             rows: reportees,
@@ -538,18 +623,27 @@ function LeadView({ data, onEmployeeClick, role }) {
             colLabels: COL_LABELS,
           })}
         >
-          <div className="ab-lead-card-value">{reportees.length}</div>
-          <div className="ab-lead-card-label">Direct Reportees</div>
+          <div className="ab-lead-card-icon"><i className="fas fa-user-friends" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{reportees.length}</div>
+            <div className="ab-lead-card-label">Direct Reportees</div>
+          </div>
         </div>
 
-        <div className="ab-lead-card">
-          <div className="ab-lead-card-value">{availablePool.length}</div>
-          <div className="ab-lead-card-label">Available</div>
+        <div className="ab-lead-card ab-lead-card--avail">
+          <div className="ab-lead-card-icon"><i className="fas fa-user-check" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{availablePool.length}</div>
+            <div className="ab-lead-card-label">Available</div>
+          </div>
         </div>
 
-        <div className="ab-lead-card">
-          <div className="ab-lead-card-value">{billableResources.length}</div>
-          <div className="ab-lead-card-label">Billable</div>
+        <div className="ab-lead-card ab-lead-card--billable">
+          <div className="ab-lead-card-icon"><i className="fas fa-chart-line" /></div>
+          <div className="ab-lead-card-body">
+            <div className="ab-lead-card-value">{billableResources.length}</div>
+            <div className="ab-lead-card-label">Billable</div>
+          </div>
         </div>
       </div>
 
@@ -657,24 +751,22 @@ function LeadView({ data, onEmployeeClick, role }) {
         )}
       </div>
 
-      {/* Business Lead: My Projects */}
-      {role === 'business_lead' && (
-        <div className="ab-lead-section">
-          <div className="ab-section-label">My Projects ({myProjects.length})</div>
-          {myProjects.length === 0 ? (
-            <p className="ab-empty">No projects found where you are Project Lead or Delivery Manager.</p>
-          ) : (
-            <div className="ab-project-cards">
-              {myProjects.map((proj, i) => (
-                <div key={i} className="ab-project-card" onClick={() => setProjectModal(proj)}>
-                  <div className="ab-project-name">{proj.project_name}</div>
-                  <div className="ab-project-count">{proj.resources.length} resource{proj.resources.length !== 1 ? 's' : ''}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* My Projects */}
+      <div className="ab-lead-section">
+        <div className="ab-section-label">My Projects ({myProjects.length})</div>
+        {myProjects.length === 0 ? (
+          <p className="ab-empty">No projects found where you are Project Lead or Delivery Manager.</p>
+        ) : (
+          <div className="ab-project-cards">
+            {myProjects.map((proj, i) => (
+              <div key={i} className="ab-project-card" onClick={() => setProjectModal(proj)}>
+                <div className="ab-project-name">{proj.project_name}</div>
+                <div className="ab-project-count">{proj.resources.length} resource{proj.resources.length !== 1 ? 's' : ''}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Team / reportees drill modal */}
       {teamModal && (
@@ -770,6 +862,63 @@ function TeamView({ data, onEmployeeClick }) {
                     <td>{fmt(r.project_status)}</td>
                     <td>{fmt(r.billing)}</td>
                     <td>{fmtDate(r.allocation_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── My Team view (real reporting-line direct reports) ─────────────────────────
+
+function MyTeamView({ rows, onEmployeeClick }) {
+  return (
+    <div className="ab-team-view">
+      <div className="ab-section-label">My Team — Direct Reports ({rows.length})</div>
+      {rows.length === 0 ? (
+        <p className="ab-empty">No direct reports found for your profile.</p>
+      ) : (
+        <>
+          <div className="ab-emp-grid">
+            {rows.map((emp, i) => (
+              <div key={i} className="ab-emp-card" onClick={() => onEmployeeClick(emp.employee_id)}>
+                <div className="ab-emp-avatar">{(emp.name || '?')[0].toUpperCase()}</div>
+                <div className="ab-emp-info">
+                  <div className="ab-emp-name">{emp.name}</div>
+                  <div className="ab-emp-desig">{fmt(emp.designation)}</div>
+                  <div className="ab-emp-project">{emp.project_name || 'No Allocation'}</div>
+                  <div className="ab-reportee-tags">
+                    {emp.billing && <span className="ab-tag">{emp.billing}</span>}
+                    {emp.efforts_pct != null && <span className="ab-tag ab-tag--effort">Effort: {emp.efforts_pct}%</span>}
+                    {emp.billability_pct != null && <span className="ab-tag ab-tag--bill">Bill: {emp.billability_pct}%</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="ab-table-wrap ab-table-scroll">
+            <table className="ab-table">
+              <thead>
+                <tr>
+                  <th>Name</th><th>Designation</th><th>Project</th><th>Status</th>
+                  <th>Billing</th><th>Effort %</th><th>Billability %</th><th>Completion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="ab-tr-click" onClick={() => onEmployeeClick(r.employee_id)}>
+                    <td>{fmt(r.name)}</td>
+                    <td>{fmt(r.designation)}</td>
+                    <td>{fmt(r.project_name)}</td>
+                    <td>{fmt(r.project_status)}</td>
+                    <td>{fmt(r.billing)}</td>
+                    <td>{fmt(r.efforts_pct)}</td>
+                    <td>{fmt(r.billability_pct)}</td>
+                    <td>{fmt(r.completion_status)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -959,20 +1108,74 @@ function AskAuraPanel({ onClose, role }) {
 
 // ── Root component ────────────────────────────────────────────────────────────
 
+const ROLE_LABEL = {
+  executive:     '',
+  business_lead: '',
+  team_lead:     '',
+  employee:      '',
+};
+
+const ROLE_SUBTITLE = {
+  executive:     'Executive View · Operational Intelligence Cockpit',
+  business_lead: '',
+  team_lead:     'Team Lead View',
+  employee:      'Employee View',
+};
+
 export default function AllocationBoard() {
-  const [boardData,     setBoardData]     = useState(null);
-  const [loading,       setLoading]       = useState(true);
-  const [error,         setError]         = useState(null);
-  const [drawerEmp,     setDrawerEmp]     = useState(null);
-  const [drawerLoading, setDrawerLoading] = useState(false);
-  const [auraOpen,      setAuraOpen]      = useState(false);
+  const [boardData,       setBoardData]       = useState(null);
+  const [loading,         setLoading]         = useState(true);
+  const [error,           setError]           = useState(null);
+  const [drawerEmp,       setDrawerEmp]       = useState(null);
+  const [drawerLoading,   setDrawerLoading]   = useState(false);
+  const [auraOpen,        setAuraOpen]        = useState(false);
+  const [monthYear,       setMonthYear]       = useState(getCurrentMonthKey());
+  const [availableMonths, setAvailableMonths] = useState([]);
+  const [activeTab,       setActiveTab]       = useState('overview');
+  const [myTeamRows,      setMyTeamRows]      = useState([]);
+  const [myTeamLoaded,    setMyTeamLoaded]    = useState(false);
+
+  const fetchBoard = useCallback(async (month) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const dateRange = monthKeyToDateRange(month);
+      const data = await getAllocationBoard(dateRange);
+      setBoardData(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    getAllocationBoard()
-      .then(setBoardData)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    getAllocationFilterOptions()
+      .then(opts => {
+        const months = opts.available_months || [];
+        setAvailableMonths(months);
+        const defaultMonth = months.includes(getCurrentMonthKey())
+          ? getCurrentMonthKey()
+          : (months[0] || getCurrentMonthKey());
+        setMonthYear(defaultMonth);
+        fetchBoard(defaultMonth);
+      })
+      .catch(() => fetchBoard(monthYear));
   }, []);
+
+  const handleMonthChange = useCallback((m) => {
+    setMonthYear(m);
+    fetchBoard(m);
+  }, [fetchBoard]);
+
+  useEffect(() => {
+    if (activeTab === 'myteam' && !myTeamLoaded) {
+      getMyTeamAllocation()
+        .then(r => setMyTeamRows(r.team_rows || []))
+        .catch(() => setMyTeamRows([]))
+        .finally(() => setMyTeamLoaded(true));
+    }
+  }, [activeTab, myTeamLoaded]);
 
   const handleEmployeeClick = useCallback(async (employeeId) => {
     if (!employeeId) return;
@@ -993,14 +1196,6 @@ export default function AllocationBoard() {
     setDrawerLoading(false);
   }, []);
 
-  const ROLE_LABEL = {
-    executive:       'Executive',
-    business_lead:   'Business Lead',
-    functional_lead: 'Functional Lead',
-    team_lead:       'Team Lead',
-    employee:        'Employee',
-  };
-
   if (loading) return (
     <div className="ab-state-center">
       <div className="ab-spinner" />
@@ -1017,45 +1212,134 @@ export default function AllocationBoard() {
 
   if (!boardData) return null;
 
-  const roleLabel   = ROLE_LABEL[boardData.role] || boardData.role;
+  const role        = boardData.role;
+  const roleLabel   = ROLE_LABEL[role] || null;
   const notInSystem = !boardData.designation;
+  const isLeadRole  = role === 'functional_lead' || role === 'business_lead';
+  // executive has no personalised lead view — only show Lead View tab for other roles
+  const hasLeadTab  = role !== 'executive';
+  const hasMyTeamTab = !!boardData.has_direct_reports;
+
+  // Month timeline sits below header (65px) + tab bar (44px)
+  const timelineTopOffset = 109;
 
   return (
-    <div className="ab-root">
-      <div className="ab-header">
-        <div>
-          <h2 className="ab-title">Allocation Board</h2>
-          <div className="ab-header-meta">
-            <span className="ab-role-badge">{roleLabel}</span>
+    <div className="ab-root ab-root--exec">
+
+      {/* ── Sticky header ─────────────────────────────────────────── */}
+      <div style={{
+        background: 'linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%)',
+        borderBottom: '1px solid var(--border)',
+        padding: '18px 28px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        position: 'sticky', top: 0, zIndex: 20,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #1D76BC, #2A3D90)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <i className="fas fa-layer-group" style={{ color: '#fff', fontSize: 16 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
+              Allocation Board
+            </div>
+            {(ROLE_SUBTITLE[role]) && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                {ROLE_SUBTITLE[role]}
+              </div>
+            )}
           </div>
         </div>
-        <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
-          <i className="fas fa-robot" />
-          Ask Aura
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {roleLabel && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, background: 'rgba(29,118,188,0.12)', border: '1px solid rgba(29,118,188,0.3)', color: '#1D76BC', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <i className="fas fa-circle" style={{ fontSize: 7 }} /> {roleLabel}
+            </span>
+          )}
+          <button className="ab-ask-aura-btn" onClick={() => setAuraOpen(true)}>
+            <i className="fas fa-robot" />
+            Ask Aura
+          </button>
+        </div>
       </div>
 
-      {notInSystem && (
-        <div className="ab-notice">
-          <i className="fa fa-info-circle" style={{ marginRight: '0.5rem' }} />
-          Your profile was not found in employee records. Contact HR or Admin to update your designation.
-        </div>
+      {/* ── Tab bar ───────────────────────────────────────────────── */}
+      <div style={{
+        position: 'sticky', top: 65, zIndex: 19,
+        background: 'var(--bg-secondary)',
+        borderBottom: '1px solid var(--border)',
+        padding: '0 24px',
+        display: 'flex', gap: 0,
+      }}>
+        {[
+          { key: 'overview', label: 'Overview',  icon: 'fa-chart-pie' },
+          ...(hasLeadTab ? [{ key: 'lead', label: 'Lead View', icon: 'fa-users' }] : []),
+          ...(hasMyTeamTab ? [{ key: 'myteam', label: 'My Team', icon: 'fa-user-friends' }] : []),
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              padding: '11px 20px',
+              fontSize: 13,
+              fontWeight: activeTab === tab.key ? 700 : 500,
+              color: activeTab === tab.key ? '#1D76BC' : 'var(--text-secondary)',
+              background: 'transparent',
+              border: 'none',
+              borderBottom: activeTab === tab.key ? '2px solid #1D76BC' : '2px solid transparent',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 7,
+              transition: 'all .15s',
+              marginBottom: -1,
+            }}
+          >
+            <i className={`fas ${tab.icon}`} style={{ fontSize: 12 }} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Month timeline (lead tab, lead roles only) ────────────── */}
+      {activeTab === 'lead' && isLeadRole && availableMonths.length > 0 && (
+        <LeadMonthTimeline
+          months={availableMonths}
+          selectedMonth={monthYear}
+          onChange={handleMonthChange}
+          topOffset={timelineTopOffset}
+        />
       )}
 
       <EmpDrawer emp={drawerEmp} loading={drawerLoading} onClose={closeDrawer} />
-      {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={boardData.role} />}
+      {auraOpen && <AskAuraPanel onClose={() => setAuraOpen(false)} role={role} />}
 
-      {boardData.role === 'executive' && (
-        <ExecutiveView data={boardData} onEmployeeClick={handleEmployeeClick} />
+      {/* ── Tab content ───────────────────────────────────────────── */}
+      {activeTab === 'overview' && (
+        <COOAnalyticsDashboard hideHeader />
       )}
-      {(boardData.role === 'functional_lead' || boardData.role === 'business_lead') && (
-        <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} role={boardData.role} />
+
+      {activeTab === 'lead' && (
+        <div style={{ padding: '20px 24px' }}>
+          {notInSystem && (
+            <div className="ab-notice">
+              <i className="fa fa-info-circle" style={{ marginRight: '0.5rem' }} />
+              Your profile was not found in employee records. Contact HR or Admin to update your designation.
+            </div>
+          )}
+          {isLeadRole && (
+            <LeadView data={boardData} onEmployeeClick={handleEmployeeClick} />
+          )}
+          {role === 'team_lead' && (
+            <TeamView data={boardData} onEmployeeClick={handleEmployeeClick} />
+          )}
+          {role === 'employee' && (
+            <SelfView data={boardData} />
+          )}
+        </div>
       )}
-      {boardData.role === 'team_lead' && (
-        <TeamView data={boardData} onEmployeeClick={handleEmployeeClick} />
-      )}
-      {boardData.role === 'employee' && (
-        <SelfView data={boardData} />
+
+      {activeTab === 'myteam' && (
+        <div style={{ padding: '20px 24px' }}>
+          <MyTeamView rows={myTeamRows} onEmployeeClick={handleEmployeeClick} />
+        </div>
       )}
     </div>
   );

@@ -2,17 +2,13 @@
 // Centralized API endpoint configuration for all environments
 // Supports development, staging, and production deployments
 
-const ENV = process.env.NODE_ENV || 'development';
+const ENV = import.meta.env.MODE || 'development';
 
 // ─── Base API URLs by environment ──────────────────────────────────────────────
-// These can be overridden by environment variables
-const API_BASE_URLS = {
-  development: process.env.REACT_APP_API_URL || 'http://localhost:8000',
-  staging: process.env.REACT_APP_API_URL || 'https://api-staging.aligned.com',
-  production: process.env.REACT_APP_API_URL || 'https://api.aligned.com',
-};
-
-const API_BASE_URL = API_BASE_URLS[ENV];
+// In dev, route through Vite proxy (/aura-api) to avoid CORS issues
+const API_BASE_URL = import.meta.env.DEV
+  ? '/aura-api'
+  : (import.meta.env.VITE_API_URL || 'http://localhost:8000');
 
 // ─── API Configuration ────────────────────────────────────────────────────────
 export const apiConfig = {
@@ -81,6 +77,17 @@ export const apiConfig = {
 
     // Health Check
     health: '/api/health',
+
+    // Communications (Announcements + Events)
+    communications: {
+      activeAnnouncements: '/api/communications/announcements/active',
+      dismissAnnouncement: '/api/communications/announcements/:id/dismiss',
+      events:              '/api/communications/events',
+      eventRsvp:           '/api/communications/events/:id/rsvp',
+      // Admin
+      adminAnnouncements:  '/api/admin/communications/announcements',
+      adminEvents:         '/api/admin/communications/events',
+    },
   },
 
   // ─── Default headers for all requests ──────────────────────────────────────
@@ -90,7 +97,7 @@ export const apiConfig = {
   },
 
   // ─── Log API calls in development ──────────────────────────────────────────
-  debug: ENV === 'development',
+  debug: import.meta.env.DEV,
 };
 
 /**

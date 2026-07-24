@@ -5,6 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
 from typing import Dict, Any
 from app.api.auth.jwt_validator import validate_token
+from app.api.services.app_user_service import get_role
 
 security = HTTPBearer()
 
@@ -43,5 +44,17 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     # Validate required fields
     if not user["user_id"] or not user["email"]:
         raise HTTPException(status_code=403, detail="Token missing required claims")
-    
+
     return user
+
+
+async def get_current_admin_user(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """
+    FastAPI dependency that additionally requires the caller's app_users role to be 'admin'.
+
+    Raises:
+        HTTPException: 403 if the authenticated user is not an admin
+    """
+    if get_role(current_user["email"]) != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+    return current_user

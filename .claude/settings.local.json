@@ -4,7 +4,16 @@
       "Bash(.venv/Scripts/python -c ' *)",
       "Bash(.venv/Scripts/pip install *)",
       "Bash(python -c ' *)",
-      "Bash(python create_schema.py)"
+      "Bash(python create_schema.py)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Skill(run)",
+      "Skill(run:*)",
+      "PowerShell(python --version 2>&1)",
+      "PowerShell(node --version 2>&1)",
+      "PowerShell(npm --version 2>&1)",
+      "PowerShell(py --version 2>&1)",
+      "PowerShell(python3 --version 2>&1)",
+      "PowerShell(Get-Command py -ErrorAction SilentlyContinue)"
     ]
   }
 }

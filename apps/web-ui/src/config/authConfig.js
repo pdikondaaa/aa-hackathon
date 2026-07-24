@@ -13,7 +13,7 @@ export const msalConfig = {
     // ── Paste your values here ──────────────────────────────────────────────
     clientId:    import.meta.env.VITE_AZURE_CLIENT_ID,     // Application (client) ID  — Overview tab
     authority:   `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID}`, // Directory (tenant) ID
-    redirectUri: window.location.origin, // Must match the SPA redirect URI in Azure Portal
+    redirectUri: window.location.origin + '/project-aura/', // Must match the SPA redirect URI in Azure Portal
     // ───────────────────────────────────────────────────────────────────────
   },
   cache: {
@@ -45,6 +45,10 @@ export const plannerRequest = {
 // Add in Azure Portal → API permissions → Microsoft Graph → Delegated → Calendars.ReadBasic
 export const calendarRequest = {
   scopes: ['Calendars.ReadBasic'],
+};
+
+export const mailRequest = {
+  scopes: ['Mail.Send'],
 };
 
 export const graphConfig = {

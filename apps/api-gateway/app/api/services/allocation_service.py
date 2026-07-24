@@ -6,6 +6,7 @@ Role lookup chain (per request, resolved ONCE):
   email → employee_details.designation → allocation_role_map.role
 """
 from app.api.config.db_config import get_db_connection
+from app.api.services.user_service import _get_zoho_connection, _EMPLOYEE_VIEW
 from app.utils.logging_config import get_logger
 
 logger = get_logger("allocation_service")
@@ -150,15 +151,165 @@ def get_team_view(email: str) -> dict:
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_full_allocation(email: str, role: str) -> list[dict]:
+def _get_direct_report_profiles(manager_email: str) -> list[dict]:
     """
-    functional_lead / business_lead / executive: full allocation table.
-    `role` is pre-resolved by the caller so masking avoids per-row DB calls.
+    Active employees whose ReportingManagerEmail exactly matches manager_email
+    (a real reporting-line check via Zoho people.vb_employees — not the fuzzy
+    name-substring match used by get_team_view()). This is the full roster —
+    independent of whether the employee has a row in the app's own
+    employee_details/allocation_details tables, which only cover a subset
+    of active staff.
     """
+    conn = None
+    try:
+        conn = _get_zoho_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT "EmailId", "FirstName", "LastName", "Designation",
+                       "Department", "WorkLocation", "TotalExperience",
+                       "SkillSet", "EmployeeType", "ProjectName"
+                FROM {_EMPLOYEE_VIEW}
+                WHERE lower("ReportingManagerEmail") = lower(%s)
+                  AND "EmployeeStatus" ILIKE 'Active'
+                ORDER BY "FirstName", "LastName"
+                """,
+                (manager_email,),
+            )
+            return [dict(r) for r in cur.fetchall() if r.get("EmailId")]
+    except Exception as exc:
+        logger.error("_get_direct_report_profiles failed for %s: %s", manager_email, exc)
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def has_direct_reports(email: str) -> bool:
+    """True if `email` is the ReportingManagerEmail of at least one active employee."""
+    return len(_get_direct_report_profiles(email)) > 0
+
+
+def get_my_team_allocation(email: str) -> list[dict]:
+    """
+    Manager's direct-report rows, UNMASKED (viewer is literally their manager).
+    Every real direct report (from Zoho) is included, even if they have no
+    row in the app's own employee_details/allocation_details tables — those
+    are enriched with allocation data (effort %, billability %, project,
+    delivery manager, etc.) when a match exists; otherwise the Zoho profile
+    fields (designation, department, location, current project) are used
+    as a fallback and `employee_id` is None (not clickable into the drawer,
+    which is keyed by the app's own employee_id).
+    Empty list if the user has no direct reports.
+    """
+    profiles = _get_direct_report_profiles(email)
+    if not profiles:
+        return []
+
+    emails = [p["EmailId"].lower() for p in profiles]
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                SELECT ed.employee_id, ed.name, ed.designation, ed.email AS employee_email,
+                       ed.function, ed.subfunction, ed.location, ed.employee_type,
+                       ed.primary_skills, ed.total_experience_years, ed.exp_group,
+                       ad.project_name, ad.sub_project, ad.project_lead,
+                       ad.delivery_manager, ad.functional_manager,
+                       ad.completion_status, ad.efforts_pct, ad.billability_pct,
+                       ad.project_status, ad.billing, ad.project_type,
+                       ad.allocation_date, ad.status_active_inactive, ad.sow_name
+                FROM employee_details ed
+                LEFT JOIN allocation_details ad ON ad.employee_id = ed.employee_id
+                WHERE lower(ed.email) = ANY(%s)
+                """,
+                (emails,),
+            )
+            by_email = {r["employee_email"].lower(): dict(r) for r in cur.fetchall() if r.get("employee_email")}
+
+    rows = []
+    for p in profiles:
+        email_key = p["EmailId"].lower()
+        allocated = by_email.get(email_key)
+        if allocated:
+            rows.append(allocated)
+        else:
+            rows.append({
+                "employee_id": None,
+                "name": f"{p.get('FirstName') or ''} {p.get('LastName') or ''}".strip() or None,
+                "designation": p.get("Designation"),
+                "employee_email": p.get("EmailId"),
+                "function": p.get("Department"),
+                "subfunction": None,
+                "location": p.get("WorkLocation"),
+                "employee_type": p.get("EmployeeType"),
+                "primary_skills": p.get("SkillSet"),
+                "total_experience_years": p.get("TotalExperience"),
+                "exp_group": None,
+                "project_name": p.get("ProjectName"),
+                "sub_project": None,
+                "project_lead": None,
+                "delivery_manager": None,
+                "functional_manager": None,
+                "completion_status": None,
+                "efforts_pct": None,
+                "billability_pct": None,
+                "project_status": None,
+                "billing": None,
+                "project_type": None,
+                "allocation_date": None,
+                "status_active_inactive": "Active",
+                "sow_name": None,
+            })
+    rows.sort(key=lambda r: (r.get("name") or ""))
+    return rows
+
+
+def get_available_months() -> list[str]:
+    """Return distinct YYYY-MM keys that have allocation data, newest first."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT TO_CHAR(allocation_date, 'YYYY-MM') AS month_key
+                FROM allocation_details
+                WHERE allocation_date IS NOT NULL
+                ORDER BY month_key DESC
+                """
+            )
+            return [r["month_key"] for r in cur.fetchall()]
+
+
+def get_full_allocation(
+    email: str,
+    role: str,
+    date_from: str = None,
+    date_to: str = None,
+) -> list[dict]:
+    """
+    functional_lead / business_lead / executive: full allocation table.
+    `role` is pre-resolved by the caller so masking avoids per-row DB calls.
+    Optional date_from / date_to filter by allocation_date (YYYY-MM-DD strings).
+    """
+    conditions = []
+    params: list = []
+    if date_from:
+        conditions.append("ad.allocation_date >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("ad.allocation_date <= %s")
+        params.append(date_to)
+
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
                 SELECT ad.employee_id, ad.name, ad.project_name, ad.sub_project,
                        ad.project_lead, ad.delivery_manager, ad.functional_manager,
                        ad.function, ad.subfunction, ad.completion_status,
@@ -171,8 +322,10 @@ def get_full_allocation(email: str, role: str) -> list[dict]:
                        ed.exp_group
                 FROM allocation_details ad
                 LEFT JOIN employee_details ed ON ad.employee_id = ed.employee_id
+                {where_sql}
                 ORDER BY ad.function NULLS LAST, ad.name NULLS LAST
-                """
+                """,
+                params if params else None,
             )
             rows = cur.fetchall()
     return [_mask(row, email, role) for row in rows]
@@ -488,23 +641,29 @@ def build_ask_context(email: str) -> tuple[str, str]:
     return "\n".join(lines), role
 
 
-def get_board_data(email: str) -> dict:
+def get_board_data(email: str, date_from: str = None, date_to: str = None) -> dict:
     """
     Top-level entry point: resolve user profile once, return role-appropriate payload.
 
     All response shapes include `designation` and `role` so the UI can display them.
+    Optional date_from / date_to narrow allocation_rows to a specific period.
     """
     profile = get_user_profile(email)
     role        = profile["role"]
     designation = profile["designation"]
 
-    base = {"role": role, "designation": designation, "user_name": profile.get("name")}
+    base = {
+        "role": role,
+        "designation": designation,
+        "user_name": profile.get("name"),
+        "has_direct_reports": has_direct_reports(email),
+    }
 
     if role in ANALYTICS_ROLES:
         return {
             **base,
             "view":            "analytics",
-            "allocation_rows": get_full_allocation(email, role),
+            "allocation_rows": get_full_allocation(email, role, date_from=date_from, date_to=date_to),
             "analytics":       get_analytics(email, role),
         }
 

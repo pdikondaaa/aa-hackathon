@@ -1,23 +1,128 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { parseMarkdown } from '../utils/markdown';
-import { submitFeedback, deleteFeedback } from '../services/api';
+import { submitFeedback, deleteFeedback, getEmployeeDirectory } from '../services/api';
+import { sendEmailViaGraph } from '../utils/authService';
 import { isDocumentMessage, downloadDocument, printDocument } from '../utils/documentDownload';
 
-const buildMailto = (to, subject, body) => {
-  const params = [`subject=${encodeURIComponent(subject)}`, `body=${encodeURIComponent(body)}`];
-  return `mailto:${encodeURIComponent(to)}?${params.join('&')}`;
+// Cc/Bcc input with a directory-backed suggestion dropdown — matches the
+// text after the last comma against employee name/email as the user types.
+const EmailAddressField = ({ label, labelExtra, value, onChange, employees, placeholder, disabled }) => {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+
+  const suggestions = useMemo(() => {
+    const query = value.split(',').pop().trim().toLowerCase();
+    if (!query) return [];
+    return employees
+      .filter(emp =>
+        emp.name?.toLowerCase().includes(query) ||
+        emp.email?.toLowerCase().includes(query)
+      )
+      .slice(0, 6);
+  }, [value, employees]);
+
+  const selectSuggestion = (emp) => {
+    const parts = value.split(',');
+    parts[parts.length - 1] = emp.email;
+    onChange(parts.map(p => p.trim()).filter(Boolean).join(', ') + ', ');
+    setOpen(false);
+    setHighlight(0);
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight(h => (h + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight(h => (h - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' && suggestions[highlight]) {
+      e.preventDefault();
+      selectSuggestion(suggestions[highlight]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="email-draft-field email-draft-field--autocomplete">
+      {labelExtra ? (
+        <div className="email-draft-label-row">
+          <label className="email-draft-label">{label}</label>
+          {labelExtra}
+        </div>
+      ) : (
+        <label className="email-draft-label">{label}</label>
+      )}
+      <input
+        className="email-draft-input"
+        type="text"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); setHighlight(0); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        disabled={disabled}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open && suggestions.length > 0}
+        aria-autocomplete="list"
+      />
+      {open && suggestions.length > 0 && (
+        <ul className="email-draft-suggestions" role="listbox">
+          {suggestions.map((emp, i) => (
+            <li
+              key={emp.email}
+              role="option"
+              aria-selected={i === highlight}
+              className={`email-draft-suggestion-item${i === highlight ? ' active' : ''}`}
+              onMouseDown={e => { e.preventDefault(); selectSuggestion(emp); }}
+              onMouseEnter={() => setHighlight(i)}
+            >
+              <span className="email-draft-suggestion-name">{emp.name}</span>
+              <span className="email-draft-suggestion-email">{emp.email}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 };
 
 const EmailDraftCard = ({ draft }) => {
   const [to, setTo]           = useState(draft.to);
+  const [cc, setCc]           = useState(draft.cc || '');
+  const [bcc, setBcc]         = useState(draft.bcc || '');
+  const [showCcBcc, setShowCcBcc] = useState(Boolean(draft.cc || draft.bcc));
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody]       = useState(draft.body);
-  const [launched, setLaunched] = useState(false);
+  const [status, setStatus]   = useState('idle'); // idle | sending | sent | error
+  const [errorMsg, setErrorMsg] = useState('');
+  const [employees, setEmployees] = useState([]);
 
-  const handleSend = () => {
-    window.location.href = buildMailto(to, subject, body);
-    setLaunched(true);
-    setTimeout(() => setLaunched(false), 3000);
+  useEffect(() => {
+    getEmployeeDirectory()
+      .then(data => setEmployees(data?.employees || []))
+      .catch(() => {});
+  }, []);
+
+  const handleSend = async () => {
+    if (status === 'sending') return;
+    setStatus('sending');
+    setErrorMsg('');
+    try {
+      await sendEmailViaGraph(to.trim(), subject.trim(), body.trim(), {
+        cc: cc.trim(),
+        bcc: bcc.trim(),
+      });
+      setStatus('sent');
+    } catch (err) {
+      setErrorMsg(err?.message || 'Failed to send email. Please try again.');
+      setStatus('error');
+      setTimeout(() => setStatus('idle'), 4000);
+    }
   };
 
   return (
@@ -29,16 +134,44 @@ const EmailDraftCard = ({ draft }) => {
       </div>
 
       <div className="email-draft-fields">
-        <div className="email-draft-field">
-          <label className="email-draft-label">To</label>
-          <input
-            className="email-draft-input"
-            type="email"
-            value={to}
-            onChange={e => setTo(e.target.value)}
-            placeholder="recipient@example.com"
-          />
-        </div>
+        <EmailAddressField
+          label="To"
+          labelExtra={!showCcBcc && (
+            <button
+              type="button"
+              className="email-draft-ccbcc-toggle"
+              onClick={() => setShowCcBcc(true)}
+              disabled={status === 'sent'}
+            >
+              Cc/Bcc
+            </button>
+          )}
+          value={to}
+          onChange={setTo}
+          employees={employees}
+          placeholder="recipient@example.com"
+          disabled={status === 'sent'}
+        />
+        {showCcBcc && (
+          <>
+            <EmailAddressField
+              label="Cc"
+              value={cc}
+              onChange={setCc}
+              employees={employees}
+              placeholder="cc@example.com"
+              disabled={status === 'sent'}
+            />
+            <EmailAddressField
+              label="Bcc"
+              value={bcc}
+              onChange={setBcc}
+              employees={employees}
+              placeholder="bcc@example.com"
+              disabled={status === 'sent'}
+            />
+          </>
+        )}
         <div className="email-draft-field">
           <label className="email-draft-label">Subject</label>
           <input
@@ -46,6 +179,7 @@ const EmailDraftCard = ({ draft }) => {
             type="text"
             value={subject}
             onChange={e => setSubject(e.target.value)}
+            disabled={status === 'sent'}
           />
         </div>
         <div className="email-draft-field">
@@ -55,19 +189,26 @@ const EmailDraftCard = ({ draft }) => {
             value={body}
             onChange={e => setBody(e.target.value)}
             rows={6}
+            disabled={status === 'sent'}
           />
         </div>
       </div>
 
+      {status === 'error' && (
+        <div className="email-draft-error">{errorMsg}</div>
+      )}
+
       <button
-        className={`email-draft-send-btn${launched ? ' launched' : ''}`}
+        className={`email-draft-send-btn${status === 'sent' ? ' launched' : ''}`}
         onClick={handleSend}
-        disabled={!to.trim() || !subject.trim()}
+        disabled={!to.trim() || !subject.trim() || status === 'sending' || status === 'sent'}
       >
-        {launched ? (
-          <><i className="fas fa-check" /> Outlook is opening...</>
+        {status === 'sending' ? (
+          <><i className="fas fa-spinner fa-spin" /> Sending...</>
+        ) : status === 'sent' ? (
+          <><i className="fas fa-check" /> Email Sent</>
         ) : (
-          <><i className="fab fa-microsoft" /> Send Email</>
+          <><i className="fas fa-paper-plane" /> Send Email</>
         )}
       </button>
     </div>
@@ -79,29 +220,85 @@ const EmailDraftCard = ({ draft }) => {
 const getInitials = (name = '') =>
   name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation }) => {
+const FeedbackModal = ({ onSubmit, onClose }) => {
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    await onSubmit(comment.trim());
+    setSubmitting(false);
+  };
+
+  const handleOverlayKey = (e) => { if (e.key === 'Escape') onClose(); };
+
+  return (
+    <div
+      className="feedback-modal-overlay"
+      onClick={onClose}
+      onKeyDown={handleOverlayKey}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Feedback"
+    >
+      <div className="feedback-modal" onClick={e => e.stopPropagation()}>
+        <button className="feedback-modal-close" onClick={onClose} aria-label="Close">
+          <i className="fas fa-times" />
+        </button>
+        <div className="feedback-modal-icon">
+          <i className="fas fa-thumbs-down" />
+        </div>
+        <h3 className="feedback-modal-title">Help us improve</h3>
+        <p className="feedback-modal-subtitle">
+          Our model will train from your valuable feedback. Thank you for helping us get better!
+        </p>
+        <textarea
+          className="feedback-modal-textarea"
+          placeholder="Tell us what went wrong (optional)…"
+          value={comment}
+          onChange={e => setComment(e.target.value)}
+          rows={4}
+          autoFocus
+        />
+        <div className="feedback-modal-actions">
+          <button className="feedback-modal-cancel" onClick={onClose}>Cancel</button>
+          <button
+            className="feedback-modal-submit"
+            onClick={handleSubmit}
+            disabled={submitting}
+          >
+            {submitting ? <><i className="fas fa-spinner fa-spin" /> Submitting…</> : 'Submit Feedback'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation, onOpenParkingDrawer }) => {
   const [feedback, setFeedback] = useState(message.initialFeedback?.rating ?? null);
   const [feedbackId, setFeedbackId] = useState(message.initialFeedback?.id ?? null);
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded]   = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
   const isUser     = message.role === 'user';
   const isDocument = !isUser && isDocumentMessage(message.content);
 
-  const handleFeedback = async (type) => {
+  const handleFeedback = async (type, comment) => {
     if (submitting || !message.backendId) return;
     setSubmitting(true);
     try {
-      if (feedback === type) {
+      if (feedback === type && !comment) {
         // Same button clicked again — toggle off
         if (feedbackId) await deleteFeedback(feedbackId);
         setFeedback(null);
         setFeedbackId(null);
       } else {
-        // New vote or change vote — upsert
-        const result = await submitFeedback(message.backendId, type);
+        // New vote or change vote — upsert, forwarding optional comment
+        const result = await submitFeedback(message.backendId, type, null, comment || null);
         setFeedback(type);
         setFeedbackId(result.id);
       }
@@ -162,12 +359,17 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
               dangerouslySetInnerHTML={{ __html: parseMarkdown(message.content) }}
               onClick={(e) => {
                 const anchor = e.target.closest('a');
-                if (anchor && anchor.getAttribute('href') === '#escalation') {
+                if (!anchor) return;
+                const href = anchor.getAttribute('href');
+                if (href === '#escalation') {
                   e.preventDefault();
                   onOpenEscalation?.({
                     conversationId: conversationId ?? message.conversationId ?? null,
                     messageId: message.backendId ?? null,
                   });
+                } else if (href === '#parking-status') {
+                  e.preventDefault();
+                  onOpenParkingDrawer?.();
                 }
               }}
             />
@@ -223,7 +425,7 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
               </button>
               <button
                 className={`feedback-btn${feedback === 'down' ? ' active-down' : ''}`}
-                onClick={() => handleFeedback('down')}
+                onClick={() => feedback === 'down' ? handleFeedback('down') : setShowFeedbackModal(true)}
                 disabled={submitting}
                 title="Not helpful"
                 aria-pressed={feedback === 'down'}
@@ -279,6 +481,16 @@ const MessageBubble = ({ message, config, user, conversationId, onOpenEscalation
         <div className="avatar user-avatar" aria-hidden="true">
           {getInitials(user?.name) || config.user?.initials}
         </div>
+      )}
+
+      {showFeedbackModal && (
+        <FeedbackModal
+          onSubmit={async (comment) => {
+            await handleFeedback('down', comment);
+            setShowFeedbackModal(false);
+          }}
+          onClose={() => setShowFeedbackModal(false)}
+        />
       )}
     </div>
   );

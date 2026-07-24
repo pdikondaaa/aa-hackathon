@@ -87,6 +87,63 @@ def get_employee_full_name(email: str) -> Optional[str]:
     return f"{first} {last}".strip() or None
 
 
+def get_todays_work_anniversaries() -> list:
+    """
+    Return a list of active employees whose work anniversary falls today
+    (matching month and day of DateOfJoining). Uses people.vb_employees as
+    the source of truth.
+
+    Each entry: { full_name, first_name, department, designation, years }
+    Returns an empty list on any error.
+    """
+    conn = None
+    try:
+        today = date.today()
+        conn = _get_zoho_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT \"FirstName\", \"LastName\", \"Department\", \"Designation\",
+                       \"DateOfJoining\"
+                FROM   {_EMPLOYEE_VIEW}
+                WHERE  \"EmployeeStatus\" ILIKE 'Active'
+                  AND  EXTRACT(MONTH FROM \"DateOfJoining\") = %s
+                  AND  EXTRACT(DAY   FROM \"DateOfJoining\") = %s
+                ORDER  BY \"FirstName\", \"LastName\"
+                """,
+                (today.month, today.day),
+            )
+            rows = cur.fetchall()
+        result = []
+        for row in rows:
+            first = str(row.get("FirstName") or "").strip()
+            last  = str(row.get("LastName")  or "").strip()
+            doj   = row.get("DateOfJoining")
+            years = None
+            if doj:
+                try:
+                    years = today.year - doj.year
+                except Exception:
+                    pass
+            result.append({
+                "full_name":   f"{first} {last}".strip(),
+                "first_name":  first,
+                "department":  str(row.get("Department")  or "").strip(),
+                "designation": str(row.get("Designation") or "").strip(),
+                "years":       years,
+            })
+        return result
+    except Exception as exc:
+        logger.error("get_todays_work_anniversaries failed: %s", exc)
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def get_todays_birthdays() -> list:
     """
     Return a list of active employees whose birthday falls today (matching

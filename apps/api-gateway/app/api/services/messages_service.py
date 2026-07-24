@@ -1,9 +1,15 @@
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from app.agents.supervisor_agent import run_assistant
 from app.api.config.db_config import get_db_connection
+
+try:
+    from app.memory import update_after_message as _enrich
+except Exception:
+    _enrich = None
 
 
 class MessagesService:
@@ -60,9 +66,31 @@ class MessagesService:
                 )
             conn.commit()
 
+        # ── Fetch conversation history for context ─────────────────────────
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role, content FROM messages
+                    WHERE conversation_id = %s
+                      AND id NOT IN (%s, %s)
+                      AND status NOT IN ('pending', 'error', 'superseded')
+                    ORDER BY created_at ASC
+                    LIMIT 10
+                    """,
+                    (conversation_id, user_msg_id, assistant_msg_id),
+                )
+                conversation_history = [
+                    {"role": r["role"], "content": r["content"]}
+                    for r in cur.fetchall()
+                ]
+
         # ── Phase 2: call the agent (outside the DB transaction) ───────────
         try:
-            answer = run_assistant(content, user_id=user_id)
+            answer = run_assistant(
+                content,
+                user_id=user_id,
+            )
             final_status = "done"
         except Exception as exc:
             print(f"Agent error for message {assistant_msg_id}: {exc}")
@@ -82,6 +110,18 @@ class MessagesService:
                 )
                 assistant_row = dict(cur.fetchone())
             conn.commit()
+
+        # ── Phase 4: enrich per-user memory (best-effort, never breaks chat) ─
+        if final_status == "done" and _enrich:
+            try:
+                _enrich(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_msg=content,
+                    assistant_msg=answer,
+                )
+            except Exception as exc:
+                print(f"[MessagesService] memory enrichment error: {exc}")
 
         return assistant_row
 
@@ -224,6 +264,45 @@ class MessagesService:
                 row = cur.fetchone()
             conn.commit()
         return dict(row) if row else None
+
+    # ------------------------------------------------------------------ #
+    # Save email draft  (POST /api/conversations/{id}/email-draft)        #
+    # ------------------------------------------------------------------ #
+    def save_email_draft(
+        self,
+        conversation_id: str,
+        user_id: str,
+        to: str,
+        subject: str,
+        body: str,
+    ) -> Optional[dict]:
+        now = datetime.now(timezone.utc)
+        msg_id = str(uuid.uuid4())
+        content = json.dumps({"__type": "email_draft", "to": to, "subject": subject, "body": body})
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM conversations WHERE id = %s AND user_id = %s AND is_deleted = FALSE",
+                    (conversation_id, user_id),
+                )
+                if not cur.fetchone():
+                    return None
+                cur.execute(
+                    """
+                    INSERT INTO messages (id, conversation_id, role, content, status, created_at)
+                    VALUES (%s, %s, 'assistant', %s, 'done', %s)
+                    RETURNING id, conversation_id, role, content, status, created_at
+                    """,
+                    (msg_id, conversation_id, content, now),
+                )
+                row = dict(cur.fetchone())
+                cur.execute(
+                    "UPDATE conversations SET updated_at = %s WHERE id = %s",
+                    (now, conversation_id),
+                )
+            conn.commit()
+        return row
 
     # ------------------------------------------------------------------ #
     # Get citations  (GET /api/messages/{id}/citations)                   #

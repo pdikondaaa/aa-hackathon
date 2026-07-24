@@ -19,6 +19,7 @@ from app.agents.employee.config import (
     COL_ENTITY_NAME, COL_REGION, COL_DOJ, COL_TOTAL_EXPERIENCE,
     COL_PARENT_DEPARTMENT, COL_NATIONALITY, COL_BLOOD_GROUP,
     SEARCH_COLUMNS, SUMMARY_FIELDS, HIDDEN_DETAIL_COLUMNS,
+    COL_DOB, COL_MARITAL_STATUS, COL_PRESENT_ADDRESS, COL_PERMANENT_ADDRESS,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,9 +77,10 @@ _SELF_RE = re.compile(
     \bmy\s+(?:mobile|phone|email|designation|department|manager|reporting\s+manager|
               role|grade|level|skill|project|blood\s*group|date\s+of\s+joining|
               joining|detail|info(?:rmation)?|profile|team|location|
-              nationality|experience|contact|address|work\s+phone)
+              nationality|experience|contact|address|work\s+phone|name)
     |\bwho\s+am\s+i\b
-    |\babout\s+me\b
+    |\babout\s+me(?:self)?\b
+    |\btell\s+me\s+about\s+(?:my)?self\b
     |\bmy\s+(?:employee|hr|personal)\s+(?:detail|info|profile|record|data)
     """,
     re.VERBOSE | re.IGNORECASE,
@@ -264,6 +266,18 @@ def _build_query(query: str) -> Tuple[str, tuple, str]:
     )
     if name_m:
         name = name_m.group(1).strip()
+        tokens = [t for t in name.split() if len(t) > 1]
+        if len(tokens) >= 2:
+            # Full name given — AND logic prevents returning every employee sharing one token
+            first, last = tokens[0], tokens[-1]
+            return (
+                f'SELECT * FROM {EMPLOYEE_VIEW} WHERE '
+                f'("{COL_FIRST_NAME}" ILIKE %s AND "{COL_LAST_NAME}" ILIKE %s) '
+                f'OR ("{COL_FIRST_NAME}" ILIKE %s AND "{COL_LAST_NAME}" ILIKE %s) '
+                f'ORDER BY {_order_by()} LIMIT 5',
+                (f"%{first}%", f"%{last}%", f"%{last}%", f"%{first}%"),
+                "name_search",
+            )
         name_cols = [COL_FIRST_NAME, COL_LAST_NAME, COL_EMAIL]
         clause = _ilike_clause(name_cols)
         return (
@@ -364,18 +378,16 @@ def _full_name(emp: Dict) -> str:
 
 
 def _fmt_summary_line(emp: Dict) -> str:
-    parts = [f"**{_full_name(emp)}**"]
+    parts = []
     for col, label in SUMMARY_FIELDS:
         val = emp.get(col)
         if val and str(val).strip():
-            parts.append(f"{label}: {val}")
-    return " | ".join(parts)
+            parts.append(f"<span>{label}: <strong>{val}</strong></span>")
+    meta = " &nbsp;|&nbsp; ".join(parts)
+    return f"<strong>{_full_name(emp)}</strong>" + (f" — {meta}" if meta else "")
 
 
-def _fmt_detail_card(emp: Dict) -> str:
-    lines: List[str] = []
-    lines.append(f"**Name:** {_full_name(emp)}")
-
+def _fmt_detail_card(emp: Dict, is_self: bool = False) -> str:
     priority = [
         (COL_DESIGNATION,             "Designation"),
         (COL_DEPARTMENT,              "Department"),
@@ -402,21 +414,26 @@ def _fmt_detail_card(emp: Dict) -> str:
         (COL_NATIONALITY,             "Nationality"),
     ]
 
+    items: List[str] = [f"<li><strong>Name:</strong> {_full_name(emp)}</li>"]
     rendered_keys = {COL_FIRST_NAME, COL_LAST_NAME}
     for col, label in priority:
         val = emp.get(col)
-        if val and str(val).strip() and col not in HIDDEN_DETAIL_COLUMNS:
-            lines.append(f"**{label}:** {val}")
+        if val and str(val).strip():
+            if not is_self and col in HIDDEN_DETAIL_COLUMNS:
+                continue
+            items.append(f"<li><strong>{label}:</strong> {val}</li>")
             rendered_keys.add(col)
 
     for col, val in emp.items():
-        if col in rendered_keys or col in HIDDEN_DETAIL_COLUMNS:
+        if col in rendered_keys:
+            continue
+        if not is_self and col in HIDDEN_DETAIL_COLUMNS:
             continue
         if val and str(val).strip():
             label = col.replace("_", " ").title()
-            lines.append(f"**{label}:** {val}")
+            items.append(f"<li><strong>{label}:</strong> {val}</li>")
 
-    return "\n".join(lines)
+    return f"<h3>Employee Profile</h3><ul>{''.join(items)}</ul>"
 
 
 def _fmt_field_results(rows: List[Dict], field_label: str, col_name: str) -> str:
@@ -425,19 +442,22 @@ def _fmt_field_results(rows: List[Dict], field_label: str, col_name: str) -> str
         name = _full_name(emp)
         val = emp.get(col_name)
         if val and str(val).strip():
-            return f"**{name}** — {field_label}: **{val}**"
-        return f"**{name}** — {field_label} is not available in the records."
+            return f"<p><strong>{name}</strong> — {field_label}: <strong>{val}</strong></p>"
+        return f"<p><strong>{name}</strong> — {field_label} is not available in the records.</p>"
 
-    lines = [f"Found **{len(rows)}** matching employees:\n"]
+    items = []
     for emp in rows:
         name = _full_name(emp)
         val = emp.get(col_name)
-        val_str = f"**{val}**" if val and str(val).strip() else "N/A"
+        val_str = f"<strong>{val}</strong>" if val and str(val).strip() else "N/A"
         desig = emp.get(COL_DESIGNATION, "")
         dept = emp.get(COL_DEPARTMENT, "")
-        extra = f" ({desig}, {dept})" if desig or dept else ""
-        lines.append(f"- **{name}**{extra} — {field_label}: {val_str}")
-    return "\n".join(lines)
+        extra = f" <em>({desig}, {dept})</em>" if desig or dept else ""
+        items.append(f"<li><strong>{name}</strong>{extra} — {field_label}: {val_str}</li>")
+    return (
+        f"<h3>Found {len(rows)} matching employees</h3>"
+        f"<ul>{''.join(items)}</ul>"
+    )
 
 
 def _format_results(rows: List[Dict], intent: str) -> str:
@@ -446,7 +466,7 @@ def _format_results(rows: List[Dict], intent: str) -> str:
 
     if intent == "count":
         count = rows[0].get("count", 0)
-        return f"There are **{count}** employees in the system."
+        return f"<p>There are <strong>{count}</strong> employees in the system.</p>"
 
     if intent.startswith("field:"):
         _, field_label, col_name = intent.split(":", 2)
@@ -455,16 +475,18 @@ def _format_results(rows: List[Dict], intent: str) -> str:
     if len(rows) == 1:
         return _fmt_detail_card(rows[0])
 
-    header = f"Found **{len(rows)}** employee(s):\n"
-    lines = [f"- {_fmt_summary_line(e)}" for e in rows]
-    return header + "\n".join(lines)
+    items = [f"<li>{_fmt_summary_line(e)}</li>" for e in rows]
+    return (
+        f"<h3>Found {len(rows)} employee(s)</h3>"
+        f"<ul>{''.join(items)}</ul>"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def employee_agent(query: str, user_email: str = "") -> str:
+def employee_agent(query: str, user_email: str = "", user_name: str = "") -> str:
     """
     Employee Agent — answers employee directory queries by reading
     the Zoho People database (people.vb_employees).
@@ -475,15 +497,32 @@ def employee_agent(query: str, user_email: str = "") -> str:
     Attendance queries are handled by the dedicated AttendanceAgent.
     """
     try:
-        if user_email and _SELF_RE.search(query):
-            rows = _run(
-                f'SELECT * FROM {EMPLOYEE_VIEW} WHERE "{COL_EMAIL}" ILIKE %s LIMIT 1',
-                (user_email,),
-            )
-            if rows:
-                return _fmt_detail_card(rows[0])
+        if user_email:
+            q_lower = query.lower()
+            # Name-based self-check uses the JWT display name — no DB call needed
+            name_parts = user_name.lower().split() if user_name else []
+            is_self_by_name = len(name_parts) >= 2 and all(p in q_lower for p in name_parts)
+
+            if _SELF_RE.search(query) or is_self_by_name:
+                rows = _run(
+                    f'SELECT * FROM {EMPLOYEE_VIEW} WHERE "{COL_EMAIL}" ILIKE %s LIMIT 1',
+                    (user_email,),
+                )
+                if rows:
+                    return _fmt_detail_card(rows[0], is_self=True)
 
         sql, params, intent = _build_query(query)
+
+        # Block requests for another employee's personal/government-ID fields
+        if intent.startswith("field:"):
+            _, _field_label, _col_name = intent.split(":", 2)
+            if _col_name in HIDDEN_DETAIL_COLUMNS:
+                return (
+                    "<p>Personal contact and identification details are confidential "
+                    "and cannot be shared via this system.</p>"
+                    "<p>For work-related contact please use the official work email or "
+                    "contact HR at <strong>hr@alignedautomation.com</strong>.</p>"
+                )
         rows = _run(sql, params)
 
         if rows:
@@ -494,29 +533,40 @@ def employee_agent(query: str, user_email: str = "") -> str:
         if not intent.startswith("field:") and intent not in ("count", "list_all"):
             words = _keywords(query)
             if words:
-                conditions: List[str] = []
-                params_list: List[str] = []
-                for word in words[:2]:
-                    for col in [COL_FIRST_NAME, COL_LAST_NAME, COL_DESIGNATION, COL_DEPARTMENT]:
-                        conditions.append(f'"{col}" ILIKE %s')
-                        params_list.append(f"%{word}%")
-                broad_rows = _run(
-                    f"SELECT * FROM {EMPLOYEE_VIEW} WHERE {' OR '.join(conditions)} "
-                    f"ORDER BY {_order_by()} LIMIT 10",
-                    tuple(params_list),
-                )
+                if intent == "name_search" and len(words) >= 2:
+                    # Keep AND logic so we don't flood with everyone sharing one token
+                    fn, ln = words[0], words[1]
+                    broad_rows = _run(
+                        f'SELECT * FROM {EMPLOYEE_VIEW} WHERE '
+                        f'("{COL_FIRST_NAME}" ILIKE %s AND "{COL_LAST_NAME}" ILIKE %s) '
+                        f'OR ("{COL_FIRST_NAME}" ILIKE %s AND "{COL_LAST_NAME}" ILIKE %s) '
+                        f'ORDER BY {_order_by()} LIMIT 5',
+                        (f"%{fn}%", f"%{ln}%", f"%{ln}%", f"%{fn}%"),
+                    )
+                else:
+                    conditions: List[str] = []
+                    params_list: List[str] = []
+                    for word in words[:2]:
+                        for col in [COL_FIRST_NAME, COL_LAST_NAME, COL_DESIGNATION, COL_DEPARTMENT]:
+                            conditions.append(f'"{col}" ILIKE %s')
+                            params_list.append(f"%{word}%")
+                    broad_rows = _run(
+                        f"SELECT * FROM {EMPLOYEE_VIEW} WHERE {' OR '.join(conditions)} "
+                        f"ORDER BY {_order_by()} LIMIT 10",
+                        tuple(params_list),
+                    )
                 if broad_rows:
                     return _format_results(broad_rows, "general_search")
 
         return (
-            f"No employee records found for: \"{query}\". "
-            "Try searching by full name, department, designation, or skill. "
-            "Contact HR at hr@alignedautomation.com for further assistance."
+            f"<p>No employee records found for: <strong>\"{query}\"</strong>. "
+            "Try searching by full name, department, designation, or skill.</p>"
+            "<p>Contact HR at <strong>hr@alignedautomation.com</strong> for further assistance.</p>"
         )
 
     except Exception as exc:
         logger.exception("Employee agent error: %s", exc)
         return (
-            "Employee data is temporarily unavailable. "
-            "Please contact HR at hr@alignedautomation.com for assistance."
+            "<p>Employee data is temporarily unavailable. "
+            "Please contact HR at <strong>hr@alignedautomation.com</strong> for assistance.</p>"
         )

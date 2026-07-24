@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAnalyticsData }   from '../hooks/useAnalyticsData';
+import { analyticsApi }        from '../services/analyticsApi';
 import OverviewCards           from '../components/OverviewCards';
 import TabsBarChart            from '../components/TabsBarChart';
 import DailyLineChart          from '../components/DailyLineChart';
@@ -9,9 +10,15 @@ import PeakHoursBarChart       from '../components/PeakHoursBarChart';
 import SuccessFailedChart      from '../components/SuccessFailedChart';
 import TopQueriesTable         from '../components/TopQueriesTable';
 import RecentActivities        from '../components/RecentActivities';
+import UsersTable               from '../components/UsersTable';
 import DateRangeFilter         from '../components/DateRangeFilter';
 import ChatWindow              from '../../../components/ChatWindow';
 import { chatConfig }          from '../../../config/chatConfig';
+
+const VIEW_TABS = [
+  { id: 'overview', label: 'Overview', icon: 'fa-chart-bar' },
+  { id: 'users',    label: 'Users',    icon: 'fa-users' },
+];
 
 const ANALYTICS_CHAT_CONFIG = {
   ...chatConfig,
@@ -78,6 +85,7 @@ function ErrorState({ message, onRetry }) {
 }
 
 export default function AnalyticsDashboard({ user }) {
+  const [view, setView]             = useState('overview');
   const [dateRange, setDateRange]   = useState('week');
   const [chatOpen, setChatOpen]     = useState(false);
   const [chatMounted, setChatMounted] = useState(false);
@@ -85,6 +93,27 @@ export default function AnalyticsDashboard({ user }) {
   const chatKeyRef                  = useRef(Date.now());
   const dragRef                     = useRef({ dragging: false, moved: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
   const { data, loading, error, refetch } = useAnalyticsData(dateRange);
+
+  const [users, setUsers]           = useState(null);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState(null);
+  const [activityRefreshTick, setActivityRefreshTick] = useState(0);
+
+  const fetchUsers = useCallback(async () => {
+    setUsersLoading(true);
+    setUsersError(null);
+    try {
+      setUsers(await analyticsApi.getUsers());
+    } catch (err) {
+      setUsersError(err.message || 'Failed to load users.');
+    } finally {
+      setUsersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view === 'users' && users === null && !usersLoading) fetchUsers();
+  }, [view, users, usersLoading, fetchUsers]);
 
   const handleFabPointerDown = (e) => {
     if (e.button !== 0) return;
@@ -161,18 +190,62 @@ export default function AnalyticsDashboard({ user }) {
         </div>
 
         <div className="an-header-actions">
-          <DateRangeFilter value={dateRange} onChange={(r) => setDateRange(r)} />
-          <button className="an-export-btn" onClick={handleExportCSV} title="Export top queries to CSV">
-            <i className="fas fa-download" /> Export CSV
-          </button>
-          <button className="an-refresh-btn" onClick={refetch} title="Refresh data">
-            <i className={`fas fa-rotate-right${loading ? ' fa-spin' : ''}`} />
+          {view === 'overview' && (
+            <>
+              <DateRangeFilter value={dateRange} onChange={(r) => setDateRange(r)} />
+              <button className="an-export-btn" onClick={handleExportCSV} title="Export top queries to CSV">
+                <i className="fas fa-download" /> Export CSV
+              </button>
+            </>
+          )}
+          <button
+            className="an-refresh-btn"
+            onClick={() => {
+              if (view === 'overview') {
+                refetch();
+                setActivityRefreshTick((t) => t + 1);
+              } else {
+                fetchUsers();
+              }
+            }}
+            title="Refresh data"
+          >
+            <i className={`fas fa-rotate-right${(view === 'overview' ? loading : usersLoading) ? ' fa-spin' : ''}`} />
           </button>
         </div>
       </div>
 
+      {/* ── View tabs ──────────────────────────────────────────────── */}
+      <div className="an-view-tabs-wrap">
+        <div className="an-view-tabs">
+          {VIEW_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`an-view-tab${view === t.id ? ' active' : ''}`}
+              onClick={() => setView(t.id)}
+            >
+              <i className={`fas ${t.icon}`} /> {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* ── Content ────────────────────────────────────────────────── */}
-      {loading ? (
+      {view === 'users' ? (
+        usersLoading ? (
+          <Skeleton />
+        ) : usersError ? (
+          <ErrorState message={usersError} onRetry={fetchUsers} />
+        ) : (
+          <div className="an-content">
+            <section className="an-section">
+              <ChartCard title="AURA Users" subtitle="Every registered user and their real usage activity">
+                <UsersTable users={users} />
+              </ChartCard>
+            </section>
+          </div>
+        )
+      ) : loading ? (
         <Skeleton />
       ) : error ? (
         <ErrorState message={error} onRetry={refetch} />
@@ -246,7 +319,7 @@ export default function AnalyticsDashboard({ user }) {
               title="Recent Activities"
               subtitle="Latest chatbot interactions across AURA"
             >
-              <RecentActivities activities={data.recentActivities} />
+              <RecentActivities refreshKey={activityRefreshTick} />
             </ChartCard>
           </section>
 
