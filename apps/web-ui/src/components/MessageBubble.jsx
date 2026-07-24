@@ -1,8 +1,95 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { parseMarkdown } from '../utils/markdown';
-import { submitFeedback, deleteFeedback } from '../services/api';
+import { submitFeedback, deleteFeedback, getEmployeeDirectory } from '../services/api';
 import { sendEmailViaGraph } from '../utils/authService';
 import { isDocumentMessage, downloadDocument, printDocument } from '../utils/documentDownload';
+
+// Cc/Bcc input with a directory-backed suggestion dropdown — matches the
+// text after the last comma against employee name/email as the user types.
+const EmailAddressField = ({ label, labelExtra, value, onChange, employees, placeholder, disabled }) => {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+
+  const suggestions = useMemo(() => {
+    const query = value.split(',').pop().trim().toLowerCase();
+    if (!query) return [];
+    return employees
+      .filter(emp =>
+        emp.name?.toLowerCase().includes(query) ||
+        emp.email?.toLowerCase().includes(query)
+      )
+      .slice(0, 6);
+  }, [value, employees]);
+
+  const selectSuggestion = (emp) => {
+    const parts = value.split(',');
+    parts[parts.length - 1] = emp.email;
+    onChange(parts.map(p => p.trim()).filter(Boolean).join(', ') + ', ');
+    setOpen(false);
+    setHighlight(0);
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight(h => (h + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight(h => (h - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' && suggestions[highlight]) {
+      e.preventDefault();
+      selectSuggestion(suggestions[highlight]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="email-draft-field email-draft-field--autocomplete">
+      {labelExtra ? (
+        <div className="email-draft-label-row">
+          <label className="email-draft-label">{label}</label>
+          {labelExtra}
+        </div>
+      ) : (
+        <label className="email-draft-label">{label}</label>
+      )}
+      <input
+        className="email-draft-input"
+        type="text"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); setHighlight(0); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        disabled={disabled}
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open && suggestions.length > 0}
+        aria-autocomplete="list"
+      />
+      {open && suggestions.length > 0 && (
+        <ul className="email-draft-suggestions" role="listbox">
+          {suggestions.map((emp, i) => (
+            <li
+              key={emp.email}
+              role="option"
+              aria-selected={i === highlight}
+              className={`email-draft-suggestion-item${i === highlight ? ' active' : ''}`}
+              onMouseDown={e => { e.preventDefault(); selectSuggestion(emp); }}
+              onMouseEnter={() => setHighlight(i)}
+            >
+              <span className="email-draft-suggestion-name">{emp.name}</span>
+              <span className="email-draft-suggestion-email">{emp.email}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 const EmailDraftCard = ({ draft }) => {
   const [to, setTo]           = useState(draft.to);
@@ -13,6 +100,13 @@ const EmailDraftCard = ({ draft }) => {
   const [body, setBody]       = useState(draft.body);
   const [status, setStatus]   = useState('idle'); // idle | sending | sent | error
   const [errorMsg, setErrorMsg] = useState('');
+  const [employees, setEmployees] = useState([]);
+
+  useEffect(() => {
+    getEmployeeDirectory()
+      .then(data => setEmployees(data?.employees || []))
+      .catch(() => {});
+  }, []);
 
   const handleSend = async () => {
     if (status === 'sending') return;
@@ -40,53 +134,42 @@ const EmailDraftCard = ({ draft }) => {
       </div>
 
       <div className="email-draft-fields">
-        <div className="email-draft-field">
-          <div className="email-draft-label-row">
-            <label className="email-draft-label">To</label>
-            {!showCcBcc && (
-              <button
-                type="button"
-                className="email-draft-ccbcc-toggle"
-                onClick={() => setShowCcBcc(true)}
-                disabled={status === 'sent'}
-              >
-                Cc/Bcc
-              </button>
-            )}
-          </div>
-          <input
-            className="email-draft-input"
-            type="email"
-            value={to}
-            onChange={e => setTo(e.target.value)}
-            placeholder="recipient@example.com"
-            disabled={status === 'sent'}
-          />
-        </div>
+        <EmailAddressField
+          label="To"
+          labelExtra={!showCcBcc && (
+            <button
+              type="button"
+              className="email-draft-ccbcc-toggle"
+              onClick={() => setShowCcBcc(true)}
+              disabled={status === 'sent'}
+            >
+              Cc/Bcc
+            </button>
+          )}
+          value={to}
+          onChange={setTo}
+          employees={employees}
+          placeholder="recipient@example.com"
+          disabled={status === 'sent'}
+        />
         {showCcBcc && (
           <>
-            <div className="email-draft-field">
-              <label className="email-draft-label">Cc</label>
-              <input
-                className="email-draft-input"
-                type="email"
-                value={cc}
-                onChange={e => setCc(e.target.value)}
-                placeholder="cc@example.com"
-                disabled={status === 'sent'}
-              />
-            </div>
-            <div className="email-draft-field">
-              <label className="email-draft-label">Bcc</label>
-              <input
-                className="email-draft-input"
-                type="email"
-                value={bcc}
-                onChange={e => setBcc(e.target.value)}
-                placeholder="bcc@example.com"
-                disabled={status === 'sent'}
-              />
-            </div>
+            <EmailAddressField
+              label="Cc"
+              value={cc}
+              onChange={setCc}
+              employees={employees}
+              placeholder="cc@example.com"
+              disabled={status === 'sent'}
+            />
+            <EmailAddressField
+              label="Bcc"
+              value={bcc}
+              onChange={setBcc}
+              employees={employees}
+              placeholder="bcc@example.com"
+              disabled={status === 'sent'}
+            />
           </>
         )}
         <div className="email-draft-field">

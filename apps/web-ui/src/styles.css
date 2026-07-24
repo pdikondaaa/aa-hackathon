@@ -2378,6 +2378,52 @@ button, a, [role="button"] {
   border-color: var(--primary);
 }
 
+.email-draft-field--autocomplete {
+  position: relative;
+}
+
+.email-draft-suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  max-height: 200px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.email-draft-suggestion-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.email-draft-suggestion-item:hover,
+.email-draft-suggestion-item.active {
+  background: var(--bg-card);
+}
+
+.email-draft-suggestion-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.email-draft-suggestion-email {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .email-draft-textarea {
   background: var(--bg-card);
   border: 1px solid var(--border);
